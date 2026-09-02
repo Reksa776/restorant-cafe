@@ -686,6 +686,12 @@ function MenuContent() {
   };
 
   const handleAdd = (product: Product) => {
+    // Defensive: never direct-add a product that needs customization
+    if (hasCustomization(product)) {
+      setEditingCartItemIndex(null);
+      setCustomizingProduct(product);
+      return;
+    }
     addItem({
       id: product.id,
       name: product.name,
@@ -813,9 +819,12 @@ function MenuContent() {
   };
 
   const handleIncrease = (product: Product) => {
-    if (hasCustomization(product)) {
+    const isCustomizable = hasCustomization(product);
+    if (isCustomizable) {
+      // Find the last item with this productId that has customization data
       const idx = items.findLastIndex(
-        (item) => item.productId === product.id
+        (item) => item.productId === product.id &&
+          ((item.selections && item.selections.length > 0) || (item.addons && item.addons.length > 0))
       );
       if (idx >= 0) {
         updateQuantity(idx, items[idx].quantity + 1);
@@ -831,27 +840,24 @@ function MenuContent() {
   };
 
   const handleDecrease = (product: Product) => {
-    if (hasCustomization(product)) {
-      const idx = items.findLastIndex(
-        (item) => item.productId === product.id
-      );
-      if (idx >= 0) {
-        if (items[idx].quantity <= 1) {
-          removeItem(idx);
-        } else {
-          updateQuantity(idx, items[idx].quantity - 1);
+    const isCustomizable = hasCustomization(product);
+    const idx = isCustomizable
+      ? items.findLastIndex((item) => item.productId === product.id)
+      : items.findIndex((item) => item.productId === product.id);
+
+    if (idx >= 0) {
+      if (items[idx].quantity <= 1) {
+        removeItem(idx);
+        // Clear edit state if the removed item was being edited
+        if (editingCartItemIndex === idx) {
+          setEditingCartItemIndex(null);
+          setCustomizingProduct(null);
+        } else if (editingCartItemIndex !== null && editingCartItemIndex > idx) {
+          // Shift edit index if a previous item was removed
+          setEditingCartItemIndex(editingCartItemIndex - 1);
         }
-      }
-    } else {
-      const idx = items.findIndex(
-        (item) => item.productId === product.id
-      );
-      if (idx >= 0) {
-        if (items[idx].quantity <= 1) {
-          removeItem(idx);
-        } else {
-          updateQuantity(idx, items[idx].quantity - 1);
-        }
+      } else {
+        updateQuantity(idx, items[idx].quantity - 1);
       }
     }
   };
