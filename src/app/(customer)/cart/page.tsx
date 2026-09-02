@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCart } from "@/hooks/use-cart";
-import { Plus, Minus, Trash2, ArrowLeft } from "lucide-react";
+import { Plus, Minus, Trash2, ArrowLeft, Table2, Pencil } from "lucide-react";
 
 export default function CartPage() {
   const {
@@ -15,6 +15,7 @@ export default function CartPage() {
     serviceCharge,
     grandTotal,
     totalItems,
+    tableContext,
   } = useCart();
 
   if (items.length === 0) {
@@ -49,14 +50,29 @@ export default function CartPage() {
         </button>
       </div>
 
+      {/* Table Info */}
+      {tableContext && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3">
+          <Table2 className="h-5 w-5 text-blue-600" />
+          <div>
+            <p className="text-sm font-medium text-blue-900">
+              {tableContext.tableName} — Meja {tableContext.tableNumber}
+            </p>
+            <p className="text-xs text-blue-600">
+              {tableContext.visitorCount} pengunjung
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Cart Items */}
       <div className="space-y-3">
-        {items.map((item) => (
+        {items.map((item, index) => (
           <div
-            key={item.productId}
+            key={`${item.productId}-${index}`}
             className="bg-white rounded-lg border border-gray-200 p-4"
           >
-            <div className="flex items-center gap-4">
+            <div className="flex items-start gap-4">
               {/* Image */}
               <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
                 {item.imageUrl ? (
@@ -76,38 +92,84 @@ export default function CartPage() {
                 <p className="text-sm text-gray-500">
                   Rp{item.price.toLocaleString("id-ID")}
                 </p>
+
+                {/* Customization Details */}
+                {item.selections && item.selections.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {item.selections.map((s, i) => (
+                      <p key={i} className="text-[11px] text-gray-500">
+                        {s.groupName}: {s.optionName}
+                        {s.priceAdjustment !== 0 && (
+                          <span className="text-gray-400">
+                            {" "}
+                            {s.priceAdjustment > 0 ? "+" : ""}Rp{Math.abs(s.priceAdjustment).toLocaleString("id-ID")}
+                          </span>
+                        )}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {item.addons && item.addons.length > 0 && (
+                  <div className="mt-1 space-y-0.5">
+                    {item.addons.map((a, i) => (
+                      <p key={i} className="text-[11px] text-gray-500">
+                        + {a.name} x{a.quantity}
+                        {a.price > 0 && (
+                          <span className="text-gray-400">
+                            {" "}
+                            +Rp{(a.price * a.quantity).toLocaleString("id-ID")}
+                          </span>
+                        )}
+                      </p>
+                    ))}
+                  </div>
+                )}
+
+                {item.notes && (
+                  <p className="text-[11px] text-gray-400 mt-1 italic">
+                    Catatan: {item.notes}
+                  </p>
+                )}
               </div>
 
               {/* Quantity Controls */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
                 <button
-                  onClick={() =>
-                    updateQuantity(item.productId, item.quantity - 1)
-                  }
-                  className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+                  onClick={() => updateQuantity(index, item.quantity - 1)}
+                  className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
                 >
-                  <Minus className="h-4 w-4" />
+                  <Minus className="h-3.5 w-3.5" />
                 </button>
-                <span className="w-8 text-center text-sm font-medium">
+                <span className="w-7 text-center text-sm font-medium">
                   {item.quantity}
                 </span>
                 <button
-                  onClick={() =>
-                    updateQuantity(item.productId, item.quantity + 1)
-                  }
-                  className="w-8 h-8 rounded-full bg-black text-white flex items-center justify-center hover:bg-gray-800 transition-colors"
+                  onClick={() => updateQuantity(index, item.quantity + 1)}
+                  className="w-7 h-7 rounded-full bg-black text-white flex items-center justify-center hover:bg-gray-800 transition-colors"
                 >
-                  <Plus className="h-4 w-4" />
+                  <Plus className="h-3.5 w-3.5" />
                 </button>
               </div>
+
+              {/* Edit button for customized items */}
+              {((item.selections && item.selections.length > 0) || (item.addons && item.addons.length > 0) || item.notes) && (
+                <Link
+                  href={`/menu?edit=${index}`}
+                  className="text-[10px] text-gray-400 hover:text-gray-600 flex items-center gap-0.5 mt-1"
+                >
+                  <Pencil className="h-2.5 w-2.5" />
+                  Ubah
+                </Link>
+              )}
 
               {/* Item Total */}
               <div className="text-right flex-shrink-0">
                 <p className="font-medium text-sm">
-                  Rp{(item.price * item.quantity).toLocaleString("id-ID")}
+                  Rp{((item.displayPrice || item.price) * item.quantity).toLocaleString("id-ID")}
                 </p>
                 <button
-                  onClick={() => removeItem(item.productId)}
+                  onClick={() => removeItem(index)}
                   className="text-red-400 hover:text-red-600 mt-1"
                 >
                   <Trash2 className="h-4 w-4" />

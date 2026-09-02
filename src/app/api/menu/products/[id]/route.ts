@@ -11,7 +11,7 @@ export async function GET(
   try {
     const { restaurantId } = await requireAdmin();
     const { id } = await params;
-    const product = await menuService.getProduct(id, restaurantId);
+    const product = await menuService.getProductWithCustomization(id, restaurantId);
 
     return successResponse(product);
   } catch (error) {

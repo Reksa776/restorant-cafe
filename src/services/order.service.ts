@@ -24,6 +24,7 @@ export interface Order {
   tax: string;
   serviceCharge: string;
   grandTotal: string;
+  visitorCount?: number | null;
   notes?: string;
   createdAt: string;
   updatedAt: string;
@@ -42,6 +43,8 @@ export interface Order {
     quantity: number;
     unitPrice: string;
     totalPrice: string;
+    notes?: string;
+    customizations?: string | Record<string, unknown>;
     product: {
       name: string;
     };

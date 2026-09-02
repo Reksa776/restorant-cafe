@@ -10,6 +10,8 @@ import {
   CheckCircle,
   CreditCard,
   Loader2,
+  Table2,
+  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
@@ -18,21 +20,53 @@ import api from "@/lib/axios";
 // Types
 // ============================================================
 
+interface CustomizationSnapshot {
+  productName: string;
+  basePrice: number;
+  selections: Array<{
+    groupId: string;
+    groupName: string;
+    optionId: string;
+    optionName: string;
+    priceAdjustment: number;
+  }>;
+  addons: Array<{
+    addonId: string;
+    name: string;
+    price: number;
+    quantity: number;
+  }>;
+  notes: string | null;
+}
+
 interface OrderData {
   orderNumber: string;
   status: string;
   paymentStatus: string;
   orderType: string;
   grandTotal: string;
+  subtotal: string;
+  tax: string;
+  serviceCharge: string;
+  discount: string;
+  visitorCount: number | null;
   notes?: string;
   createdAt: string;
-  customer: { name?: string };
+  customer: { name?: string; phone?: string };
   table?: { number: number; name: string };
   items: Array<{
     name: string;
     quantity: number;
     unitPrice: string;
     totalPrice: string;
+    notes?: string;
+    customizations?: CustomizationSnapshot;
+  }>;
+  payments?: Array<{
+    method: string | null;
+    provider: string | null;
+    status: string;
+    amount: string;
   }>;
   statusHistory: Array<{
     status: string;
@@ -233,13 +267,26 @@ export default function OrderTrackingPage({
         </div>
 
         {order.table && (
-          <div>
-            <p className="text-sm text-gray-500">Meja</p>
-            <p className="font-medium">{order.table.name}</p>
+          <div className="flex items-center gap-2">
+            <Table2 className="h-4 w-4 text-gray-500" />
+            <div>
+              <p className="text-sm text-gray-500">Meja</p>
+              <p className="font-medium">{order.table.name}</p>
+            </div>
           </div>
         )}
 
-        <div>
+        {order.visitorCount && (
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-gray-500" />
+            <div>
+              <p className="text-sm text-gray-500">Pengunjung</p>
+              <p className="font-medium">{order.visitorCount} orang</p>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2">
           <p className="text-sm text-gray-500">Atas Nama</p>
           <p className="font-medium">{order.customer?.name || "Guest"}</p>
         </div>
@@ -288,22 +335,100 @@ export default function OrderTrackingPage({
       {/* Order Items */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
         <h2 className="font-medium">Item Pesanan</h2>
-        <div className="space-y-2">
+        <div className="space-y-3">
           {order.items.map((item, index) => (
-            <div key={index} className="flex justify-between text-sm">
-              <span>
-                {item.name} x{item.quantity}
-              </span>
-              <span>
-                Rp{Number(item.totalPrice).toLocaleString("id-ID")}
-              </span>
+            <div key={index} className="space-y-1">
+              <div className="flex justify-between text-sm">
+                <span className="font-medium">
+                  {item.name} x{item.quantity}
+                </span>
+                <span>
+                  Rp{Number(item.totalPrice).toLocaleString("id-ID")}
+                </span>
+              </div>
+
+              {/* Customization details */}
+              {item.customizations && (
+                <div className="pl-2 space-y-0.5">
+                  {item.customizations.selections.map((s, i) => (
+                    <p key={i} className="text-[11px] text-gray-500">
+                      {s.groupName}: {s.optionName}
+                      {s.priceAdjustment > 0 && (
+                        <span className="text-gray-400">
+                          {" "}
+                          +Rp{s.priceAdjustment.toLocaleString("id-ID")}
+                        </span>
+                      )}
+                    </p>
+                  ))}
+                  {item.customizations.addons.map((a, i) => (
+                    <p key={i} className="text-[11px] text-gray-500">
+                      + {a.name} x{a.quantity}
+                      {a.price > 0 && (
+                        <span className="text-gray-400">
+                          {" "}
+                          +Rp{(a.price * a.quantity).toLocaleString("id-ID")}
+                        </span>
+                      )}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {/* Item notes */}
+              {item.notes && (
+                <p className="pl-2 text-[11px] text-gray-400 italic">
+                  Catatan: {item.notes}
+                </p>
+              )}
             </div>
           ))}
         </div>
-        <div className="border-t pt-2 flex justify-between font-bold">
-          <span>Total</span>
-          <span>Rp{Number(order.grandTotal).toLocaleString("id-ID")}</span>
+
+        {/* Price Breakdown */}
+        <div className="border-t pt-3 space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-gray-500">Subtotal</span>
+            <span>
+              Rp{Number(order.subtotal).toLocaleString("id-ID")}
+            </span>
+          </div>
+          {Number(order.discount) > 0 && (
+            <div className="flex justify-between text-green-600">
+              <span>Diskon</span>
+              <span>
+                -Rp{Number(order.discount).toLocaleString("id-ID")}
+              </span>
+            </div>
+          )}
+          <div className="flex justify-between">
+            <span className="text-gray-500">Pajak (10%)</span>
+            <span>
+              Rp{Number(order.tax).toLocaleString("id-ID")}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-gray-500">Service Charge (5%)</span>
+            <span>
+              Rp{Number(order.serviceCharge).toLocaleString("id-ID")}
+            </span>
+          </div>
+          <div className="border-t pt-2 flex justify-between font-bold">
+            <span>Total</span>
+            <span>
+              Rp{Number(order.grandTotal).toLocaleString("id-ID")}
+            </span>
+          </div>
         </div>
+
+        {/* Payment method */}
+        {order.payments && order.payments.length > 0 && order.payments[0].method && (
+          <div className="border-t pt-3">
+            <p className="text-xs text-gray-500">
+              Metode Pembayaran: {order.payments[0].method}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Notes */}

@@ -14,6 +14,21 @@ import {
 // Types
 // ============================================================
 
+export interface CartSelection {
+  groupId: string;
+  groupName: string;
+  optionId: string;
+  optionName: string;
+  priceAdjustment: number;
+}
+
+export interface CartAddon {
+  addonId: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
 export interface CartItem {
   productId: string;
   name: string;
@@ -21,6 +36,19 @@ export interface CartItem {
   quantity: number;
   imageUrl?: string | null;
   categoryName?: string;
+  selections?: CartSelection[];
+  addons?: CartAddon[];
+  notes?: string;
+  /** Unit price including all selections and addons (display only) */
+  displayPrice: number;
+}
+
+export interface TableContext {
+  tableId: string;
+  tableNumber: number;
+  tableName: string;
+  restaurantId: string;
+  visitorCount: number;
 }
 
 export interface CartContextType {
@@ -32,9 +60,29 @@ export interface CartContextType {
     price: number;
     imageUrl?: string | null;
     category?: { name: string };
+    optionGroups?: Array<{
+      id: string;
+      name: string;
+      type: string;
+      isRequired: boolean;
+      minSelect: number;
+      maxSelect: number;
+      options: Array<{
+        id: string;
+        name: string;
+        priceAdjustment: number;
+      }>;
+    }>;
+    addons?: Array<{
+      id: string;
+      name: string;
+      price: number;
+    }>;
   }) => void;
-  removeItem: (productId: string) => void;
-  updateQuantity: (productId: string, quantity: number) => void;
+  addCustomizedItem: (item: Omit<CartItem, "displayPrice">) => void;
+  removeItem: (index: number) => void;
+  updateQuantity: (index: number, quantity: number) => void;
+  updateCartItem: (index: number, item: Omit<CartItem, "displayPrice">) => void;
   clearCart: () => void;
   subtotal: number;
   tax: number;
@@ -43,6 +91,10 @@ export interface CartContextType {
   totalItems: number;
   restaurantId: string | null;
   setRestaurantId: (id: string) => void;
+  tableContext: TableContext | null;
+  setTableContext: (ctx: TableContext) => void;
+  clearTableContext: () => void;
+  hasCustomizations: (index: number) => boolean;
 }
 
 // ============================================================
@@ -51,6 +103,7 @@ export interface CartContextType {
 
 const CART_STORAGE_KEY = "restaurant_cart";
 const RESTAURANT_STORAGE_KEY = "restaurant_id";
+const TABLE_CONTEXT_STORAGE_KEY = "table_context";
 const TAX_RATE = 0.1; // 10%
 const SERVICE_CHARGE_RATE = 0.05; // 5%
 
@@ -60,7 +113,6 @@ const SERVICE_CHARGE_RATE = 0.05; // 5%
 
 /**
  * Validate a single cart item object.
- * Returns true if the item has the required structure.
  */
 function isValidCartItem(item: unknown): item is CartItem {
   if (!item || typeof item !== "object") return false;
@@ -80,8 +132,6 @@ function isValidCartItem(item: unknown): item is CartItem {
  * Handles both formats:
  * - Legacy: CartItem[] (flat array)
  * - Current: { items: CartItem[], updatedAt: number }
- *
- * Returns [] if storage is unavailable, corrupt, or expired.
  */
 function loadCartFromStorage(): CartItem[] {
   if (typeof window === "undefined") return [];
@@ -106,17 +156,14 @@ function loadCartFromStorage(): CartItem[] {
       return parsed.filter(isValidCartItem);
     }
 
-    // Unknown format — return empty
     return [];
   } catch {
-    // Corrupted data — fail safely
     return [];
   }
 }
 
 /**
  * Save cart to localStorage with updatedAt timestamp.
- * Format: { items: CartItem[], updatedAt: number }
  */
 function saveCartToStorage(items: CartItem[]): void {
   if (typeof window === "undefined") return;
@@ -155,6 +202,70 @@ function saveRestaurantIdToStorage(id: string | null): void {
   }
 }
 
+function loadTableContextFromStorage(): TableContext | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(TABLE_CONTEXT_STORAGE_KEY);
+    if (!stored) return null;
+    return JSON.parse(stored) as TableContext;
+  } catch {
+    return null;
+  }
+}
+
+function saveTableContextToStorage(ctx: TableContext | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (ctx) {
+      localStorage.setItem(TABLE_CONTEXT_STORAGE_KEY, JSON.stringify(ctx));
+    } else {
+      localStorage.removeItem(TABLE_CONTEXT_STORAGE_KEY);
+    }
+  } catch {
+    // fail silently
+  }
+}
+
+// ============================================================
+// Configuration Key for Merging
+// ============================================================
+
+function getItemConfigKey(item: {
+  productId: string;
+  selections?: CartSelection[];
+  addons?: CartAddon[];
+  notes?: string;
+}): string {
+  const parts = [item.productId];
+
+  // Sort selections by groupId for deterministic key
+  if (item.selections && item.selections.length > 0) {
+    const sorted = [...item.selections].sort((a, b) =>
+      a.groupId.localeCompare(b.groupId)
+    );
+    for (const s of sorted) {
+      parts.push(`g:${s.optionId}`);
+    }
+  }
+
+  // Sort addons by addonId for deterministic key
+  if (item.addons && item.addons.length > 0) {
+    const sorted = [...item.addons].sort((a, b) =>
+      a.addonId.localeCompare(b.addonId)
+    );
+    for (const a of sorted) {
+      parts.push(`a:${a.addonId}:${a.quantity}`);
+    }
+  }
+
+  // Notes differentiate items
+  if (item.notes) {
+    parts.push(`n:${item.notes}`);
+  }
+
+  return parts.join("|");
+}
+
 // ============================================================
 // Context
 // ============================================================
@@ -167,19 +278,16 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
   const [restaurantId, setRestaurantIdState] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
+  const [tableContext, setTableContextState] = useState<TableContext | null>(null);
   const hydrationRef = useRef(false);
 
   // Hydrate from localStorage AFTER mount (client-side only).
-  // Server render: items=[], isHydrated=false
-  // Client initial render: items=[], isHydrated=false (matches server)
-  // After mount: items=from localStorage, isHydrated=true (re-render)
   useEffect(() => {
     if (hydrationRef.current) return;
     hydrationRef.current = true;
 
     const storedItems = loadCartFromStorage();
     if (storedItems.length > 0) {
-      // Hydrating external storage state into React — legitimate use of setState in effect
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setItems(storedItems);
     }
@@ -187,6 +295,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
     const storedRestaurantId = loadRestaurantIdFromStorage();
     if (storedRestaurantId) {
       setRestaurantIdState(storedRestaurantId);
+    }
+
+    const storedTableContext = loadTableContextFromStorage();
+    if (storedTableContext) {
+      setTableContextState(storedTableContext);
     }
 
     setIsHydrated(true);
@@ -198,37 +311,48 @@ export function CartProvider({ children }: { children: ReactNode }) {
     saveCartToStorage(items);
   }, [items, isHydrated]);
 
+  // Persist table context to localStorage
+  useEffect(() => {
+    if (!isHydrated) return;
+    saveTableContextToStorage(tableContext);
+  }, [tableContext, isHydrated]);
+
   // Multi-tab synchronization via storage event.
-  // When another tab modifies localStorage, sync our state.
   useEffect(() => {
     function handleStorageChange(event: StorageEvent) {
-      if (event.key !== CART_STORAGE_KEY) return;
-
-      // If the value was removed (clear cart in another tab), reset to empty
-      if (!event.newValue) {
-        setItems([]);
-        return;
-      }
-
-      // Parse the new value
-      try {
-        const parsed = JSON.parse(event.newValue);
-        let newItems: CartItem[] = [];
-
-        if (
-          parsed &&
-          typeof parsed === "object" &&
-          "items" in parsed &&
-          Array.isArray(parsed.items)
-        ) {
-          newItems = parsed.items.filter(isValidCartItem);
-        } else if (Array.isArray(parsed)) {
-          newItems = parsed.filter(isValidCartItem);
+      if (event.key === CART_STORAGE_KEY) {
+        if (!event.newValue) {
+          setItems([]);
+          return;
         }
-
-        setItems(newItems);
-      } catch {
-        // Corrupted data from another tab — ignore
+        try {
+          const parsed = JSON.parse(event.newValue);
+          let newItems: CartItem[] = [];
+          if (
+            parsed &&
+            typeof parsed === "object" &&
+            "items" in parsed &&
+            Array.isArray(parsed.items)
+          ) {
+            newItems = parsed.items.filter(isValidCartItem);
+          } else if (Array.isArray(parsed)) {
+            newItems = parsed.filter(isValidCartItem);
+          }
+          setItems(newItems);
+        } catch {
+          // Corrupted data from another tab — ignore
+        }
+      }
+      if (event.key === TABLE_CONTEXT_STORAGE_KEY) {
+        if (!event.newValue) {
+          setTableContextState(null);
+          return;
+        }
+        try {
+          setTableContextState(JSON.parse(event.newValue));
+        } catch {
+          // ignore
+        }
       }
     }
 
@@ -242,6 +366,18 @@ export function CartProvider({ children }: { children: ReactNode }) {
     saveRestaurantIdToStorage(id);
   }, []);
 
+  // Table context management
+  const setTableContext = useCallback((ctx: TableContext) => {
+    setTableContextState(ctx);
+    saveTableContextToStorage(ctx);
+  }, []);
+
+  const clearTableContext = useCallback(() => {
+    setTableContextState(null);
+    saveTableContextToStorage(null);
+  }, []);
+
+  // Simple add (no customization) — for products without option groups
   const addItem = useCallback(
     (product: {
       id: string;
@@ -250,15 +386,24 @@ export function CartProvider({ children }: { children: ReactNode }) {
       imageUrl?: string | null;
       category?: { name: string };
     }) => {
+      const configKey = getItemConfigKey({ productId: product.id });
+
       setItems((prev) => {
-        const existing = prev.find((item) => item.productId === product.id);
-        if (existing) {
-          return prev.map((item) =>
-            item.productId === product.id
+        // Find existing item with same config key
+        const existingIndex = prev.findIndex(
+          (item) => getItemConfigKey(item) === configKey
+        );
+
+        if (existingIndex >= 0) {
+          // Same config — increment quantity
+          return prev.map((item, i) =>
+            i === existingIndex
               ? { ...item, quantity: item.quantity + 1 }
               : item
           );
         }
+
+        // New item
         return [
           ...prev,
           {
@@ -268,6 +413,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
             quantity: 1,
             imageUrl: product.imageUrl,
             categoryName: product.category?.name,
+            selections: [],
+            addons: [],
+            notes: undefined,
+            displayPrice: product.price,
           },
         ];
       });
@@ -275,18 +424,90 @@ export function CartProvider({ children }: { children: ReactNode }) {
     []
   );
 
-  const removeItem = useCallback((productId: string) => {
-    setItems((prev) => prev.filter((item) => item.productId !== productId));
+  // Customized add — with variants, addons, notes
+  const addCustomizedItem = useCallback((item: Omit<CartItem, "displayPrice">) => {
+    // Calculate displayPrice from selections and addons
+    let displayPrice = item.price;
+    if (item.selections) {
+      displayPrice += item.selections.reduce(
+        (sum, s) => sum + s.priceAdjustment,
+        0
+      );
+    }
+    if (item.addons) {
+      displayPrice += item.addons.reduce(
+        (sum, a) => sum + a.price * a.quantity,
+        0
+      );
+    }
+
+    const cartItem: CartItem = { ...item, displayPrice };
+    const configKey = getItemConfigKey(cartItem);
+
+    setItems((prev) => {
+      // Find existing item with same config key
+      const existingIndex = prev.findIndex(
+        (existing) => getItemConfigKey(existing) === configKey
+      );
+
+      if (existingIndex >= 0) {
+        // Same config — increment quantity
+        return prev.map((existing, i) =>
+          i === existingIndex
+            ? { ...existing, quantity: existing.quantity + item.quantity }
+            : existing
+        );
+      }
+
+      // New item (add at end)
+      return [...prev, cartItem];
+    });
   }, []);
 
-  const updateQuantity = useCallback((productId: string, quantity: number) => {
+  const removeItem = useCallback((index: number) => {
+    setItems((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const updateCartItem = useCallback((index: number, item: Omit<CartItem, "displayPrice">) => {
+    let displayPrice = item.price;
+    if (item.selections) {
+      displayPrice += item.selections.reduce((sum, s) => sum + s.priceAdjustment, 0);
+    }
+    if (item.addons) {
+      displayPrice += item.addons.reduce((sum, a) => sum + a.price * a.quantity, 0);
+    }
+    const cartItem: CartItem = { ...item, displayPrice };
+
+    setItems((prev) => {
+      const updated = prev.map((existing, i) =>
+        i === index ? cartItem : existing
+      );
+      // Check if the updated item's config matches another item
+      const configKey = getItemConfigKey(cartItem);
+      const duplicateIndex = updated.findIndex(
+        (existing, i) => i !== index && getItemConfigKey(existing) === configKey
+      );
+      if (duplicateIndex >= 0) {
+        // Merge quantities and remove the original
+        const merged = updated.map((existing, i) =>
+          i === duplicateIndex
+            ? { ...existing, quantity: existing.quantity + cartItem.quantity }
+            : existing
+        ).filter((_, i) => i !== index);
+        return merged;
+      }
+      return updated;
+    });
+  }, []);
+
+  const updateQuantity = useCallback((index: number, quantity: number) => {
     if (quantity <= 0) {
-      setItems((prev) => prev.filter((item) => item.productId !== productId));
+      setItems((prev) => prev.filter((_, i) => i !== index));
       return;
     }
     setItems((prev) =>
-      prev.map((item) =>
-        item.productId === productId ? { ...item, quantity } : item
+      prev.map((item, i) =>
+        i === index ? { ...item, quantity } : item
       )
     );
   }, []);
@@ -295,9 +516,22 @@ export function CartProvider({ children }: { children: ReactNode }) {
     setItems([]);
   }, []);
 
-  // Calculate totals
+  const hasCustomizations = useCallback(
+    (index: number) => {
+      const item = items[index];
+      if (!item) return false;
+      return (
+        (item.selections && item.selections.length > 0) ||
+        (item.addons && item.addons.length > 0) ||
+        !!item.notes
+      );
+    },
+    [items]
+  );
+
+  // Calculate totals (display only — server is authoritative)
   const subtotal = items.reduce(
-    (sum, item) => sum + item.price * item.quantity,
+    (sum, item) => sum + (item.displayPrice || item.price) * item.quantity,
     0
   );
   const tax = Math.round(subtotal * TAX_RATE);
@@ -311,9 +545,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
         items,
         isHydrated,
         addItem,
+        addCustomizedItem,
         removeItem,
         updateQuantity,
         clearCart,
+        updateCartItem,
         subtotal,
         tax,
         serviceCharge,
@@ -321,6 +557,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
         totalItems,
         restaurantId,
         setRestaurantId,
+        tableContext,
+        setTableContext,
+        clearTableContext,
+        hasCustomizations,
       }}
     >
       {children}

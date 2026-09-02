@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ConflictError } from "@/lib/errors";
+import { NotFoundError, ConflictError, ValidationError } from "@/lib/errors";
 
 export class MenuService {
   // ============================================================
@@ -294,6 +294,347 @@ export class MenuService {
         category: true,
       },
     });
+  }
+
+  // ============================================================
+  // Product Detail (with customization)
+  // ============================================================
+
+  async getProductWithCustomization(id: string, restaurantId: string) {
+    const product = await prisma.product.findFirst({
+      where: { id, restaurantId },
+      include: {
+        category: true,
+        optionGroups: {
+          include: {
+            options: { orderBy: { sortOrder: "asc" } },
+          },
+          orderBy: { sortOrder: "asc" },
+        },
+        addons: {
+          orderBy: { sortOrder: "asc" },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundError("Product not found");
+    }
+
+    return product;
+  }
+
+  // ============================================================
+  // Option Groups
+  // ============================================================
+
+  async getOptionGroups(productId: string, restaurantId: string) {
+    // Verify product belongs to restaurant
+    const product = await prisma.product.findFirst({
+      where: { id: productId, restaurantId },
+    });
+    if (!product) throw new NotFoundError("Product not found");
+
+    return prisma.productOptionGroup.findMany({
+      where: { productId },
+      include: { options: { orderBy: { sortOrder: "asc" } } },
+      orderBy: { sortOrder: "asc" },
+    });
+  }
+
+  async createOptionGroup(
+    productId: string,
+    restaurantId: string,
+    data: {
+      name: string;
+      type?: string;
+      isRequired?: boolean;
+      minSelect?: number;
+      maxSelect?: number;
+      sortOrder?: number;
+    }
+  ) {
+    const product = await prisma.product.findFirst({
+      where: { id: productId, restaurantId },
+    });
+    if (!product) throw new NotFoundError("Product not found");
+
+    const type = data.type || "SINGLE";
+    if (type !== "SINGLE" && type !== "MULTI") {
+      throw new ValidationError("type must be SINGLE or MULTI");
+    }
+
+    const isRequired = data.isRequired ?? true;
+    const minSelect = data.minSelect ?? (type === "SINGLE" && isRequired ? 1 : 0);
+    const maxSelect = data.maxSelect ?? (type === "SINGLE" ? 1 : 10);
+
+    if (type === "SINGLE" && maxSelect !== 1) {
+      throw new ValidationError("SINGLE type must have maxSelect = 1");
+    }
+    if (minSelect < 0) throw new ValidationError("minSelect must be >= 0");
+    if (maxSelect < minSelect) throw new ValidationError("maxSelect must be >= minSelect");
+
+    return prisma.productOptionGroup.create({
+      data: {
+        productId,
+        name: data.name,
+        type,
+        isRequired,
+        minSelect,
+        maxSelect,
+        sortOrder: data.sortOrder ?? 0,
+      },
+      include: { options: true },
+    });
+  }
+
+  async updateOptionGroup(
+    groupId: string,
+    productId: string,
+    restaurantId: string,
+    data: {
+      name?: string;
+      type?: string;
+      isRequired?: boolean;
+      minSelect?: number;
+      maxSelect?: number;
+      sortOrder?: number;
+      isActive?: boolean;
+    }
+  ) {
+    // Verify product belongs to restaurant
+    const product = await prisma.product.findFirst({
+      where: { id: productId, restaurantId },
+    });
+    if (!product) throw new NotFoundError("Product not found");
+
+    const group = await prisma.productOptionGroup.findFirst({
+      where: { id: groupId, productId },
+    });
+    if (!group) throw new NotFoundError("Option group not found");
+
+    if (data.type && data.type !== group.type) {
+      if (data.type !== "SINGLE" && data.type !== "MULTI") {
+        throw new ValidationError("type must be SINGLE or MULTI");
+      }
+      if (data.type === "SINGLE") {
+        data.maxSelect = 1;
+      }
+    }
+
+    return prisma.productOptionGroup.update({
+      where: { id: groupId },
+      data,
+      include: { options: { orderBy: { sortOrder: "asc" } } },
+    });
+  }
+
+  async deleteOptionGroup(
+    groupId: string,
+    productId: string,
+    restaurantId: string
+  ) {
+    const product = await prisma.product.findFirst({
+      where: { id: productId, restaurantId },
+    });
+    if (!product) throw new NotFoundError("Product not found");
+
+    const group = await prisma.productOptionGroup.findFirst({
+      where: { id: groupId, productId },
+    });
+    if (!group) throw new NotFoundError("Option group not found");
+
+    // Delete group and cascade options
+    await prisma.productOption.deleteMany({ where: { optionGroupId: groupId } });
+    return prisma.productOptionGroup.delete({ where: { id: groupId } });
+  }
+
+  // ============================================================
+  // Options
+  // ============================================================
+
+  async getOptions(groupId: string, restaurantId: string) {
+    // Verify group exists and belongs to a product in this restaurant
+    const group = await prisma.productOptionGroup.findFirst({
+      where: { id: groupId },
+      include: { product: { select: { restaurantId: true } } },
+    });
+    if (!group) throw new NotFoundError("Option group not found");
+    if (group.product.restaurantId !== restaurantId) {
+      throw new NotFoundError("Option group not found");
+    }
+
+    return prisma.productOption.findMany({
+      where: { optionGroupId: groupId },
+      orderBy: { sortOrder: "asc" },
+    });
+  }
+
+  async createOption(
+    groupId: string,
+    restaurantId: string,
+    data: {
+      name: string;
+      priceAdjustment?: number;
+      sortOrder?: number;
+    }
+  ) {
+    const group = await prisma.productOptionGroup.findFirst({
+      where: { id: groupId },
+      include: { product: { select: { restaurantId: true } } },
+    });
+    if (!group) throw new NotFoundError("Option group not found");
+    if (group.product.restaurantId !== restaurantId) {
+      throw new NotFoundError("Option group not found");
+    }
+
+    return prisma.productOption.create({
+      data: {
+        optionGroupId: groupId,
+        name: data.name,
+        priceAdjustment: data.priceAdjustment ?? 0,
+        sortOrder: data.sortOrder ?? 0,
+      },
+    });
+  }
+
+  async updateOption(
+    optionId: string,
+    groupId: string,
+    restaurantId: string,
+    data: {
+      name?: string;
+      priceAdjustment?: number;
+      sortOrder?: number;
+      isActive?: boolean;
+    }
+  ) {
+    // Verify group belongs to restaurant
+    const group = await prisma.productOptionGroup.findFirst({
+      where: { id: groupId },
+      include: { product: { select: { restaurantId: true } } },
+    });
+    if (!group) throw new NotFoundError("Option group not found");
+    if (group.product.restaurantId !== restaurantId) {
+      throw new NotFoundError("Option group not found");
+    }
+
+    const option = await prisma.productOption.findFirst({
+      where: { id: optionId, optionGroupId: groupId },
+    });
+    if (!option) throw new NotFoundError("Option not found");
+
+    return prisma.productOption.update({
+      where: { id: optionId },
+      data,
+    });
+  }
+
+  async deleteOption(
+    optionId: string,
+    groupId: string,
+    restaurantId: string
+  ) {
+    const group = await prisma.productOptionGroup.findFirst({
+      where: { id: groupId },
+      include: { product: { select: { restaurantId: true } } },
+    });
+    if (!group) throw new NotFoundError("Option group not found");
+    if (group.product.restaurantId !== restaurantId) {
+      throw new NotFoundError("Option group not found");
+    }
+
+    const option = await prisma.productOption.findFirst({
+      where: { id: optionId, optionGroupId: groupId },
+    });
+    if (!option) throw new NotFoundError("Option not found");
+
+    return prisma.productOption.delete({ where: { id: optionId } });
+  }
+
+  // ============================================================
+  // Addons
+  // ============================================================
+
+  async getAddons(productId: string, restaurantId: string) {
+    const product = await prisma.product.findFirst({
+      where: { id: productId, restaurantId },
+    });
+    if (!product) throw new NotFoundError("Product not found");
+
+    return prisma.productAddon.findMany({
+      where: { productId },
+      orderBy: { sortOrder: "asc" },
+    });
+  }
+
+  async createAddon(
+    productId: string,
+    restaurantId: string,
+    data: {
+      name: string;
+      price: number;
+      sortOrder?: number;
+    }
+  ) {
+    const product = await prisma.product.findFirst({
+      where: { id: productId, restaurantId },
+    });
+    if (!product) throw new NotFoundError("Product not found");
+
+    return prisma.productAddon.create({
+      data: {
+        productId,
+        name: data.name,
+        price: data.price,
+        sortOrder: data.sortOrder ?? 0,
+      },
+    });
+  }
+
+  async updateAddon(
+    addonId: string,
+    productId: string,
+    restaurantId: string,
+    data: {
+      name?: string;
+      price?: number;
+      sortOrder?: number;
+      isActive?: boolean;
+    }
+  ) {
+    const product = await prisma.product.findFirst({
+      where: { id: productId, restaurantId },
+    });
+    if (!product) throw new NotFoundError("Product not found");
+
+    const addon = await prisma.productAddon.findFirst({
+      where: { id: addonId, productId },
+    });
+    if (!addon) throw new NotFoundError("Addon not found");
+
+    return prisma.productAddon.update({
+      where: { id: addonId },
+      data,
+    });
+  }
+
+  async deleteAddon(
+    addonId: string,
+    productId: string,
+    restaurantId: string
+  ) {
+    const product = await prisma.product.findFirst({
+      where: { id: productId, restaurantId },
+    });
+    if (!product) throw new NotFoundError("Product not found");
+
+    const addon = await prisma.productAddon.findFirst({
+      where: { id: addonId, productId },
+    });
+    if (!addon) throw new NotFoundError("Addon not found");
+
+    return prisma.productAddon.delete({ where: { id: addonId } });
   }
 }
 

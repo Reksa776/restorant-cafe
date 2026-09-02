@@ -63,53 +63,53 @@ enum NotificationType {
 // ============================================================
 
 model User {
-  id            String    @id @default(cuid())
-  restaurantId  String
-  name          String
-  email         String    @unique
-  password      String
-  role          Role      @default(ADMIN)
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id           String   @id @default(cuid())
+  restaurantId String
+  name         String
+  email        String   @unique
+  password     String
+  role         Role     @default(ADMIN)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
-  orderHistory  OrderStatusHistory[]
+  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
+  orderHistory OrderStatusHistory[]
 }
 
 model Restaurant {
-  id          String   @id @default(cuid())
-  name        String
-  address     String?
-  phone       String?
-  email       String?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(cuid())
+  name      String
+  address   String?
+  phone     String?
+  email     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  users       User[]
-  tables      Table[]
-  categories  Category[]
-  products    Product[]
-  customers   Customer[]
-  orders      Order[]
-  payments    Payment[]
+  users      User[]
+  tables     Table[]
+  categories Category[]
+  products   Product[]
+  customers  Customer[]
+  orders     Order[]
+  payments   Payment[]
 }
 
 model Table {
-  id            String      @id @default(cuid())
-  restaurantId  String
-  number        Int
-  name          String
-  capacity      Int         @default(4)
-  status        TableStatus @default(AVAILABLE)
-  qrCode        String?     @db.Text
-  isActive      Boolean     @default(true)
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+  id           String      @id @default(cuid())
+  restaurantId String
+  number       Int
+  name         String
+  capacity     Int         @default(4)
+  status       TableStatus @default(AVAILABLE)
+  qrCode       String?     @db.Text
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
 
-  restaurant    Restaurant  @relation(fields: [restaurantId], references: [id])
-  orders        Order[]
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  orders     Order[]
 
   @@unique([restaurantId, number])
   @@index([restaurantId])
@@ -117,38 +117,40 @@ model Table {
 }
 
 model Category {
-  id            String     @id @default(cuid())
-  restaurantId  String
-  name          String
-  description   String?    @db.Text
-  sortOrder     Int        @default(0)
-  isActive      Boolean    @default(true)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id           String   @id @default(cuid())
+  restaurantId String
+  name         String
+  description  String?  @db.Text
+  sortOrder    Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
-  products      Product[]
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  products   Product[]
 
   @@unique([restaurantId, name])
   @@index([restaurantId])
 }
 
 model Product {
-  id            String     @id @default(cuid())
-  restaurantId  String
-  categoryId    String
-  name          String
-  description   String?    @db.Text
-  price         Decimal    @db.Decimal(10, 2)
-  imageUrl      String?
-  isAvailable   Boolean    @default(true)
-  isActive      Boolean    @default(true)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id           String   @id @default(cuid())
+  restaurantId String
+  categoryId   String
+  name         String
+  description  String?  @db.Text
+  price        Decimal  @db.Decimal(10, 2)
+  imageUrl     String?
+  isAvailable  Boolean  @default(true)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
-  category      Category   @relation(fields: [categoryId], references: [id])
-  orderItems    OrderItem[]
+  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
+  category     Category             @relation(fields: [categoryId], references: [id])
+  orderItems   OrderItem[]
+  optionGroups ProductOptionGroup[]
+  addons       ProductAddon[]
 
   @@index([restaurantId])
   @@index([categoryId])
@@ -156,16 +158,16 @@ model Product {
 }
 
 model Customer {
-  id            String     @id @default(cuid())
-  restaurantId  String
-  name          String?
-  phone         String?
-  whatsappId    String?
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
+  id           String   @id @default(cuid())
+  restaurantId String
+  name         String?
+  phone        String?
+  whatsappId   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
-  orders        Order[]
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  orders     Order[]
 
   @@unique([restaurantId, phone])
   @@index([restaurantId])
@@ -173,30 +175,31 @@ model Customer {
 }
 
 model Order {
-  id              String        @id @default(cuid())
-  restaurantId    String
-  orderNumber     String
-  customerId      String
-  tableId         String?
-  status          OrderStatus   @default(PENDING)
-  paymentStatus   PaymentStatus @default(UNPAID)
-  subtotal        Decimal       @db.Decimal(10, 2)
-  discount        Decimal       @default(0) @db.Decimal(10, 2)
-  tax             Decimal       @default(0) @db.Decimal(10, 2)
-  serviceCharge   Decimal       @default(0) @db.Decimal(10, 2)
-  grandTotal      Decimal       @db.Decimal(10, 2)
-  orderType       OrderType     @default(DINE_IN)
-  notes           String?       @db.Text
-  notifiedAt      DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id            String        @id @default(cuid())
+  restaurantId  String
+  orderNumber   String
+  customerId    String
+  tableId       String?
+  status        OrderStatus   @default(PENDING)
+  paymentStatus PaymentStatus @default(UNPAID)
+  subtotal      Decimal       @db.Decimal(10, 2)
+  discount      Decimal       @default(0) @db.Decimal(10, 2)
+  tax           Decimal       @default(0) @db.Decimal(10, 2)
+  serviceCharge Decimal       @default(0) @db.Decimal(10, 2)
+  grandTotal    Decimal       @db.Decimal(10, 2)
+  orderType     OrderType     @default(DINE_IN)
+  visitorCount  Int?
+  notes         String?       @db.Text
+  notifiedAt    DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
-  restaurant      Restaurant    @relation(fields: [restaurantId], references: [id])
-  customer        Customer      @relation(fields: [customerId], references: [id])
-  table           Table?        @relation(fields: [tableId], references: [id])
-  items           OrderItem[]
-  statusHistory   OrderStatusHistory[]
-  payments        Payment[]
+  restaurant    Restaurant           @relation(fields: [restaurantId], references: [id])
+  customer      Customer             @relation(fields: [customerId], references: [id])
+  table         Table?               @relation(fields: [tableId], references: [id])
+  items         OrderItem[]
+  statusHistory OrderStatusHistory[]
+  payments      Payment[]
 
   @@unique([restaurantId, orderNumber])
   @@index([restaurantId])
@@ -206,57 +209,107 @@ model Order {
   @@index([createdAt])
 }
 
-model OrderItem {
-  id          String   @id @default(cuid())
-  orderId     String
-  productId   String
-  quantity    Int
-  unitPrice   Decimal  @db.Decimal(10, 2)
-  totalPrice  Decimal  @db.Decimal(10, 2)
-  notes       String?  @db.Text
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model ProductOptionGroup {
+  id         String   @id @default(cuid())
+  productId  String
+  name       String
+  type       String   @default("SINGLE") // SINGLE or MULTI
+  isRequired Boolean  @default(true)
+  minSelect  Int      @default(1)
+  maxSelect  Int      @default(1)
+  sortOrder  Int      @default(0)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product     Product  @relation(fields: [productId], references: [id])
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  options ProductOption[]
+
+  @@index([productId])
+}
+
+model ProductOption {
+  id              String   @id @default(cuid())
+  optionGroupId   String
+  name            String
+  priceAdjustment Decimal  @default(0) @db.Decimal(10, 2)
+  sortOrder       Int      @default(0)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  group ProductOptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+
+  @@index([optionGroupId])
+}
+
+model ProductAddon {
+  id        String   @id @default(cuid())
+  productId String
+  name      String
+  price     Decimal  @db.Decimal(10, 2)
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+model OrderItem {
+  id             String   @id @default(cuid())
+  orderId        String
+  productId      String
+  quantity       Int
+  unitPrice      Decimal  @db.Decimal(10, 2)
+  totalPrice     Decimal  @db.Decimal(10, 2)
+  notes          String?  @db.Text
+  customizations Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
 
   @@index([orderId])
   @@index([productId])
 }
 
 model OrderStatusHistory {
-  id          String      @id @default(cuid())
-  orderId     String
-  status      OrderStatus
-  notes       String?     @db.Text
-  changedBy   String?
-  createdAt   DateTime    @default(now())
+  id        String      @id @default(cuid())
+  orderId   String
+  status    OrderStatus
+  notes     String?     @db.Text
+  changedBy String?
+  createdAt DateTime    @default(now())
 
-  order       Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  user        User?       @relation(fields: [changedBy], references: [id])
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  user  User? @relation(fields: [changedBy], references: [id])
 
   @@index([orderId])
   @@index([status])
 }
 
 model Payment {
-  id              String        @id @default(cuid())
-  restaurantId    String
-  orderId         String
-  status          PaymentStatus @default(UNPAID)
-  amount          Decimal       @db.Decimal(10, 2)
-  method          String?
-  provider        String?
-  providerRef     String?
-  paymentUrl      String?       @db.Text
-  paidAt          DateTime?
-  expiresAt       DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id           String        @id @default(cuid())
+  restaurantId String
+  orderId      String
+  status       PaymentStatus @default(UNPAID)
+  amount       Decimal       @db.Decimal(10, 2)
+  method       String?
+  provider     String?
+  providerRef  String?
+  paymentUrl   String?       @db.Text
+  paidAt       DateTime?
+  expiresAt    DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
-  restaurant      Restaurant    @relation(fields: [restaurantId], references: [id])
-  order           Order         @relation(fields: [orderId], references: [id])
-  transactions    PaymentTransaction[]
+  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
+  order        Order                @relation(fields: [orderId], references: [id])
+  transactions PaymentTransaction[]
 
   @@index([restaurantId])
   @@index([orderId])
@@ -265,33 +318,33 @@ model Payment {
 }
 
 model PaymentTransaction {
-  id            String   @id @default(cuid())
-  paymentId     String
-  provider      String
-  type          String
-  status        String
-  amount        Decimal  @db.Decimal(10, 2)
-  rawData       Json?
-  createdAt     DateTime @default(now())
+  id        String   @id @default(cuid())
+  paymentId String
+  provider  String
+  type      String
+  status    String
+  amount    Decimal  @db.Decimal(10, 2)
+  rawData   Json?
+  createdAt DateTime @default(now())
 
-  payment       Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
 
   @@index([paymentId])
   @@index([provider])
 }
 
 model WhatsAppMessage {
-  id            String   @id @default(cuid())
-  restaurantId  String
-  direction     String   // INCOMING | OUTGOING
-  from          String
-  to            String?
-  messageId     String?  @unique
-  content       String   @db.Text
-  type          String?  // text | image | etc
-  status        String?  // sent | delivered | read | failed
-  metadata      Json?
-  createdAt     DateTime @default(now())
+  id           String   @id @default(cuid())
+  restaurantId String
+  direction    String // INCOMING | OUTGOING
+  from         String
+  to           String?
+  messageId    String?  @unique
+  content      String   @db.Text
+  type         String? // text | image | etc
+  status       String? // sent | delivered | read | failed
+  metadata     Json?
+  createdAt    DateTime @default(now())
 
   @@index([restaurantId])
   @@index([from])
@@ -309,30 +362,30 @@ enum WhatsAppConnectionStatus {
 }
 
 model WhatsAppSession {
-  id            String                   @id @default(cuid())
-  restaurantId  String                   @unique
-  sessionId     String
-  status        WhatsAppConnectionStatus @default(DISCONNECTED)
-  phone         String?                  // Connected phone/JID
-  lastError     String?                  @db.Text
-  isActive      Boolean                  @default(true)
-  lastActiveAt  DateTime                 @default(now())
-  createdAt     DateTime                 @default(now())
-  updatedAt     DateTime                 @updatedAt
+  id           String                   @id @default(cuid())
+  restaurantId String                   @unique
+  sessionId    String
+  status       WhatsAppConnectionStatus @default(DISCONNECTED)
+  phone        String? // Connected phone/JID
+  lastError    String?                  @db.Text
+  isActive     Boolean                  @default(true)
+  lastActiveAt DateTime                 @default(now())
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
 
   @@index([restaurantId])
   @@index([status])
 }
 
 model Notification {
-  id            String           @id @default(cuid())
-  restaurantId  String
-  type          NotificationType
-  title         String
-  message       String           @db.Text
-  data          Json?
-  isRead        Boolean          @default(false)
-  createdAt     DateTime         @default(now())
+  id           String           @id @default(cuid())
+  restaurantId String
+  type         NotificationType
+  title        String
+  message      String           @db.Text
+  data         Json?
+  isRead       Boolean          @default(false)
+  createdAt    DateTime         @default(now())
 
   @@index([restaurantId])
   @@index([isRead])

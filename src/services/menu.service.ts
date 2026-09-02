@@ -40,6 +40,39 @@ export interface CreateCategoryData {
   sortOrder?: number;
 }
 
+export interface OptionGroup {
+  id: string;
+  name: string;
+  type: string;
+  isRequired: boolean;
+  minSelect: number;
+  maxSelect: number;
+  sortOrder: number;
+  isActive: boolean;
+  options: ProductOption[];
+}
+
+export interface ProductOption {
+  id: string;
+  name: string;
+  priceAdjustment: number;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface ProductAddon {
+  id: string;
+  name: string;
+  price: number;
+  sortOrder: number;
+  isActive: boolean;
+}
+
+export interface ProductWithCustomization extends Product {
+  optionGroups: OptionGroup[];
+  addons: ProductAddon[];
+}
+
 export const menuService = {
   // Categories
   async getCategories(): Promise<Category[]> {
@@ -79,6 +112,11 @@ export const menuService = {
     return response.data.data;
   },
 
+  async getProductWithCustomization(id: string): Promise<ProductWithCustomization> {
+    const response = await api.get(`/menu/products/${id}`);
+    return response.data.data;
+  },
+
   async createProduct(data: CreateProductData): Promise<Product> {
     const response = await api.post("/menu/products", data);
     return response.data.data;
@@ -99,5 +137,86 @@ export const menuService = {
   async toggleProductAvailability(id: string): Promise<Product> {
     const response = await api.patch(`/menu/products/${id}/toggle-availability`);
     return response.data.data;
+  },
+
+  // Option Groups
+  async getOptionGroups(productId: string): Promise<OptionGroup[]> {
+    const response = await api.get(`/menu/products/${productId}/option-groups`);
+    return response.data.data;
+  },
+
+  async createOptionGroup(
+    productId: string,
+    data: { name: string; type?: string; isRequired?: boolean; minSelect?: number; maxSelect?: number; sortOrder?: number }
+  ): Promise<OptionGroup> {
+    const response = await api.post(`/menu/products/${productId}/option-groups`, data);
+    return response.data.data;
+  },
+
+  async updateOptionGroup(
+    productId: string,
+    groupId: string,
+    data: Partial<{ name: string; type: string; isRequired: boolean; minSelect: number; maxSelect: number; sortOrder: number; isActive: boolean }>
+  ): Promise<OptionGroup> {
+    const response = await api.patch(`/menu/products/${productId}/option-groups/${groupId}`, data);
+    return response.data.data;
+  },
+
+  async deleteOptionGroup(productId: string, groupId: string): Promise<void> {
+    await api.delete(`/menu/products/${productId}/option-groups/${groupId}`);
+  },
+
+  // Options
+  async getOptions(groupId: string): Promise<ProductOption[]> {
+    const response = await api.get(`/menu/option-groups/${groupId}/options`);
+    return response.data.data;
+  },
+
+  async createOption(
+    groupId: string,
+    data: { name: string; priceAdjustment?: number; sortOrder?: number }
+  ): Promise<ProductOption> {
+    const response = await api.post(`/menu/option-groups/${groupId}/options`, data);
+    return response.data.data;
+  },
+
+  async updateOption(
+    groupId: string,
+    optionId: string,
+    data: Partial<{ name: string; priceAdjustment: number; sortOrder: number; isActive: boolean }>
+  ): Promise<ProductOption> {
+    const response = await api.patch(`/menu/option-groups/${groupId}/options/${optionId}`, data);
+    return response.data.data;
+  },
+
+  async deleteOption(groupId: string, optionId: string): Promise<void> {
+    await api.delete(`/menu/option-groups/${groupId}/options/${optionId}`);
+  },
+
+  // Addons
+  async getAddons(productId: string): Promise<ProductAddon[]> {
+    const response = await api.get(`/menu/products/${productId}/addons`);
+    return response.data.data;
+  },
+
+  async createAddon(
+    productId: string,
+    data: { name: string; price: number; sortOrder?: number }
+  ): Promise<ProductAddon> {
+    const response = await api.post(`/menu/products/${productId}/addons`, data);
+    return response.data.data;
+  },
+
+  async updateAddon(
+    productId: string,
+    addonId: string,
+    data: Partial<{ name: string; price: number; sortOrder: number; isActive: boolean }>
+  ): Promise<ProductAddon> {
+    const response = await api.patch(`/menu/products/${productId}/addons/${addonId}`, data);
+    return response.data.data;
+  },
+
+  async deleteAddon(productId: string, addonId: string): Promise<void> {
+    await api.delete(`/menu/products/${productId}/addons/${addonId}`);
   },
 };

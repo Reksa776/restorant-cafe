@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCart } from "@/hooks/use-cart";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, Table2, User, Phone } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 
@@ -34,23 +34,27 @@ export default function CheckoutPage() {
     totalItems,
     restaurantId,
     clearCart,
+    tableContext,
+    clearTableContext,
   } = useCart();
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
-  const [orderType, setOrderType] = useState<"DINE_IN" | "TAKEAWAY" | "DELIVERY">("DINE_IN");
-  const [tableId, setTableId] = useState("");
+  const [orderType, setOrderType] = useState<"DINE_IN" | "TAKEAWAY" | "DELIVERY">(
+    tableContext ? "DINE_IN" : "DINE_IN"
+  );
+  const [tableId, setTableId] = useState(tableContext?.tableId || "");
   const [notes, setNotes] = useState("");
   const [tables, setTables] = useState<Table[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [step, setStep] = useState<"form" | "creating" | "paying">("form");
 
-  // Load tables if restaurant is available
+  // Load tables if restaurant is available and not coming from QR
   useEffect(() => {
-    if (restaurantId && orderType === "DINE_IN") {
+    if (restaurantId && orderType === "DINE_IN" && !tableContext) {
       loadTables();
     }
-  }, [restaurantId, orderType]);
+  }, [restaurantId, orderType, tableContext]);
 
   const loadTables = async () => {
     try {
@@ -85,17 +89,54 @@ export default function CheckoutPage() {
     setStep("creating");
 
     try {
+      // Build items array with customization data
+      const orderItems = items.map((item) => {
+        const orderItem: {
+          productId: string;
+          quantity: number;
+          selections?: Array<{
+            groupId: string;
+            groupName: string;
+            optionId: string;
+            optionName: string;
+            priceAdjustment: number;
+          }>;
+          addons?: Array<{
+            addonId: string;
+            name: string;
+            price: number;
+            quantity: number;
+          }>;
+          notes?: string;
+        } = {
+          productId: item.productId,
+          quantity: item.quantity,
+        };
+
+        if (item.selections && item.selections.length > 0) {
+          orderItem.selections = item.selections;
+        }
+
+        if (item.addons && item.addons.length > 0) {
+          orderItem.addons = item.addons;
+        }
+
+        if (item.notes) {
+          orderItem.notes = item.notes;
+        }
+
+        return orderItem;
+      });
+
       // Step 1: Create order
-      const orderData = {
+      const orderData: Record<string, unknown> = {
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim() || null,
         orderType,
-        tableId: orderType === "DINE_IN" ? tableId : undefined,
+        tableId: tableContext?.tableId || (orderType === "DINE_IN" ? tableId : undefined),
+        visitorCount: tableContext?.visitorCount || undefined,
         notes: notes.trim() || undefined,
-        items: items.map((item) => ({
-          productId: item.productId,
-          quantity: item.quantity,
-        })),
+        items: orderItems,
       };
 
       const orderRes = await api.post("/public/orders", orderData);
@@ -110,8 +151,9 @@ export default function CheckoutPage() {
 
         const paymentUrl = paymentRes.data.data.paymentUrl;
 
-        // Clear cart
+        // Clear cart and table context
         clearCart();
+        clearTableContext();
         toast.success("Pesanan berhasil dibuat!");
 
         // Step 3: Redirect to iPaymu payment page
@@ -124,6 +166,7 @@ export default function CheckoutPage() {
       } catch {
         // Payment creation failed — order still exists, redirect to order page
         clearCart();
+        clearTableContext();
         toast.success("Pesanan berhasil dibuat!");
         toast.error("Gagal membuat pembayaran. Silakan bayar dari halaman pesanan.");
         router.push(`/order/${orderNumber}`);
@@ -194,9 +237,29 @@ export default function CheckoutPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Customer Information */}
+        {/* Table Info (from QR flow) */}
+        {tableContext && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center gap-3">
+              <Table2 className="h-5 w-5 text-blue-600" />
+              <div>
+                <p className="text-sm font-medium text-blue-900">
+                  {tableContext.tableName} — Meja {tableContext.tableNumber}
+                </p>
+                <p className="text-xs text-blue-600">
+                  {tableContext.visitorCount} pengunjung
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Customer Information — Guest Checkout */}
         <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
-          <h2 className="font-medium">Informasi Pelanggan</h2>
+          <div className="flex items-center gap-2">
+            <User className="h-4 w-4 text-gray-500" />
+            <h2 className="font-medium">Data Pelanggan</h2>
+          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -217,69 +280,74 @@ export default function CheckoutPage() {
               Nomor WhatsApp{" "}
               <span className="text-gray-400 font-normal">(opsional)</span>
             </label>
-            <input
-              type="tel"
-              value={customerPhone}
-              onChange={(e) => setCustomerPhone(e.target.value)}
-              placeholder="081234567890"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
-            />
+            <div className="relative">
+              <Phone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+              <input
+                type="tel"
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                placeholder="081234567890"
+                className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+              />
+            </div>
             <p className="text-xs text-gray-400 mt-1">
               Untuk notifikasi WhatsApp jika pesanan sudah selesai
             </p>
           </div>
         </div>
 
-        {/* Order Type */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
-          <h2 className="font-medium">Tipe Pesanan</h2>
+        {/* Order Type — only show if not from QR */}
+        {!tableContext && (
+          <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
+            <h2 className="font-medium">Tipe Pesanan</h2>
 
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { value: "DINE_IN", label: "Dine In", icon: "🪑" },
-              { value: "TAKEAWAY", label: "Takeaway", icon: "📦" },
-              { value: "DELIVERY", label: "Delivery", icon: "🚗" },
-            ].map((type) => (
-              <button
-                key={type.value}
-                type="button"
-                onClick={() =>
-                  setOrderType(type.value as typeof orderType)
-                }
-                className={`p-3 rounded-lg border-2 text-center transition-colors ${
-                  orderType === type.value
-                    ? "border-black bg-gray-50"
-                    : "border-gray-200 hover:border-gray-300"
-                }`}
-              >
-                <span className="text-2xl block mb-1">{type.icon}</span>
-                <span className="text-sm font-medium">{type.label}</span>
-              </button>
-            ))}
-          </div>
-
-          {/* Table Selection for DINE_IN */}
-          {orderType === "DINE_IN" && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Pilih Meja <span className="text-red-500">*</span>
-              </label>
-              <select
-                value={tableId}
-                onChange={(e) => setTableId(e.target.value)}
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
-                required
-              >
-                <option value="">Pilih meja...</option>
-                {tables.map((table) => (
-                  <option key={table.id} value={table.id}>
-                    {table.name} (Kapasitas: {table.capacity})
-                  </option>
-                ))}
-              </select>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { value: "DINE_IN", label: "Dine In", icon: "🪑" },
+                { value: "TAKEAWAY", label: "Takeaway", icon: "📦" },
+                { value: "DELIVERY", label: "Delivery", icon: "🚗" },
+              ].map((type) => (
+                <button
+                  key={type.value}
+                  type="button"
+                  onClick={() =>
+                    setOrderType(type.value as typeof orderType)
+                  }
+                  className={`p-3 rounded-lg border-2 text-center transition-colors ${
+                    orderType === type.value
+                      ? "border-black bg-gray-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  <span className="text-2xl block mb-1">{type.icon}</span>
+                  <span className="text-sm font-medium">{type.label}</span>
+                </button>
+              ))}
             </div>
-          )}
-        </div>
+
+            {/* Table Selection for DINE_IN without QR */}
+            {orderType === "DINE_IN" && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Pilih Meja <span className="text-red-500">*</span>
+                </label>
+                <select
+                  value={tableId}
+                  onChange={(e) => setTableId(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+                  required
+                >
+                  <option value="">Pilih meja...</option>
+                  {tables.map((table) => (
+                    <option key={table.id} value={table.id}>
+                      {table.name} (Kapasitas: {table.capacity})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Notes */}
         <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
@@ -299,14 +367,40 @@ export default function CheckoutPage() {
 
           {/* Items */}
           <div className="space-y-2">
-            {items.map((item) => (
-              <div key={item.productId} className="flex justify-between text-sm">
-                <span className="text-gray-600">
-                  {item.name} x{item.quantity}
-                </span>
-                <span>
-                  Rp{(item.price * item.quantity).toLocaleString("id-ID")}
-                </span>
+            {items.map((item, index) => (
+              <div key={`${item.productId}-${index}`} className="space-y-0.5">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-600">
+                    {item.name} x{item.quantity}
+                  </span>
+                  <span>
+                    Rp{((item.displayPrice || item.price) * item.quantity).toLocaleString("id-ID")}
+                  </span>
+                </div>
+                {/* Show customization summary */}
+                {item.selections && item.selections.length > 0 && (
+                  <div className="pl-2">
+                    {item.selections.map((s, i) => (
+                      <p key={i} className="text-[11px] text-gray-400">
+                        {s.groupName}: {s.optionName}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {item.addons && item.addons.length > 0 && (
+                  <div className="pl-2">
+                    {item.addons.map((a, i) => (
+                      <p key={i} className="text-[11px] text-gray-400">
+                        + {a.name} x{a.quantity}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {item.notes && (
+                  <p className="pl-2 text-[11px] text-gray-400 italic">
+                    Catatan: {item.notes}
+                  </p>
+                )}
               </div>
             ))}
           </div>

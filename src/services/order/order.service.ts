@@ -244,6 +244,19 @@ export class OrderService {
         isActive: true,
         isAvailable: true,
       },
+      include: {
+        optionGroups: {
+          where: { isActive: true },
+          include: {
+            options: { where: { isActive: true } },
+          },
+          orderBy: { sortOrder: "asc" },
+        },
+        addons: {
+          where: { isActive: true },
+          orderBy: { sortOrder: "asc" },
+        },
+      },
     });
 
     if (products.length !== productIds.length) {
@@ -261,15 +274,124 @@ export class OrderService {
     let subtotal = 0;
     const orderItems = input.items.map((item) => {
       const product = productMap.get(item.productId)!;
-      const unitPrice = Number(product.price);
+      const basePrice = Number(product.price);
+
+      // Validate and calculate selections (variants)
+      let selectionPriceAdj = 0;
+      const validatedSelections: Array<{
+        groupId: string;
+        groupName: string;
+        optionId: string;
+        optionName: string;
+        priceAdjustment: number;
+      }> = [];
+
+      if (item.selections && item.selections.length > 0) {
+        for (const selection of item.selections) {
+          // Find the option group on this product
+          const group = product.optionGroups.find((g) => g.id === selection.groupId);
+          if (!group) {
+            throw new ValidationError(
+              `Option group tidak valid untuk produk ${product.name}`
+            );
+          }
+
+          // Find the option within the group
+          const option = group.options.find((o) => o.id === selection.optionId);
+          if (!option) {
+            throw new ValidationError(
+              `Option tidak valid: ${selection.optionName}`
+            );
+          }
+
+          const priceAdj = Number(option.priceAdjustment);
+          selectionPriceAdj += priceAdj;
+
+          validatedSelections.push({
+            groupId: group.id,
+            groupName: group.name,
+            optionId: option.id,
+            optionName: option.name,
+            priceAdjustment: priceAdj,
+          });
+        }
+
+        // Validate required groups are satisfied
+        for (const group of product.optionGroups) {
+          if (group.isRequired) {
+            const hasSelection = validatedSelections.some(
+              (s) => s.groupId === group.id
+            );
+            if (!hasSelection) {
+              throw new ValidationError(
+                `Wajib memilih ${group.name} untuk ${product.name}`
+              );
+            }
+          }
+        }
+      } else {
+        // Check if there are required groups that weren't provided
+        for (const group of product.optionGroups) {
+          if (group.isRequired && group.options.length > 0) {
+            throw new ValidationError(
+              `Wajib memilih ${group.name} untuk ${product.name}`
+            );
+          }
+        }
+      }
+
+      // Validate and calculate addons
+      let addonPrice = 0;
+      const validatedAddons: Array<{
+        addonId: string;
+        name: string;
+        price: number;
+        quantity: number;
+      }> = [];
+
+      if (item.addons && item.addons.length > 0) {
+        for (const addon of item.addons) {
+          // Find the addon on this product
+          const dbAddon = product.addons.find((a) => a.id === addon.addonId);
+          if (!dbAddon) {
+            throw new ValidationError(
+              `Addon tidak valid: ${addon.name}`
+            );
+          }
+
+          const addonPriceTotal = Number(dbAddon.price) * addon.quantity;
+          addonPrice += addonPriceTotal;
+
+          validatedAddons.push({
+            addonId: dbAddon.id,
+            name: dbAddon.name,
+            price: Number(dbAddon.price),
+            quantity: addon.quantity,
+          });
+        }
+      }
+
+      // Unit price = base price + selection adjustments + addon prices
+      const unitPrice = basePrice + selectionPriceAdj + addonPrice;
       const totalPrice = unitPrice * item.quantity;
       subtotal += totalPrice;
+
+      // Build customization snapshot
+      const customizations = {
+        productName: product.name,
+        basePrice,
+        selections: validatedSelections,
+        addons: validatedAddons,
+        notes: item.notes || null,
+      };
 
       return {
         productId: item.productId,
         quantity: item.quantity,
         unitPrice,
         totalPrice,
+        notes: item.notes || null,
+        customizations: JSON.stringify(customizations),
       };
     });
 
@@ -329,6 +451,7 @@ export class OrderService {
           orderNumber,
           customerId: customer.id,
           tableId: input.tableId || null,
+          visitorCount: input.visitorCount || null,
           orderType: input.orderType || "DINE_IN",
           status: "PENDING",
           paymentStatus: "UNPAID",
@@ -493,6 +616,16 @@ export class OrderService {
             notes: true,
             createdAt: true,
           },
+        },
+        payments: {
+          select: {
+            method: true,
+            provider: true,
+            status: true,
+            amount: true,
+          },
+          orderBy: { createdAt: "desc" },
+          take: 1,
         },
       },
     });

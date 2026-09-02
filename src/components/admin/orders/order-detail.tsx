@@ -187,6 +187,11 @@ export function OrderDetail({ order, open, onOpenChange }: OrderDetailProps) {
                 Meja {order.table.number}
               </Badge>
             )}
+            {order.visitorCount && (
+              <Badge variant="outline" className="text-xs">
+                {order.visitorCount} orang
+              </Badge>
+            )}
           </div>
 
           {/* Customer Info */}
@@ -222,18 +227,58 @@ export function OrderDetail({ order, open, onOpenChange }: OrderDetailProps) {
             <h3 className="text-sm font-medium text-muted-foreground">
               Item Pesanan
             </h3>
-            <div className="space-y-1.5">
-              {order.items.map((item) => (
-                <div key={item.id} className="flex justify-between text-sm py-1">
-                  <div>
-                    <span className="font-medium">{item.quantity}x</span>{" "}
-                    <span>{item.product.name}</span>
+            <div className="space-y-2">
+              {order.items.map((item) => {
+                let customizations: { selections?: Array<{ groupName: string; optionName: string; priceAdjustment: number }>; addons?: Array<{ name: string; price: number; quantity: number }>; notes?: string } | null = null;
+                if (item.customizations) {
+                  try {
+                    customizations = typeof item.customizations === "string"
+                      ? JSON.parse(item.customizations as string)
+                      : item.customizations;
+                  } catch {
+                    // ignore
+                  }
+                }
+                return (
+                  <div key={item.id} className="text-sm py-1">
+                    <div className="flex justify-between">
+                      <div>
+                        <span className="font-medium">{item.quantity}x</span>{" "}
+                        <span>{item.product.name}</span>
+                      </div>
+                      <span className="font-medium tabular-nums">
+                        Rp{Number(item.totalPrice).toLocaleString("id-ID")}
+                      </span>
+                    </div>
+                    {customizations?.selections && (
+                      <div className="pl-4 mt-0.5">
+                        {customizations.selections.map((s, i) => (
+                          <p key={i} className="text-xs text-muted-foreground">
+                            {s.groupName}: {s.optionName}
+                            {s.priceAdjustment > 0 && (
+                              <span className="text-muted-foreground/70"> +Rp{s.priceAdjustment.toLocaleString("id-ID")}</span>
+                            )}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    {customizations?.addons && (
+                      <div className="pl-4 mt-0.5">
+                        {customizations.addons.map((a, i) => (
+                          <p key={i} className="text-xs text-muted-foreground">
+                            + {a.name} x{a.quantity}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                    {item.notes && (
+                      <p className="pl-4 text-xs text-muted-foreground italic mt-0.5">
+                        Catatan: {item.notes}
+                      </p>
+                    )}
                   </div>
-                  <span className="font-medium tabular-nums">
-                    Rp{Number(item.totalPrice).toLocaleString("id-ID")}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

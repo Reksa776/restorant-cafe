@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
       orderBy: { sortOrder: "asc" },
     });
 
-    // Get products
+    // Get products with option groups and addons
     const productWhere: Record<string, unknown> = {
       restaurantId,
       isActive: true,
@@ -57,6 +57,20 @@ export async function GET(request: NextRequest) {
       include: {
         category: {
           select: { id: true, name: true },
+        },
+        optionGroups: {
+          where: { isActive: true },
+          include: {
+            options: {
+              where: { isActive: true },
+              orderBy: { sortOrder: "asc" },
+            },
+          },
+          orderBy: { sortOrder: "asc" },
+        },
+        addons: {
+          where: { isActive: true },
+          orderBy: { sortOrder: "asc" },
         },
       },
       orderBy: { name: "asc" },

@@ -23,20 +23,44 @@ export async function GET(
       paymentStatus: order.paymentStatus,
       orderType: order.orderType,
       grandTotal: order.grandTotal,
+      subtotal: order.subtotal,
+      tax: order.tax,
+      serviceCharge: order.serviceCharge,
+      discount: order.discount,
+      visitorCount: order.visitorCount,
       notes: order.notes,
       createdAt: order.createdAt,
       customer: {
         name: order.customer?.name,
+        phone: order.customer?.phone?.startsWith("guest-")
+          ? null
+          : order.customer?.phone,
       },
       table: order.table
         ? { number: order.table.number, name: order.table.name }
         : null,
-      items: order.items.map((item) => ({
-        name: item.product.name,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        totalPrice: item.totalPrice,
-      })),
+      items: order.items.map((item) => {
+        // Parse customization snapshot if present
+        let customizations = null;
+        if (item.customizations) {
+          try {
+            customizations = typeof item.customizations === "string"
+              ? JSON.parse(item.customizations as string)
+              : item.customizations;
+          } catch {
+            // ignore parse errors
+          }
+        }
+        return {
+          name: item.product.name,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          totalPrice: item.totalPrice,
+          notes: item.notes,
+          customizations,
+        };
+      }),
+      payments: order.payments,
       statusHistory: order.statusHistory.map((h) => ({
         status: h.status,
         notes: h.notes,

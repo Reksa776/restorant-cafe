@@ -4,17 +4,35 @@ import { z } from "zod/v4";
 // Validation Schemas
 // ============================================================
 
+export const OrderSelectionSchema = z.object({
+  groupId: z.string().min(1),
+  groupName: z.string().min(1),
+  optionId: z.string().min(1),
+  optionName: z.string().min(1),
+  priceAdjustment: z.number().default(0),
+});
+
+export const OrderAddonSchema = z.object({
+  addonId: z.string().min(1),
+  name: z.string().min(1),
+  price: z.number(),
+  quantity: z.number().int().positive().default(1),
+});
+
+export const OrderItemInputSchema = z.object({
+  productId: z.string().min(1),
+  quantity: z.number().int().positive(),
+  selections: z.array(OrderSelectionSchema).optional(),
+  addons: z.array(OrderAddonSchema).optional(),
+  notes: z.string().optional(),
+});
+
 export const CreateOrderSchema = z.object({
   customerId: z.string().min(1),
   tableId: z.string().optional(),
   orderType: z.enum(["DINE_IN", "TAKEAWAY", "DELIVERY"]).default("DINE_IN"),
   items: z
-    .array(
-      z.object({
-        productId: z.string().min(1),
-        quantity: z.number().int().positive(),
-      })
-    )
+    .array(OrderItemInputSchema)
     .min(1),
   notes: z.string().optional(),
 });
@@ -28,14 +46,10 @@ export const CreateCustomerOrderSchema = z.object({
   customerPhone: z.string().optional().nullable(),
   orderType: z.enum(["DINE_IN", "TAKEAWAY", "DELIVERY"]).default("DINE_IN"),
   tableId: z.string().optional(),
+  visitorCount: z.number().int().min(1).max(100).optional(),
   notes: z.string().optional(),
   items: z
-    .array(
-      z.object({
-        productId: z.string().min(1),
-        quantity: z.number().int().positive(),
-      })
-    )
+    .array(OrderItemInputSchema)
     .min(1, "Minimal 1 item harus dipilih"),
 });
 
@@ -69,6 +83,20 @@ export interface OrderItemData {
   quantity: number;
   unitPrice: number;
   totalPrice: number;
+  selections?: Array<{
+    groupId: string;
+    groupName: string;
+    optionId: string;
+    optionName: string;
+    priceAdjustment: number;
+  }>;
+  addons?: Array<{
+    addonId: string;
+    name: string;
+    price: number;
+    quantity: number;
+  }>;
+  notes?: string;
 }
 
 export interface OrderWithRelations {

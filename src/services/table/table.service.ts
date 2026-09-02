@@ -164,7 +164,7 @@ export class TableService {
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const qrData = `${baseUrl}/order?table=${table.number}`;
+    const qrData = `${baseUrl}/t/${table.number}`;
 
     const qrCode = await QRCode.toDataURL(qrData, {
       width: 300,

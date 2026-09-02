@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
 
     const products = await menuService.getProducts(restaurantId, {
       categoryId,
-      isAvailable: isAvailable !== undefined ? isAvailable === "true" : undefined,
+      isAvailable: isAvailable != null ? isAvailable === "true" : undefined,
       search,
     });
 
