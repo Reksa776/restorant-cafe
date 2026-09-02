@@ -9,7 +9,7 @@ set -Eeuo pipefail
 NOTIFIER="http://127.0.0.1:3030/notify"
 WA_NUMBER="6285793822395"
 
-PROJECT="Restaurant/Caffe"
+PROJECT="Restaurant-Caffe"
 BRANCH="main"
 
 LOG_FILE="/tmp/deploy-${PROJECT}.log"
