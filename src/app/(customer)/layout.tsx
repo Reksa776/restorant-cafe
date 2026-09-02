@@ -56,6 +56,7 @@ function CustomerHeader() {
     </header>
   );
 }
+
 export default function CustomerLayout({
   children,
 }: {
