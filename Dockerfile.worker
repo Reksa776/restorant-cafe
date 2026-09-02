@@ -1,0 +1,29 @@
+# Worker Dockerfile — standalone WhatsApp/Notification worker
+# Uses tsx to run TypeScript directly (avoids complex build pipeline)
+
+FROM node:20-alpine AS deps
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Stage 2: Application code
+FROM node:20-alpine AS app
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Generate Prisma Client
+RUN npx prisma generate
+
+# Copy node_modules needed for runtime
+RUN mkdir -p /app/node_modules/.prisma && \
+    cp -r /app/node_modules/.prisma/client ./node_modules/.prisma/ 2>/dev/null || true
+
+ENV NODE_ENV=production
+
+# Create directory for WhatsApp sessions
+RUN mkdir -p /app/whatsapp-session
+
+CMD ["npx", "tsx", "src/workers/whatsapp.worker.ts"]
