@@ -426,17 +426,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   // Customized add — with variants, addons, notes
   const addCustomizedItem = useCallback((item: Omit<CartItem, "displayPrice">) => {
-    // Calculate displayPrice from selections and addons
-    let displayPrice = item.price;
+    // Calculate displayPrice from selections and addons.
+    // Defensive: Decimal values may arrive as strings (e.g. legacy cart
+    // entries or API-serialized values), so coerce with Number().
+    let displayPrice = Number(item.price) || 0;
     if (item.selections) {
       displayPrice += item.selections.reduce(
-        (sum, s) => sum + s.priceAdjustment,
+        (sum, s) => sum + (Number(s.priceAdjustment) || 0),
         0
       );
     }
     if (item.addons) {
       displayPrice += item.addons.reduce(
-        (sum, a) => sum + a.price * a.quantity,
+        (sum, a) => sum + (Number(a.price) || 0) * a.quantity,
         0
       );
     }
@@ -469,12 +471,19 @@ export function CartProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateCartItem = useCallback((index: number, item: Omit<CartItem, "displayPrice">) => {
-    let displayPrice = item.price;
+    // Defensive: coerce Decimal-as-string values to numbers
+    let displayPrice = Number(item.price) || 0;
     if (item.selections) {
-      displayPrice += item.selections.reduce((sum, s) => sum + s.priceAdjustment, 0);
+      displayPrice += item.selections.reduce(
+        (sum, s) => sum + (Number(s.priceAdjustment) || 0),
+        0
+      );
     }
     if (item.addons) {
-      displayPrice += item.addons.reduce((sum, a) => sum + a.price * a.quantity, 0);
+      displayPrice += item.addons.reduce(
+        (sum, a) => sum + (Number(a.price) || 0) * a.quantity,
+        0
+      );
     }
     const cartItem: CartItem = { ...item, displayPrice };
 

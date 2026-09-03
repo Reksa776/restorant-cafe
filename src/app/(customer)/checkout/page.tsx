@@ -49,6 +49,11 @@ export default function CheckoutPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [step, setStep] = useState<"form" | "creating" | "paying">("form");
 
+  // DINE_IN orders (QR table flow or manually selected) are tax-free and
+  // service-free — subtotal = total. TAKEAWAY / DELIVERY keep tax + service.
+  const isDineIn = (tableContext ? "DINE_IN" : orderType) === "DINE_IN";
+  const displayTotal = isDineIn ? subtotal : grandTotal;
+
   // Load tables if restaurant is available and not coming from QR
   useEffect(() => {
     if (restaurantId && orderType === "DINE_IN" && !tableContext) {
@@ -80,7 +85,11 @@ export default function CheckoutPage() {
       return;
     }
 
-    if (orderType === "DINE_IN" && !tableId) {
+    // tableContext hydrates asynchronously from localStorage (refreshing the
+    // checkout page), so it may not be available at first render — trust it
+    // over the tableId state initialized on mount.
+    const effectiveTableId = tableContext?.tableId || tableId;
+    if (orderType === "DINE_IN" && !effectiveTableId) {
       toast.error("Pilih meja untuk dine-in");
       return;
     }
@@ -237,20 +246,18 @@ export default function CheckoutPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Table Info (from QR flow) */}
+        {/* Table Info (from QR flow — never asks to re-pick a table) */}
         {tableContext && (
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <div className="flex items-center gap-3">
-              <Table2 className="h-5 w-5 text-blue-600" />
-              <div>
-                <p className="text-sm font-medium text-blue-900">
-                  {tableContext.tableName} — Meja {tableContext.tableNumber}
-                </p>
-                <p className="text-xs text-blue-600">
-                  {tableContext.visitorCount} pengunjung
-                </p>
-              </div>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Table2 className="h-5 w-5 text-blue-600 flex-shrink-0" />
+              <p className="font-semibold text-blue-900 text-[15px] truncate">
+                Meja {tableContext.tableNumber}
+              </p>
             </div>
+            <p className="text-sm text-blue-700 whitespace-nowrap">
+              {tableContext.visitorCount} pengunjung
+            </p>
           </div>
         )}
 
@@ -410,17 +417,21 @@ export default function CheckoutPage() {
               <span className="text-gray-500">Subtotal</span>
               <span>Rp{subtotal.toLocaleString("id-ID")}</span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Pajak (10%)</span>
-              <span>Rp{tax.toLocaleString("id-ID")}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Service Charge (5%)</span>
-              <span>Rp{serviceCharge.toLocaleString("id-ID")}</span>
-            </div>
+            {!isDineIn && (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Pajak (10%)</span>
+                  <span>Rp{tax.toLocaleString("id-ID")}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Service Charge (5%)</span>
+                  <span>Rp{serviceCharge.toLocaleString("id-ID")}</span>
+                </div>
+              </>
+            )}
             <div className="border-t pt-2 flex justify-between font-bold">
               <span>Total</span>
-              <span>Rp{grandTotal.toLocaleString("id-ID")}</span>
+              <span>Rp{displayTotal.toLocaleString("id-ID")}</span>
             </div>
           </div>
         </div>

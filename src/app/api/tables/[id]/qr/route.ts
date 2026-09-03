@@ -11,7 +11,19 @@ export async function POST(
   try {
     const { restaurantId } = await requireAdmin();
     const { id } = await params;
-    const result = await tableService.generateQrCode(id, restaurantId);
+    // Optional baseUrl from the client (current origin) keeps the QR payload
+    // identical to the customer link shown in the admin UI.
+    let body: { baseUrl?: string } = {};
+    try {
+      body = await request.json();
+    } catch {
+      // no body — fall back to NEXT_PUBLIC_APP_URL
+    }
+    const result = await tableService.generateQrCode(
+      id,
+      restaurantId,
+      typeof body?.baseUrl === "string" ? body.baseUrl : undefined
+    );
 
     return successResponse(result, "QR code generated successfully");
   } catch (error) {

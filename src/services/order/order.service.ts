@@ -138,9 +138,11 @@ export class OrderService {
       };
     });
 
-    // Calculate tax and service charge (10% tax, 5% service charge)
-    const tax = Math.round(subtotal * 0.1);
-    const serviceCharge = Math.round(subtotal * 0.05);
+    // DINE_IN orders are tax-free and service-free: total = subtotal.
+    // TAKEAWAY / DELIVERY keep the 10% tax + 5% service charge.
+    const isDineIn = input.orderType === "DINE_IN";
+    const tax = isDineIn ? 0 : Math.round(subtotal * 0.1);
+    const serviceCharge = isDineIn ? 0 : Math.round(subtotal * 0.05);
     const grandTotal = subtotal + tax + serviceCharge;
 
     // Generate order number
@@ -316,23 +318,28 @@ export class OrderService {
           });
         }
 
-        // Validate required groups are satisfied
+        // Validate required groups, minSelect, and maxSelect are satisfied
         for (const group of product.optionGroups) {
-          if (group.isRequired) {
-            const hasSelection = validatedSelections.some(
-              (s) => s.groupId === group.id
+          const groupSelections = validatedSelections.filter(
+            (s) => s.groupId === group.id
+          );
+          const count = groupSelections.length;
+
+          if (group.isRequired && count < group.minSelect) {
+            throw new ValidationError(
+              `Wajib memilih minimal ${group.minSelect} dari ${group.name} untuk ${product.name}`
             );
-            if (!hasSelection) {
-              throw new ValidationError(
-                `Wajib memilih ${group.name} untuk ${product.name}`
-              );
-            }
+          }
+          if (count > group.maxSelect) {
+            throw new ValidationError(
+              `Maksimal memilih ${group.maxSelect} dari ${group.name} untuk ${product.name}`
+            );
           }
         }
       } else {
         // Check if there are required groups that weren't provided
         for (const group of product.optionGroups) {
-          if (group.isRequired && group.options.length > 0) {
+          if (group.isRequired && group.minSelect > 0 && group.options.length > 0) {
             throw new ValidationError(
               `Wajib memilih ${group.name} untuk ${product.name}`
             );
@@ -395,9 +402,11 @@ export class OrderService {
       };
     });
 
-    // Calculate tax and service charge (10% tax, 5% service charge)
-    const tax = Math.round(subtotal * 0.1);
-    const serviceCharge = Math.round(subtotal * 0.05);
+    // DINE_IN orders are tax-free and service-free: total = subtotal.
+    // TAKEAWAY / DELIVERY keep the 10% tax + 5% service charge.
+    const isDineIn = input.orderType === "DINE_IN";
+    const tax = isDineIn ? 0 : Math.round(subtotal * 0.1);
+    const serviceCharge = isDineIn ? 0 : Math.round(subtotal * 0.05);
     const grandTotal = subtotal + tax + serviceCharge;
 
     // Generate order number

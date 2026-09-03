@@ -9,13 +9,16 @@ export const OrderSelectionSchema = z.object({
   groupName: z.string().min(1),
   optionId: z.string().min(1),
   optionName: z.string().min(1),
-  priceAdjustment: z.number().default(0),
+  // coerce: Prisma Decimal can serialize as string ("5000.00");
+  // server always recomputes authoritative prices from DB anyway.
+  priceAdjustment: z.coerce.number().default(0),
 });
 
 export const OrderAddonSchema = z.object({
   addonId: z.string().min(1),
   name: z.string().min(1),
-  price: z.number(),
+  // coerce: Prisma Decimal can serialize as string.
+  price: z.coerce.number(),
   quantity: z.number().int().positive().default(1),
 });
 

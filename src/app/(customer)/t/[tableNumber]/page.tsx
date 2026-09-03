@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Users, ArrowRight, AlertCircle } from "lucide-react";
+import { Loader2, Users, ArrowRight, AlertCircle, Table2 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { useCart } from "@/hooks/use-cart";
@@ -131,17 +131,18 @@ export default function TableLandingPage({
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 px-4">
-      {/* Restaurant Name */}
-      <div className="text-center">
-        <p className="text-sm text-gray-400 mb-1">{tableInfo.restaurant.name}</p>
-        <h1 className="text-2xl font-bold text-gray-900">
-          {tableInfo.tableName}
+      {/* Welcome */}
+      <div className="text-center space-y-2">
+        <p className="text-sm text-gray-400">{tableInfo.restaurant.name}</p>
+        <h1 className="text-3xl font-bold text-gray-900">
+          Selamat Datang
         </h1>
-        <p className="text-sm text-gray-500 mt-1">
-          Meja Nomor {tableInfo.tableNumber}
-        </p>
-        <p className="text-xs text-gray-400 mt-0.5">
-          Kapasitas: {tableInfo.capacity} orang
+        <span className="inline-flex items-center gap-1.5 bg-gray-900 text-white text-sm font-semibold px-3.5 py-1.5 rounded-full">
+          <Table2 className="h-4 w-4" />
+          Meja {tableInfo.tableNumber}
+        </span>
+        <p className="text-xs text-gray-400">
+          Kapasitas meja: {tableInfo.capacity} orang
         </p>
       </div>
 
@@ -150,8 +151,8 @@ export default function TableLandingPage({
 
       {/* Visitor Count */}
       <div className="w-full max-w-xs space-y-3">
-        <label className="block text-sm font-medium text-gray-700 text-center">
-          Jumlah Pengunjung
+        <label className="block text-base font-semibold text-gray-900 text-center">
+          Berapa orang yang makan?
         </label>
         <div className="flex items-center justify-center gap-4">
           <button
@@ -202,7 +203,7 @@ export default function TableLandingPage({
           <Loader2 className="h-5 w-5 animate-spin" />
         ) : (
           <>
-            Lanjut ke Menu
+            Mulai Pesan
             <ArrowRight className="h-4 w-4" />
           </>
         )}

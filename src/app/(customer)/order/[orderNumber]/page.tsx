@@ -401,18 +401,23 @@ export default function OrderTrackingPage({
               </span>
             </div>
           )}
-          <div className="flex justify-between">
-            <span className="text-gray-500">Pajak (10%)</span>
-            <span>
-              Rp{Number(order.tax).toLocaleString("id-ID")}
-            </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-gray-500">Service Charge (5%)</span>
-            <span>
-              Rp{Number(order.serviceCharge).toLocaleString("id-ID")}
-            </span>
-          </div>
+          {/* Tax/service rows only when they apply (DINE_IN orders are free) */}
+          {Number(order.tax) > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Pajak (10%)</span>
+              <span>
+                Rp{Number(order.tax).toLocaleString("id-ID")}
+              </span>
+            </div>
+          )}
+          {Number(order.serviceCharge) > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Service Charge (5%)</span>
+              <span>
+                Rp{Number(order.serviceCharge).toLocaleString("id-ID")}
+              </span>
+            </div>
+          )}
           <div className="border-t pt-2 flex justify-between font-bold">
             <span>Total</span>
             <span>

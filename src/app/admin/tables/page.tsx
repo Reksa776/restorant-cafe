@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,7 +25,18 @@ import {
   tableService,
   type RestaurantTable,
 } from "@/services/table.service";
-import { Plus, Pencil, Trash2, QrCode } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  QrCode,
+  Link2,
+  Copy,
+  ExternalLink,
+  Download,
+  Loader2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 const statusColors: Record<string, string> = {
@@ -33,6 +44,40 @@ const statusColors: Record<string, string> = {
   OCCUPIED: "bg-red-100 text-red-800",
   MAINTENANCE: "bg-yellow-100 text-yellow-800",
 };
+
+const statusLabels: Record<string, string> = {
+  AVAILABLE: "Tersedia",
+  OCCUPIED: "Terisi",
+  MAINTENANCE: "Maintenance",
+};
+
+/**
+ * Copy text to clipboard with a fallback for non-secure contexts.
+ */
+async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to legacy path
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
 
 export default function TablesPage() {
   const [tables, setTables] = useState<RestaurantTable[]>([]);
@@ -47,7 +92,17 @@ export default function TablesPage() {
     capacity: "4",
   });
   const [qrCode, setQrCode] = useState<string | null>(null);
+  const [qrTable, setQrTable] = useState<RestaurantTable | null>(null);
   const [isQrDialogOpen, setIsQrDialogOpen] = useState(false);
+  const [generatingQrId, setGeneratingQrId] = useState<string | null>(null);
+  // Current origin (domain the admin is using). Customer links + QR payloads
+  // are derived from it; empty on the server (cards only render after data
+  // loads client-side, so no hydration mismatch).
+  const [origin] = useState(() =>
+    typeof window !== "undefined"
+      ? window.location.origin.replace(/\/+$/, "")
+      : ""
+  );
 
   useEffect(() => {
     loadTables();
@@ -117,16 +172,50 @@ export default function TablesPage() {
     }
   };
 
-  const handleGenerateQr = async (id: string) => {
+  /**
+   * Customer (public) ordering URL for a table: {origin}/t/{tableNumber}
+   */
+  const customerUrl = (table: RestaurantTable): string =>
+    origin ? `${origin}/t/${table.number}` : "";
+
+  /**
+   * Generate (or refresh) the QR for a table and show the detail modal.
+   * The QR payload is the exact same customer URL shown in the UI.
+   */
+  const handleViewQr = async (table: RestaurantTable) => {
+    setGeneratingQrId(table.id);
     try {
-      const qr = await tableService.generateQrCode(id);
-      setQrCode(qr);
+      const result = await tableService.generateQrCode(
+        table.id,
+        window.location.origin
+      );
+      setQrCode(result.qrCode);
+      setQrTable(table);
       setIsQrDialogOpen(true);
       loadTables();
     } catch (error) {
       console.error("Failed to generate QR code:", error);
       toast.error("Gagal generate QR code");
+    } finally {
+      setGeneratingQrId(null);
     }
+  };
+
+  const handleCopyLink = async (table: RestaurantTable) => {
+    const url = customerUrl(table);
+    if (!url) return;
+    const ok = await copyToClipboard(url);
+    toast.success(ok ? "Link meja disalin" : "Gagal menyalin link");
+  };
+
+  const handleDownloadQr = () => {
+    if (!qrCode || !qrTable) return;
+    const a = document.createElement("a");
+    a.href = qrCode;
+    a.download = `qr-meja-${qrTable.number}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
   return (
@@ -134,7 +223,7 @@ export default function TablesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold">Meja</h1>
-          <p className="text-gray-500">Kelola meja restoran</p>
+          <p className="text-gray-500">Kelola meja dan link QR restoran</p>
         </div>
         <Button
           onClick={() => {
@@ -158,51 +247,99 @@ export default function TablesPage() {
             </p>
           ) : (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {tables.map((table) => (
-                <Card key={table.id}>
-                  <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between">
-                      <CardTitle className="text-lg">{table.name}</CardTitle>
-                      <Badge className={statusColors[table.status]}>
-                        {table.status}
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      <p className="text-sm text-gray-500">
-                        Kapasitas: {table.capacity} orang
-                      </p>
-                      <div className="flex gap-2">
-                        <Select
-                          value={table.status}
-                          onValueChange={(value) =>
-                            handleStatusChange(
-                              table.id,
-                              value as "AVAILABLE" | "OCCUPIED" | "MAINTENANCE"
-                            )
-                          }
-                        >
-                          <SelectTrigger className="flex-1">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="AVAILABLE">Tersedia</SelectItem>
-                            <SelectItem value="OCCUPIED">Terisi</SelectItem>
-                            <SelectItem value="MAINTENANCE">
-                              Maintenance
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
+              {tables.map((table) => {
+                const url = customerUrl(table);
+                return (
+                  <Card key={table.id} className="overflow-hidden">
+                    <CardHeader className="pb-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <CardTitle className="text-lg truncate">
+                          {table.name}
+                        </CardTitle>
+                        <Badge className={statusColors[table.status]}>
+                          {statusLabels[table.status]}
+                        </Badge>
                       </div>
-                      <div className="flex gap-2">
+                      <p className="text-xs text-gray-400">
+                        Meja Nomor {table.number} · Kapasitas {table.capacity}{" "}
+                        orang
+                      </p>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      {/* QR + customer link */}
+                      <div className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50/60 p-2.5">
+                        {table.qrCode ? (
+                          <img
+                            src={table.qrCode}
+                            alt={`QR Meja ${table.number}`}
+                            className="w-14 h-14 rounded-md border border-gray-200 bg-white flex-shrink-0"
+                          />
+                        ) : (
+                          <div className="w-14 h-14 rounded-md border border-dashed border-gray-300 bg-white flex items-center justify-center flex-shrink-0">
+                            <QrCode className="h-5 w-5 text-gray-300" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p
+                            title={url || "Load halaman untuk melihat link"}
+                            className="text-xs text-gray-600 font-mono truncate"
+                          >
+                            {url || "Memuat link…"}
+                          </p>
+                          <button
+                            onClick={() => handleCopyLink(table)}
+                            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-gray-700 hover:text-black transition-colors"
+                          >
+                            <Copy className="h-3 w-3" />
+                            Copy Link
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Status */}
+                      <Select
+                        value={table.status}
+                        onValueChange={(value) =>
+                          handleStatusChange(
+                            table.id,
+                            value as "AVAILABLE" | "OCCUPIED" | "MAINTENANCE"
+                          )
+                        }
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="AVAILABLE">Tersedia</SelectItem>
+                          <SelectItem value="OCCUPIED">Terisi</SelectItem>
+                          <SelectItem value="MAINTENANCE">
+                            Maintenance
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      {/* Actions */}
+                      <div className="flex flex-wrap gap-1.5">
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleGenerateQr(table.id)}
+                          disabled={generatingQrId === table.id}
+                          onClick={() => handleViewQr(table)}
                         >
-                          <QrCode className="h-4 w-4 mr-1" />
-                          QR
+                          {generatingQrId === table.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <QrCode className="h-3.5 w-3.5" />
+                          )}
+                          {table.qrCode ? "Lihat QR" : "Buat QR"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleCopyLink(table)}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                          Copy Link
                         </Button>
                         <Button
                           variant="outline"
@@ -217,20 +354,20 @@ export default function TablesPage() {
                             setIsDialogOpen(true);
                           }}
                         >
-                          <Pencil className="h-4 w-4" />
+                          <Pencil className="h-3.5 w-3.5" />
                         </Button>
                         <Button
                           variant="destructive"
                           size="sm"
                           onClick={() => handleDelete(table.id)}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </CardContent>
@@ -293,25 +430,85 @@ export default function TablesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* QR Code Dialog */}
+      {/* QR / Link Dialog */}
       <Dialog open={isQrDialogOpen} onOpenChange={setIsQrDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>QR Code Meja</DialogTitle>
+            <DialogTitle>
+              {qrTable
+                ? `${qrTable.name} — Meja ${qrTable.number}`
+                : "QR Code Meja"}
+            </DialogTitle>
             <DialogDescription>
-              Scan QR code untuk melakukan pemesanan
+              Scan QR atau bagikan link ini agar customer bisa memesan langsung
+              dari meja.
             </DialogDescription>
           </DialogHeader>
-          <div className="flex justify-center py-4">
-            {qrCode && (
-              <img src={qrCode} alt="QR Code" className="w-64 h-64" />
+
+          <div className="flex flex-col items-center gap-3">
+            <div className="rounded-xl border border-gray-200 bg-white p-3">
+              {qrCode ? (
+                <img
+                  src={qrCode}
+                  alt={`QR Code Meja ${qrTable?.number ?? ""}`}
+                  className="w-52 h-52"
+                />
+              ) : (
+                <div className="w-52 h-52 flex items-center justify-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-gray-300" />
+                </div>
+              )}
+            </div>
+
+            {/* Customer link */}
+            {qrTable && (
+              <div className="w-full flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                <Link2 className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                <span
+                  className="text-xs text-gray-600 font-mono truncate flex-1"
+                  title={customerUrl(qrTable)}
+                >
+                  {customerUrl(qrTable)}
+                </span>
+                <button
+                  onClick={() => handleCopyLink(qrTable)}
+                  className="text-xs font-medium text-gray-700 hover:text-black flex items-center gap-1 flex-shrink-0"
+                >
+                  <Copy className="h-3 w-3" />
+                  Copy
+                </button>
+              </div>
             )}
           </div>
-          <DialogFooter>
+
+          <div className="grid grid-cols-2 gap-2">
+            {qrTable && (
+              <a
+                href={customerUrl(qrTable)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(buttonVariants({ variant: "outline" }), "w-full")}
+              >
+                <ExternalLink className="h-4 w-4 mr-1.5" />
+                Buka Link
+              </a>
+            )}
+            {qrTable && (
+              <Button variant="outline" onClick={() => handleCopyLink(qrTable)}>
+                <Copy className="h-4 w-4 mr-1.5" />
+                Copy Link
+              </Button>
+            )}
+            {qrCode && (
+              <Button variant="default" onClick={handleDownloadQr}>
+                <Download className="h-4 w-4 mr-1.5" />
+                Download QR
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setIsQrDialogOpen(false)}>
               Tutup
             </Button>
-          </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

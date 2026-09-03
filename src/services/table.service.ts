@@ -57,8 +57,18 @@ export const tableService = {
     return response.data.data;
   },
 
-  async generateQrCode(id: string): Promise<string> {
-    const response = await api.post(`/tables/${id}/qr`);
-    return response.data.data.qrCode;
+  async generateQrCode(id: string, baseUrl?: string): Promise<{
+    qrCode: string;
+    tableNumber: number;
+  }> {
+    const response = await api.post(`/tables/${id}/qr`, baseUrl ? { baseUrl } : {});
+    return response.data.data;
+  },
+
+  /**
+   * Customer (public) ordering URL for a table, based on the caller origin.
+   */
+  getCustomerUrl(baseUrl: string, tableNumber: number): string {
+    return `${baseUrl.replace(/\/+$/, "")}/t/${tableNumber}`;
   },
 };

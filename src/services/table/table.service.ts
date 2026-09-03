@@ -154,7 +154,7 @@ export class TableService {
     });
   }
 
-  async generateQrCode(id: string, restaurantId: string) {
+  async generateQrCode(id: string, restaurantId: string, baseUrl?: string) {
     const table = await prisma.table.findFirst({
       where: { id, restaurantId },
     });
@@ -163,8 +163,14 @@ export class TableService {
       throw new NotFoundError("Table not found");
     }
 
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const qrData = `${baseUrl}/t/${table.number}`;
+    // Prefer the caller-supplied origin (the domain the customer actually
+    // reaches) so the QR encodes exactly the link shown in the admin UI.
+    // Fall back to the configured public URL, then localhost for dev.
+    const origin =
+      baseUrl && /^https?:\/\//i.test(baseUrl)
+        ? baseUrl.replace(/\/+$/, "")
+        : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const qrData = `${origin}/t/${table.number}`;
 
     const qrCode = await QRCode.toDataURL(qrData, {
       width: 300,

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState, useCallback, useRef } from "react";
+import { Suspense, useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useCart } from "@/hooks/use-cart";
 import Link from "next/link";
@@ -20,10 +20,12 @@ interface OptionGroup {
   isRequired: boolean;
   minSelect: number;
   maxSelect: number;
+  isActive?: boolean;
   options: Array<{
     id: string;
     name: string;
     priceAdjustment: number;
+    isActive?: boolean;
   }>;
 }
 
@@ -31,6 +33,7 @@ interface Addon {
   id: string;
   name: string;
   price: number;
+  isActive?: boolean;
 }
 
 interface Category {
@@ -45,7 +48,7 @@ interface Product {
   id: string;
   name: string;
   description?: string;
-  price: string;
+  price: number;
   imageUrl?: string;
   isAvailable: boolean;
   category: { id: string; name: string };
@@ -59,51 +62,81 @@ interface RestaurantInfo {
 }
 
 interface CustomizationState {
-  selections: Record<string, string>; // groupId -> optionId
+  selections: Record<string, string | string[]>; // groupId -> optionId(s)
   addons: Record<string, number>; // addonId -> quantity
   quantity: number;
   notes: string;
+}
+
+/**
+ * Normalize a product coming from the API.
+ * Prisma serializes Decimal fields (price, priceAdjustment) as STRINGS
+ * (e.g. "230000", "5000.00"). Coerce them to numbers so price math,
+ * cart totals, and checkout payloads work correctly.
+ */
+function normalizeProduct(p: Product): Product {
+  return {
+    ...p,
+    price: Number(p.price) || 0,
+    optionGroups: (p.optionGroups || []).map((g) => ({
+      ...g,
+      options: (g.options || []).map((o) => ({
+        ...o,
+        priceAdjustment: Number(o.priceAdjustment) || 0,
+      })),
+    })),
+    addons: (p.addons || []).map((a) => ({
+      ...a,
+      price: Number(a.price) || 0,
+    })),
+  };
+}
+
+/**
+ * Determine if a product requires the customization modal.
+ * A product is CUSTOMIZABLE if it has at least one ACTIVE option group
+ * with at least one ACTIVE option, OR at least one ACTIVE addon.
+ * Defensive: handles null/undefined, empty arrays, and inactive items.
+ */
+function hasCustomization(product: Product): boolean {
+  // Active option group that has at least one active option
+  const hasActiveGroup = (product.optionGroups || []).some(
+    (group) =>
+      group &&
+      group.isActive !== false &&
+      Array.isArray(group.options) &&
+      group.options.some((option) => option && option.isActive !== false)
+  );
+
+  // Active addon
+  const hasActiveAddon = (product.addons || []).some(
+    (addon) => addon && addon.isActive !== false
+  );
+
+  return hasActiveGroup || hasActiveAddon;
 }
 
 // ============================================================
 // Helpers
 // ============================================================
 
-/**
- * Determine if a product requires customization modal.
- * Checks for ACTIVE option groups (with active options) or ACTIVE addons.
- * Defensive: handles null/undefined, empty arrays, and inactive items.
- */
-function hasCustomization(product: Product): boolean {
-  // Check for active option groups that have at least one active option
-  if (product.optionGroups && product.optionGroups.length > 0) {
-    const hasActiveGroup = product.optionGroups.some(
-      (group) => group && group.options && group.options.length > 0
-    );
-    if (hasActiveGroup) return true;
-  }
 
-  // Check for active addons
-  if (product.addons && product.addons.length > 0) {
-    return true;
-  }
-
-  return false;
-}
 
 function calculateCustomizedPrice(
   product: Product,
   state: CustomizationState
 ): number {
-  let price = Number(product.price);
+  let price = Number(product.price) || 0;
 
-  // Add selection price adjustments
+  // Add selection price adjustments (support MULTI groups)
   for (const group of product.optionGroups) {
-    const selectedOptionId = state.selections[group.id];
-    if (selectedOptionId) {
-      const option = group.options.find((o) => o.id === selectedOptionId);
+    const selected = state.selections[group.id];
+    if (!selected) continue;
+    const selectedIds = Array.isArray(selected) ? selected : [selected];
+    for (const optionId of selectedIds) {
+      const option = group.options.find((o) => o.id === optionId);
       if (option) {
-        price += option.priceAdjustment;
+        price += Number(option.priceAdjustment) || 0;
       }
     }
   }
@@ -111,7 +144,7 @@ function calculateCustomizedPrice(
   // Add addon prices
   for (const addon of product.addons) {
     const qty = state.addons[addon.id] || 0;
-    price += addon.price * qty;
+    price += (Number(addon.price) || 0) * qty;
   }
 
   return price;
@@ -139,9 +172,11 @@ function CustomizationModal({
   initialNotes?: string;
 }) {
   const [state, setState] = useState<CustomizationState>({
-    selections: initialSelections ? Object.fromEntries(
-      Object.entries(initialSelections).map(([k, v]) => [k, Array.isArray(v) ? v[0] || "" : v])
-    ) : {},
+    selections: initialSelections
+      ? Object.fromEntries(
+          Object.entries(initialSelections).map(([k, v]) => [k, Array.isArray(v) ? [...v] : v])
+        )
+      : {},
     addons: initialAddons || {},
     quantity: initialQuantity || 1,
     notes: initialNotes || "",
@@ -160,18 +195,25 @@ function CustomizationModal({
   }, [product, initialSelections]);
 
   const handleGroupSelect = useCallback(
-    (groupId: string, optionId: string, isMulti: boolean) => {
+    (groupId: string, optionId: string, isMulti: boolean, maxSelect: number) => {
       if (isMulti) {
         setState((prev) => {
           const current = prev.selections[groupId];
           const currentArray = Array.isArray(current) ? current : current ? [current] : [];
           const isSelected = currentArray.includes(optionId);
+
+          // Enforce maxSelect: block adding beyond the allowed maximum
+          if (!isSelected && currentArray.length >= maxSelect) {
+            toast.error(`Maksimal pilih ${maxSelect} opsi`);
+            return prev;
+          }
+
           const nextArray = isSelected
             ? currentArray.filter((id) => id !== optionId)
             : [...currentArray, optionId];
           return {
             ...prev,
-            selections: { ...prev.selections, [groupId]: nextArray as unknown as string },
+            selections: { ...prev.selections, [groupId]: nextArray },
           };
         });
       } else {
@@ -197,14 +239,15 @@ function CustomizationModal({
   const unitPrice = calculateCustomizedPrice(product, state);
   const total = unitPrice * state.quantity;
 
-  // Validate required groups (supports SINGLE and MULTI
+  // Validate required groups (supports SINGLE and MULTI)
+  // Required MULTI: minSelect must be met, maxSelect must not be exceeded.
   const is_valid = product.optionGroups.every((group) => {
     if (!group.isRequired) return true;
     const selected = state.selections[group.id];
     if (!selected) return false;
     if (group.type === "MULTI") {
-      const arr = Array.isArray(selected) ? selected : selected ? [selected] : [];
-      return arr.length >= group.minSelect;
+      const arr = Array.isArray(selected) ? selected : [selected];
+      return arr.length >= group.minSelect && arr.length <= group.maxSelect;
     }
     return !!selected;
   });
@@ -274,7 +317,7 @@ function CustomizationModal({
                   return (
                     <button
                       key={option.id}
-                      onClick={() => handleGroupSelect(group.id, option.id, isMulti)}
+                      onClick={() => handleGroupSelect(group.id, option.id, isMulti, group.maxSelect)}
                       className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-colors text-sm ${
                         isOptionSelected
                           ? "border-gray-900 bg-gray-50"
@@ -311,9 +354,9 @@ function CustomizationModal({
                         )}
                         <span>{option.name}</span>
                       </div>
-                      {option.priceAdjustment !== 0 && (
+                      {Number(option.priceAdjustment) !== 0 && (
                         <span className="text-gray-500 text-xs">
-                          {option.priceAdjustment > 0 ? "+" : ""} Rp{Math.abs(option.priceAdjustment).toLocaleString("id-ID")}
+                          {Number(option.priceAdjustment) > 0 ? "+" : ""} Rp{Math.abs(Number(option.priceAdjustment)).toLocaleString("id-ID")}
                         </span>
                       )}
                     </button>
@@ -369,7 +412,7 @@ function CustomizationModal({
                         <span className="text-sm">{addon.name}</span>
                       </div>
                       <span className="text-xs text-gray-500">
-                        + Rp{addon.price.toLocaleString("id-ID")}
+                        + Rp{Number(addon.price).toLocaleString("id-ID")}
                       </span>
                     </div>
                   );
@@ -453,13 +496,13 @@ function CustomizationModal({
 function ProductCardSkeleton() {
   return (
     <div className="bg-white rounded-xl overflow-hidden">
-      <Skeleton className="w-full aspect-[4/3] rounded-none" />
-      <div className="p-3 space-y-2">
-        <Skeleton className="h-4 w-3/4" />
-        <Skeleton className="h-3 w-full" />
-        <div className="flex items-center justify-between pt-2">
-          <Skeleton className="h-5 w-1/3" />
-          <Skeleton className="h-8 w-20 rounded-lg" />
+      <div className="p-3 sm:p-4 flex flex-col gap-1.5">
+        <Skeleton className="h-4 sm:h-5 w-4/5" />
+        <Skeleton className="h-3 sm:h-3.5 w-full" />
+        <Skeleton className="h-3 sm:h-3.5 w-2/3" />
+        <div className="pt-2 sm:pt-3 flex flex-col gap-2 sm:gap-2.5">
+          <Skeleton className="h-5 sm:h-6 w-1/3" />
+          <Skeleton className="h-10 w-full rounded-lg" />
         </div>
       </div>
     </div>
@@ -469,6 +512,9 @@ function ProductCardSkeleton() {
 // ============================================================
 // Product Card
 // ============================================================
+
+const cardActionBase =
+  "inline-flex items-center justify-center rounded-lg font-semibold transition-colors active:scale-[0.98] whitespace-nowrap select-none";
 
 function ProductCard({
   product,
@@ -491,101 +537,100 @@ function ProductCard({
 
   return (
     <div className="bg-white rounded-xl overflow-hidden flex flex-col">
-      {/* Image */}
-      <div className="relative w-full aspect-[4/3] bg-gray-100 overflow-hidden">
-        {product.imageUrl ? (
+      {/* Image — only when available; 4:3, object-cover, top corners rounded */}
+      {product.imageUrl && (
+        <div className="relative w-full aspect-[4/3] bg-gray-100 overflow-hidden flex-shrink-0">
           <img
             src={product.imageUrl}
             alt={product.name}
             className="w-full h-full object-cover"
             loading="lazy"
           />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gray-50">
-            <UtensilsCrossed className="h-10 w-10 text-gray-300" />
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Content */}
-      <div className="p-3 flex flex-col flex-1">
-        <h3 className="font-semibold text-[13px] leading-snug line-clamp-1 text-gray-900">
+      <div className="p-3 sm:p-4 flex flex-col flex-1 min-w-0">
+        <h3 className="text-sm sm:text-base font-semibold leading-snug line-clamp-2 text-gray-900">
           {product.name}
         </h3>
         {product.description && (
-          <p className="text-[11px] text-gray-400 mt-0.5 line-clamp-2 leading-relaxed">
+          <p className="text-xs sm:text-sm text-gray-400 mt-1 leading-relaxed line-clamp-2">
             {product.description}
           </p>
         )}
 
-        <div className="mt-auto pt-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-sm font-bold text-gray-900 tabular-nums">
-              Rp{Number(product.price).toLocaleString("id-ID")}
-            </p>
+        {/* Footer — mt-auto keeps price + action aligned on each grid row */}
+        <div className="mt-auto pt-2.5 sm:pt-3">
+          <p className="text-sm sm:text-base font-bold text-gray-900 tabular-nums">
+            Rp{Number(product.price).toLocaleString("id-ID")}
+          </p>
 
-            {/* Button */}
-            {needsCustomization ? (
-              quantity === 0 ? (
+          <div className="mt-2 sm:mt-2.5">
+            {quantity === 0 ? (
+              needsCustomization ? (
                 <button
                   onClick={onCustomize}
-                  className="flex-shrink-0 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-black transition-colors active:scale-95 min-h-[36px]"
+                  aria-label={`Pilih ${product.name}`}
+                  className={`${cardActionBase} w-full min-h-10 bg-gray-100 text-gray-900 hover:bg-gray-200 text-xs sm:text-sm px-3`}
                 >
                   Pilih Produk
                 </button>
               ) : (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={onEdit}
-                    className="bg-gray-100 text-gray-700 px-2 py-1.5 rounded-lg text-[10px] font-medium hover:bg-gray-200 transition-colors"
-                  >
-                    Ubah
-                  </button>
-                  <div className="flex items-center bg-gray-900 rounded-lg overflow-hidden flex-shrink-0">
-                    <button
-                      onClick={onDecrease}
-                      className="w-8 h-8 flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
-                    >
-                      <Minus className="h-3.5 w-3.5" />
-                    </button>
-                    <span className="w-7 text-center text-sm font-bold text-white tabular-nums">
-                      {quantity}
-                    </span>
-                    <button
-                      onClick={onIncrease}
-                      className="w-8 h-8 flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
-                    >
-                      <Plus className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
+                <button
+                  onClick={onAdd}
+                  aria-label={`Tambah ${product.name} ke keranjang`}
+                  className={`${cardActionBase} w-full min-h-10 bg-gray-900 text-white hover:bg-gray-800 text-xs sm:text-sm px-3`}
+                >
+                  + Tambah
+                </button>
               )
-            ) : quantity === 0 ? (
-              <button
-                onClick={onAdd}
-                className="flex-shrink-0 bg-gray-900 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-black transition-colors active:scale-95 min-h-[36px]"
-                aria-label={`Tambah ${product.name} ke keranjang`}
-              >
-                + Tambah
-              </button>
+            ) : needsCustomization ? (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onEdit}
+                  className={`${cardActionBase} flex-1 min-w-0 min-h-10 bg-gray-100 text-gray-900 hover:bg-gray-200 text-xs sm:text-sm px-3`}
+                >
+                  Ubah
+                </button>
+                <div className="flex items-center bg-gray-900 rounded-lg overflow-hidden flex-shrink-0 h-10">
+                  <button
+                    onClick={onDecrease}
+                    className="w-9 h-full flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
+                    aria-label={`Kurangi ${product.name}`}
+                  >
+                    <Minus className="h-4 w-4" />
+                  </button>
+                  <span className="min-w-7 px-1 text-center text-sm font-bold text-white tabular-nums">
+                    {quantity}
+                  </span>
+                  <button
+                    onClick={onIncrease}
+                    className="w-9 h-full flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
+                    aria-label={`Tambah ${product.name}`}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
             ) : (
-              <div className="flex items-center bg-gray-900 rounded-lg overflow-hidden flex-shrink-0">
+              <div className="flex items-center bg-gray-900 rounded-lg overflow-hidden h-10">
                 <button
                   onClick={onDecrease}
-                  className="w-9 h-9 flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
+                  className="flex-1 h-full flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
                   aria-label={`Kurangi ${product.name}`}
                 >
-                  <Minus className="h-3.5 w-3.5" />
+                  <Minus className="h-4 w-4" />
                 </button>
-                <span className="w-8 text-center text-sm font-bold text-white tabular-nums">
+                <span className="w-12 text-center text-sm font-bold text-white tabular-nums">
                   {quantity}
                 </span>
                 <button
                   onClick={onIncrease}
-                  className="w-9 h-9 flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
+                  className="flex-1 h-full flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
                   aria-label={`Tambah ${product.name}`}
                 >
-                  <Plus className="h-3.5 w-3.5" />
+                  <Plus className="h-4 w-4" />
                 </button>
               </div>
             )}
@@ -611,11 +656,11 @@ function MenuContent() {
     removeItem,
     restaurantId,
     setRestaurantId,
+    tableContext,
   } = useCart();
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [restaurant, setRestaurant] = useState<RestaurantInfo | null>(null);
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [isLoading, setIsLoading] = useState(true);
   const [customizingProduct, setCustomizingProduct] = useState<Product | null>(
     null
@@ -624,40 +669,18 @@ function MenuContent() {
 
   const searchParams = useSearchParams();
 
-  useEffect(() => {
-    loadMenu();
-  }, []);
-
-  const editHandledRef = useRef(false);
-
-  // Handle ?edit=INDEX from cart page
-  useEffect(() => {
-    if (!isHydrated || items.length === 0 || editHandledRef.current) return;
-    const editIndex = searchParams.get("edit");
-    if (editIndex !== null) {
-      editHandledRef.current = true;
-      const idx = parseInt(editIndex, 10);
-      if (!isNaN(idx) && idx >= 0 && idx < items.length) {
-        const item = items[idx];
-        const product = products.find((p) => p.id === item.productId);
-        if (product) {
-          // Defer state updates to avoid synchronous setState in effect
-          requestAnimationFrame(() => {
-            setEditingCartItemIndex(idx);
-            setCustomizingProduct(product);
-          });
-        }
-      }
-      // Clean up URL
-      window.history.replaceState({}, '', '/menu');
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, isHydrated, items, products]);
-
-  const loadMenu = async () => {
+  // Load menu AFTER cart hydration so the QR table context is known.
+  // When ordering from a table, that table's restaurant is authoritative for
+  // the menu (multi-restaurant isolation). Without a table context we fall
+  // back to the first active restaurant (valid guest/takeaway mode).
+  const loadMenu = useCallback(async (preferredRestaurantId?: string | null) => {
     setIsLoading(true);
     try {
-      const restaurantRes = await api.get("/public/restaurant");
+      const restaurantRes = preferredRestaurantId
+        ? await api.get("/public/restaurant", {
+            params: { id: preferredRestaurantId },
+          })
+        : await api.get("/public/restaurant");
       const restaurantData = restaurantRes.data.data;
       setRestaurant(restaurantData);
       setRestaurantId(restaurantData.id);
@@ -666,14 +689,65 @@ function MenuContent() {
         params: { restaurantId: restaurantData.id },
       });
       setCategories(menuRes.data.data.categories);
-      setProducts(menuRes.data.data.products);
+      // Normalize Decimal-as-string fields (price, priceAdjustment) to numbers
+      setProducts(
+        (menuRes.data.data.products || []).map((p: Product) => normalizeProduct(p))
+      );
     } catch (error) {
       console.error("Failed to load menu:", error);
       toast.error("Gagal memuat menu");
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!isHydrated) return;
+    // Defer so setState (loading flag) is not called synchronously in the effect
+    const timer = setTimeout(() => {
+      loadMenu(tableContext?.restaurantId ?? null);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [isHydrated, tableContext, loadMenu]);
+
+  const editHandledRef = useRef(false);
+  const pendingEditIndexRef = useRef<number | null>(null);
+
+  // Handle ?edit=INDEX from cart page.
+  // IMPORTANT: do NOT mark handled until the product has actually been
+  // resolved — products load asynchronously, so the modal must open once
+  // both items and products are available (see retry effect below).
+  useEffect(() => {
+    if (!isHydrated || items.length === 0 || editHandledRef.current) return;
+    const editIndex = searchParams.get("edit");
+    if (editIndex !== null) {
+      const idx = parseInt(editIndex, 10);
+      if (!isNaN(idx) && idx >= 0 && idx < items.length) {
+        pendingEditIndexRef.current = idx;
+      }
+      // Clean up URL
+      window.history.replaceState({}, '', '/menu');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, isHydrated, items]);
+
+  // Retry opening the edit modal once products have loaded (products fetch
+  // completes after hydration, so the first effect may not have them yet).
+  useEffect(() => {
+    if (pendingEditIndexRef.current === null) return;
+    const idx = pendingEditIndexRef.current;
+    const item = items[idx];
+    const product = item && products.find((p) => p.id === item.productId);
+    if (!product) return;
+
+    pendingEditIndexRef.current = null;
+    editHandledRef.current = true;
+    // Defer state updates to avoid synchronous setState in effect
+    requestAnimationFrame(() => {
+      setEditingCartItemIndex(idx);
+      setCustomizingProduct(product);
+    });
+  }, [products, items]);
 
   /**
    * Get total quantity of a simple product in cart (no customization).
@@ -703,7 +777,7 @@ function MenuContent() {
   };
 
   const handleCustomizeAdd = (product: Product, state: CustomizationState) => {
-    // Build selections array
+    // Build selections array (prices are numbers — Prisma Decimal is coerced on load)
     const selections = product.optionGroups
       .map((group) => {
         const selectedVal = state.selections[group.id];
@@ -719,7 +793,7 @@ function MenuContent() {
               groupName: group.name,
               optionId: option.id,
               optionName: option.name,
-              priceAdjustment: option.priceAdjustment,
+              priceAdjustment: Number(option.priceAdjustment) || 0,
             };
           });
         }
@@ -733,7 +807,7 @@ function MenuContent() {
           groupName: group.name,
           optionId: option.id,
           optionName: option.name,
-          priceAdjustment: option.priceAdjustment,
+          priceAdjustment: Number(option.priceAdjustment) || 0,
         }];
       })
       .flat()
@@ -745,7 +819,7 @@ function MenuContent() {
       priceAdjustment: number;
     }>;
 
-    // Build addons array
+    // Build addons array (prices are numbers — coerced on load)
     const addons = product.addons
       .map((addon) => {
         const qty = state.addons[addon.id] || 0;
@@ -753,7 +827,7 @@ function MenuContent() {
         return {
           addonId: addon.id,
           name: addon.name,
-          price: addon.price,
+          price: Number(addon.price) || 0,
           quantity: qty,
         };
       })
@@ -803,16 +877,14 @@ function MenuContent() {
    * For simple products, find by configKey.
    */
   const handleEditFromMenu = (product: Product) => {
-    // Find the last customized item with this productId
-    const idx = items.findLastIndex(
-      (item) => item.productId === product.id &&
-        ((item.selections && item.selections.length > 0) || (item.addons && item.addons.length > 0))
-    );
+    // For customizable products, ANY cart item with this productId is a
+    // customized item (even if it has empty selections/addons/notes).
+    const idx = items.findLastIndex((item) => item.productId === product.id);
     if (idx >= 0) {
       setEditingCartItemIndex(idx);
       setCustomizingProduct(product);
     } else {
-      // No customized item found, just open for new
+      // No item in cart, just open for new
       setEditingCartItemIndex(null);
       setCustomizingProduct(product);
     }
@@ -820,22 +892,13 @@ function MenuContent() {
 
   const handleIncrease = (product: Product) => {
     const isCustomizable = hasCustomization(product);
-    if (isCustomizable) {
-      // Find the last item with this productId that has customization data
-      const idx = items.findLastIndex(
-        (item) => item.productId === product.id &&
-          ((item.selections && item.selections.length > 0) || (item.addons && item.addons.length > 0))
-      );
-      if (idx >= 0) {
-        updateQuantity(idx, items[idx].quantity + 1);
-      }
-    } else {
-      const idx = items.findIndex(
-        (item) => item.productId === product.id
-      );
-      if (idx >= 0) {
-        updateQuantity(idx, items[idx].quantity + 1);
-      }
+    // For customizable products, any item with this productId is customized
+    const idx = isCustomizable
+      ? items.findLastIndex((item) => item.productId === product.id)
+      : items.findIndex((item) => item.productId === product.id);
+
+    if (idx >= 0) {
+      updateQuantity(idx, items[idx].quantity + 1);
     }
   };
 
@@ -862,10 +925,39 @@ function MenuContent() {
     }
   };
 
-  const filteredProducts =
-    selectedCategory === "all"
-      ? products
-      : products.filter((p) => p.category.id === selectedCategory);
+  // Group products by category, preserving the API category order.
+  // Sections with zero products are skipped entirely; products without a
+  // category fall back to a "Lainnya" section instead of crashing.
+  const sections = useMemo(() => {
+    const list: { id: string; name: string; products: Product[] }[] = [];
+    const indexById = new Map<string, number>();
+    for (const cat of categories) {
+      indexById.set(cat.id, list.length);
+      list.push({ id: cat.id, name: cat.name, products: [] });
+    }
+    const uncategorized: Product[] = [];
+    for (const product of products) {
+      const cat = product.category;
+      if (cat && indexById.has(cat.id)) {
+        list[indexById.get(cat.id)!].products.push(product);
+      } else if (cat) {
+        // Product references a category missing from the active list
+        // (e.g. just deactivated) — show it under its own heading.
+        indexById.set(cat.id, list.length);
+        list.push({ id: cat.id, name: cat.name, products: [product] });
+      } else {
+        uncategorized.push(product);
+      }
+    }
+    if (uncategorized.length > 0) {
+      list.push({
+        id: "__uncategorized__",
+        name: "Lainnya",
+        products: uncategorized,
+      });
+    }
+    return list.filter((s) => s.products.length > 0);
+  }, [categories, products]);
 
   // ============================================================
   // Loading
@@ -878,12 +970,7 @@ function MenuContent() {
           <Skeleton className="h-6 w-40 mx-auto" />
           <Skeleton className="h-3 w-32 mx-auto mt-1.5" />
         </div>
-        <div className="flex gap-2 overflow-hidden scrollbar-hide -mx-4 px-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-8 w-16 rounded-full flex-shrink-0" />
-          ))}
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
           {Array.from({ length: 8 }).map((_, i) => (
             <ProductCardSkeleton key={i} />
           ))}
@@ -903,79 +990,55 @@ function MenuContent() {
   );
 
   return (
-    <div className="space-y-4">
+    <div>
       {/* Restaurant Header */}
       {restaurant && (
-        <div className="text-center pt-1 pb-1">
-          <h1 className="text-lg font-bold text-gray-900">
+        <div className="text-center pt-2 pb-3 sm:pb-4">
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
             {restaurant.name}
           </h1>
-          <p className="text-[11px] text-gray-400 mt-0.5">
+          <p className="text-xs text-gray-400 mt-1">
             Pesan langsung dari website
           </p>
         </div>
       )}
 
-      {/* Category Filter */}
-      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide -mx-4 px-4 py-1">
-        <button
-          onClick={() => setSelectedCategory("all")}
-          className={`px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-            selectedCategory === "all"
-              ? "bg-gray-900 text-white"
-              : "bg-gray-100 text-gray-500 hover:bg-gray-200 active:bg-gray-200"
-          }`}
-        >
-          Semua
-        </button>
-        {categories.map((cat) => (
-          <button
-            key={cat.id}
-            onClick={() => setSelectedCategory(cat.id)}
-            className={`px-3.5 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
-              selectedCategory === cat.id
-                ? "bg-gray-900 text-white"
-                : "bg-gray-100 text-gray-500 hover:bg-gray-200 active:bg-gray-200"
-            }`}
-          >
-            {cat.name}
-          </button>
-        ))}
-      </div>
-
-      {/* Product Grid */}
-      {filteredProducts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-center">
+      {/* Products grouped by category */}
+      {products.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mb-3">
             <UtensilsCrossed className="h-6 w-6 text-gray-300" />
           </div>
           <p className="text-gray-500 text-sm font-medium">
-            {selectedCategory === "all"
-              ? "Menu belum tersedia"
-              : "Belum ada menu di kategori ini"}
+            Menu belum tersedia
           </p>
-          {selectedCategory !== "all" && (
-            <button
-              onClick={() => setSelectedCategory("all")}
-              className="mt-3 text-xs text-gray-400 underline underline-offset-2 hover:text-gray-600 transition-colors"
-            >
-              Lihat semua menu
-            </button>
-          )}
         </div>
       ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5 pb-24">
-          {filteredProducts.map((product) => (
-            <ProductCard
-              key={product.id}
-              product={product}
-              quantity={getItemQuantity(product.id)}
-              onAdd={() => handleAdd(product)}
-              onCustomize={() => { setEditingCartItemIndex(null); setCustomizingProduct(product); }}
-              onEdit={() => handleEditFromMenu(product)}
-              onIncrease={() => handleIncrease(product)}
-              onDecrease={() => handleDecrease(product)}
-            />
+        <div
+          className={`flex flex-col gap-8 sm:gap-10 ${
+            totalCartItems > 0 ? "pb-24" : "pb-6"
+          }`}
+        >
+          {sections.map((section) => (
+            <section key={section.id} aria-label={section.name}>
+              <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-3 sm:mb-4">
+                {section.name}
+              </h2>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+                {section.products.map((product) => (
+                  <ProductCard
+                    key={product.id}
+                    product={product}
+                    quantity={getItemQuantity(product.id)}
+                    onAdd={() => handleAdd(product)}
+                    onCustomize={() => { setEditingCartItemIndex(null); setCustomizingProduct(product); }}
+                    onEdit={() => handleEditFromMenu(product)}
+                    onIncrease={() => handleIncrease(product)}
+                    onDecrease={() => handleDecrease(product)}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}
@@ -1022,9 +1085,25 @@ function MenuContent() {
           onAdd={(state) => handleCustomizeAdd(customizingProduct, state)}
           initialSelections={
             editingCartItemIndex !== null && items[editingCartItemIndex]
-              ? Object.fromEntries(
-                  (items[editingCartItemIndex].selections || []).map((s) => [s.groupId, s.optionId])
-                )
+              ? (() => {
+                  const item = items[editingCartItemIndex];
+                  const map: Record<string, string | string[]> = {};
+                  for (const s of item.selections || []) {
+                    // MULTI groups can have multiple options — collect as array
+                    const group = customizingProduct.optionGroups.find(
+                      (g) => g.id === s.groupId
+                    );
+                    if (group?.type === "MULTI") {
+                      const existing = map[s.groupId];
+                      map[s.groupId] = Array.isArray(existing)
+                        ? [...existing, s.optionId]
+                        : [s.optionId];
+                    } else {
+                      map[s.groupId] = s.optionId;
+                    }
+                  }
+                  return map;
+                })()
               : undefined
           }
           initialAddons={
@@ -1058,7 +1137,7 @@ export default function MenuPage() {
           <Skeleton className="h-6 w-40 mx-auto" />
           <Skeleton className="h-3 w-32 mx-auto mt-1.5" />
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2.5">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
           {Array.from({ length: 8 }).map((_, i) => (
             <ProductCardSkeleton key={i} />
           ))}
