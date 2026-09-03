@@ -75,6 +75,8 @@ model User {
 
   restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
   orderHistory OrderStatusHistory[]
+
+  @@map("user")
 }
 
 model Restaurant {
@@ -94,6 +96,8 @@ model Restaurant {
   customers  Customer[]
   orders     Order[]
   payments   Payment[]
+
+  @@map("restaurant")
 }
 
 model Table {
@@ -114,6 +118,8 @@ model Table {
   @@unique([restaurantId, number])
   @@index([restaurantId])
   @@index([status])
+
+  @@map("table")
 }
 
 model Category {
@@ -131,6 +137,8 @@ model Category {
 
   @@unique([restaurantId, name])
   @@index([restaurantId])
+
+  @@map("category")
 }
 
 model Product {
@@ -155,6 +163,8 @@ model Product {
   @@index([restaurantId])
   @@index([categoryId])
   @@index([isAvailable])
+
+  @@map("product")
 }
 
 model Customer {
@@ -172,6 +182,8 @@ model Customer {
   @@unique([restaurantId, phone])
   @@index([restaurantId])
   @@index([phone])
+
+  @@map("customer")
 }
 
 model Order {
@@ -207,6 +219,8 @@ model Order {
   @@index([status])
   @@index([paymentStatus])
   @@index([createdAt])
+
+  @@map("order")
 }
 
 model ProductOptionGroup {
@@ -226,6 +240,8 @@ model ProductOptionGroup {
   options ProductOption[]
 
   @@index([productId])
+
+  @@map("productoptiongroup")
 }
 
 model ProductOption {
@@ -241,6 +257,8 @@ model ProductOption {
   group ProductOptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
 
   @@index([optionGroupId])
+
+  @@map("productoption")
 }
 
 model ProductAddon {
@@ -256,6 +274,8 @@ model ProductAddon {
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId])
+
+  @@map("productaddon")
 }
 
 model OrderItem {
@@ -275,6 +295,8 @@ model OrderItem {
 
   @@index([orderId])
   @@index([productId])
+
+  @@map("orderitem")
 }
 
 model OrderStatusHistory {
@@ -290,6 +312,8 @@ model OrderStatusHistory {
 
   @@index([orderId])
   @@index([status])
+
+  @@map("orderstatushistory")
 }
 
 model Payment {
@@ -315,6 +339,8 @@ model Payment {
   @@index([orderId])
   @@index([status])
   @@index([providerRef])
+
+  @@map("payment")
 }
 
 model PaymentTransaction {
@@ -331,6 +357,8 @@ model PaymentTransaction {
 
   @@index([paymentId])
   @@index([provider])
+
+  @@map("paymenttransaction")
 }
 
 model WhatsAppMessage {
@@ -350,6 +378,8 @@ model WhatsAppMessage {
   @@index([from])
   @@index([messageId])
   @@index([createdAt])
+
+  @@map("whatsappmessage")
 }
 
 enum WhatsAppConnectionStatus {
@@ -375,6 +405,8 @@ model WhatsAppSession {
 
   @@index([restaurantId])
   @@index([status])
+
+  @@map("whatsappsession")
 }
 
 model Notification {
@@ -390,4 +422,6 @@ model Notification {
   @@index([restaurantId])
   @@index([isRead])
   @@index([createdAt])
+
+  @@map("notification")
 }
