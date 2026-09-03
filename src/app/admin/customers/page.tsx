@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   customerService,
@@ -9,18 +10,16 @@ import {
 } from "@/services/customer.service";
 import { Search, Users, ShoppingCart, DollarSign } from "lucide-react";
 import { toast } from "sonner";
+import { useRealtimeListener } from "@/components/admin/realtime-provider";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  useEffect(() => {
-    loadCustomers();
-  }, []);
-
-  const loadCustomers = async () => {
-    setIsLoading(true);
+  const loadCustomers = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const result = await customerService.getCustomers({
         search: search || undefined,
@@ -33,6 +32,23 @@ export default function CustomersPage() {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadCustomers();
+  }, []);
+
+  // Realtime: a new customer (e.g. from a QR-table order) appears without
+  // refresh. Active search text is preserved (state in the closure).
+  useRealtimeListener(
+    [
+      REALTIME_EVENT_TYPES.CUSTOMER_CREATED,
+      REALTIME_EVENT_TYPES.CUSTOMER_UPDATED,
+      REALTIME_EVENT_TYPES.OFFLINE_POLL,
+    ],
+    () => {
+      if (!isLoading) loadCustomers(true);
+    }
+  );
 
   const handleSearch = () => {
     loadCustomers();
@@ -48,8 +64,8 @@ export default function CustomersPage() {
       {/* Search */}
       <Card>
         <CardContent className="pt-6">
-          <div className="flex gap-4">
-            <div className="flex-1 relative">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-4">
+            <div className="relative flex-1 min-w-0">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <Input
                 placeholder="Cari nama atau nomor telepon..."
@@ -59,7 +75,9 @@ export default function CustomersPage() {
                 className="pl-10"
               />
             </div>
-            <button onClick={handleSearch}>Cari</button>
+            <Button onClick={handleSearch} className="w-full sm:w-auto">
+              Cari
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -81,28 +99,28 @@ export default function CustomersPage() {
               {customers.map((customer) => (
                 <div
                   key={customer.id}
-                  className="flex items-center justify-between border-b pb-4 last:border-0"
+                  className="flex flex-col gap-3 border-b pb-4 last:border-0 sm:flex-row sm:items-center sm:justify-between"
                 >
                   <div className="flex items-center gap-4">
-                    <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center">
+                    <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center shrink-0">
                       <Users className="h-5 w-5 text-gray-500" />
                     </div>
-                    <div>
-                      <p className="font-medium">
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">
                         {customer.name || "Tanpa Nama"}
                       </p>
                       <p className="text-sm text-gray-500">{customer.phone}</p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-8 text-sm">
-                    <div className="text-center">
-                      <div className="flex items-center gap-1 text-gray-500">
+                  <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm sm:gap-8">
+                    <div>
+                      <div className="flex items-center gap-1 text-gray-500 whitespace-nowrap">
                         <ShoppingCart className="h-4 w-4" />
                         <span>{customer.orderCount || 0} pesanan</span>
                       </div>
                     </div>
-                    <div className="text-center">
-                      <div className="flex items-center gap-1 text-gray-500">
+                    <div>
+                      <div className="flex items-center gap-1 text-gray-500 whitespace-nowrap">
                         <DollarSign className="h-4 w-4" />
                         <span>
                           Rp
@@ -112,7 +130,7 @@ export default function CustomersPage() {
                         </span>
                       </div>
                     </div>
-                    <div className="text-right text-gray-500">
+                    <div className="text-gray-500">
                       {customer.lastOrderAt
                         ? new Date(customer.lastOrderAt).toLocaleDateString(
                             "id-ID"

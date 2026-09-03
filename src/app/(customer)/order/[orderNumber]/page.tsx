@@ -63,10 +63,13 @@ interface OrderData {
     customizations?: CustomizationSnapshot;
   }>;
   payments?: Array<{
+    id: string;
     method: string | null;
     provider: string | null;
     status: string;
     amount: string;
+    paymentUrl?: string | null;
+    paidAt?: string | null;
   }>;
   statusHistory: Array<{
     status: string;
@@ -122,12 +125,49 @@ export default function OrderTrackingPage({
     }
   };
 
+  /**
+   * Create a payment with an explicit method. DINE-IN orders may pay online
+   * (QRIS) or create the UNPAID cashier payment. TAKEAWAY/DELIVERY never use
+   * this helper — they keep the legacy gateway flow below.
+   */
+  const handleCreatePayment = async (method: "QRIS" | "KASIR") => {
+    if (!order) return;
+    setIsPaying(true);
+    try {
+      const res = await api.post("/public/payments", {
+        orderNumber: order.orderNumber,
+        method,
+      });
+      const paymentUrl = res.data.data.paymentUrl;
+      if (method === "KASIR") {
+        toast.success("Silakan lakukan pembayaran di kasir.");
+        await loadOrder();
+      } else if (paymentUrl) {
+        window.location.href = paymentUrl;
+        return;
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : method === "KASIR"
+            ? "Gagal mencatat pembayaran kasir"
+            : "Gagal membuat pembayaran QRIS";
+      toast.error(message);
+    } finally {
+      setIsPaying(false);
+    }
+  };
+
+  // Legacy pay-again (failed/expired gateway payment). DINE-IN retries via
+  // QRIS; TAKEAWAY/DELIVERY keep the original no-method gateway request.
   const handlePayNow = async () => {
     if (!order) return;
     setIsPaying(true);
     try {
       const res = await api.post("/public/payments", {
         orderNumber: order.orderNumber,
+        method: order.orderType === "DINE_IN" ? "QRIS" : undefined,
       });
       const paymentUrl = res.data.data.paymentUrl;
       if (paymentUrl) {
@@ -137,6 +177,7 @@ export default function OrderTrackingPage({
       const message =
         error instanceof Error ? error.message : "Gagal membuat pembayaran";
       toast.error(message);
+    } finally {
       setIsPaying(false);
     }
   };
@@ -172,6 +213,33 @@ export default function OrderTrackingPage({
   const isPaymentPending = paymentStatus === "PENDING";
   const isPaymentFailed =
     paymentStatus === "FAILED" || paymentStatus === "EXPIRED";
+  const isDineIn = order.orderType === "DINE_IN";
+
+  // Latest payment row (method + state) drives the payment guidance box.
+  const latestPayment =
+    order.payments && order.payments.length > 0 ? order.payments[0] : null;
+  const paymentMethod = latestPayment?.method || null;
+  const isCashierPayment = paymentMethod === "KASIR";
+  const paymentMethodLabel =
+    paymentMethod === "KASIR"
+      ? "Kasir"
+      : paymentMethod === "QRIS"
+        ? "QRIS"
+        : paymentMethod || null;
+  // DINE-IN order, not paid yet, no live payment row → offer QRIS / Kasir.
+  const showPaymentChoices =
+    isDineIn && !isPaid && !latestPayment;
+
+  let paymentMessage = "Pembayaran belum selesai";
+  if (isPaid) {
+    paymentMessage = "✓ Pembayaran berhasil";
+  } else if (isPaymentFailed) {
+    paymentMessage = "Pembayaran gagal";
+  } else if (isPaymentPending) {
+    paymentMessage = "Menunggu pembayaran...";
+  } else if (isCashierPayment) {
+    paymentMessage = "Silakan lakukan pembayaran di kasir.";
+  }
 
   return (
     <div className="space-y-6">
@@ -190,7 +258,7 @@ export default function OrderTrackingPage({
 
       {/* Payment Status */}
       <div
-        className={`rounded-lg p-4 ${
+        className={`rounded-lg p-4 space-y-3 ${
           isPaid
             ? "bg-green-50 border border-green-200"
             : isPaymentFailed
@@ -218,17 +286,16 @@ export default function OrderTrackingPage({
                     : "text-yellow-800"
               }`}
             >
-              {isPaid
-                ? "✓ Pembayaran berhasil"
-                : isPaymentFailed
-                  ? "Pembayaran gagal"
-                  : isPaymentPending
-                    ? "Menunggu pembayaran..."
-                    : "Pembayaran belum selesai"}
+              {paymentMessage}
             </p>
             {!isPaid && (
               <p className="text-xs text-gray-500 mt-0.5">
                 Total: Rp{Number(order.grandTotal).toLocaleString("id-ID")}
+              </p>
+            )}
+            {isPaid && paymentMethodLabel && (
+              <p className="text-xs text-green-700 mt-0.5">
+                Dibayar dengan {paymentMethodLabel}
               </p>
             )}
           </div>
@@ -244,7 +311,42 @@ export default function OrderTrackingPage({
               Bayar Lagi
             </button>
           )}
+          {isPaymentPending &&
+            isDineIn &&
+            latestPayment?.paymentUrl && (
+              <button
+                onClick={() =>
+                  (window.location.href = latestPayment.paymentUrl!)
+                }
+                className="bg-gray-900 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-black transition-colors flex items-center gap-1"
+              >
+                Bayar Sekarang
+              </button>
+            )}
         </div>
+
+        {/* DINE-IN with no live payment yet → QRIS or Kasir */}
+        {showPaymentChoices && (
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => handleCreatePayment("QRIS")}
+              disabled={isPaying}
+              className="flex-1 bg-gray-900 text-white text-xs font-medium px-3 py-2 rounded-lg hover:bg-black transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+            >
+              {isPaying ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : null}
+              Bayar QRIS
+            </button>
+            <button
+              onClick={() => handleCreatePayment("KASIR")}
+              disabled={isPaying}
+              className="flex-1 border border-gray-300 bg-white text-gray-700 text-xs font-medium px-3 py-2 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+            >
+              Bayar di Kasir
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Order Info Card */}
@@ -427,10 +529,10 @@ export default function OrderTrackingPage({
         </div>
 
         {/* Payment method */}
-        {order.payments && order.payments.length > 0 && order.payments[0].method && (
+        {paymentMethodLabel && (
           <div className="border-t pt-3">
             <p className="text-xs text-gray-500">
-              Metode Pembayaran: {order.payments[0].method}
+              Metode Pembayaran: {paymentMethodLabel}
             </p>
           </div>
         )}

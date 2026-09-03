@@ -54,6 +54,13 @@ export const CreateCustomerOrderSchema = z.object({
   items: z
     .array(OrderItemInputSchema)
     .min(1, "Minimal 1 item harus dipilih"),
+  /**
+   * DINE_IN-only payment intent: "QRIS" or "KASIR". When "KASIR" the
+   * server records an UNPAID KASIR payment atomically with the order (no
+   * gateway call). TAKEAWAY/DELIVERY must NOT send this field — the server
+   * rejects it so their legacy gateway flow stays untouched.
+   */
+  paymentMethod: z.enum(["QRIS", "KASIR"]).optional(),
 });
 
 export const UpdateOrderStatusSchema = z.object({

@@ -11,6 +11,11 @@ export interface CreatePaymentInput {
   customerName: string;
   customerPhone: string | null;
   items: PaymentItem[];
+  /**
+   * iPaymu direct-payment channel: "va" (existing BCA virtual account) or
+   * "qris". Defaults to "va" when omitted so legacy callers are unchanged.
+   */
+  channel?: "va" | "qris";
 }
 
 export interface PaymentResult {

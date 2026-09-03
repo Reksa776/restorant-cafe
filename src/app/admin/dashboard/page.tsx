@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { orderService, type Order } from "@/services/order.service";
+import { useRealtimeListener } from "@/components/admin/realtime-provider";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import {
   ShoppingCart,
   Clock,
@@ -29,10 +31,6 @@ export default function DashboardPage() {
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    loadDashboardData();
-  }, []);
-
   const loadDashboardData = async () => {
     try {
       const [statsData, ordersData] = await Promise.all([
@@ -47,6 +45,27 @@ export default function DashboardPage() {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadDashboardData();
+  }, []);
+
+  // Realtime: refresh stats + recent orders without a page reload whenever
+  // orders/payments change (e.g. a QR-table customer places an order).
+  useRealtimeListener(
+    [
+      REALTIME_EVENT_TYPES.ORDER_CREATED,
+      REALTIME_EVENT_TYPES.ORDER_UPDATED,
+      REALTIME_EVENT_TYPES.ORDER_STATUS_CHANGED,
+      REALTIME_EVENT_TYPES.PAYMENT_CREATED,
+      REALTIME_EVENT_TYPES.PAYMENT_STATUS_CHANGED,
+      REALTIME_EVENT_TYPES.DASHBOARD_UPDATED,
+      REALTIME_EVENT_TYPES.OFFLINE_POLL,
+    ],
+    () => {
+      if (!isLoading) loadDashboardData();
+    }
+  );
 
   if (isLoading) {
     return (

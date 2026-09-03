@@ -11,6 +11,8 @@ import type {
   GetOrdersInput,
 } from "./order.types";
 import { normalizePhone } from "@/lib/phone";
+import { emitRealtime } from "@/lib/realtime/bus";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 
 // ============================================================
 // Constants
@@ -200,6 +202,27 @@ export class OrderService {
       return newOrder;
     });
 
+    // Realtime: order created by the restaurant admin.
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.ORDER_CREATED, order.id, {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      orderType: order.orderType,
+      status: order.status,
+      tableId: order.tableId || null,
+      visitorCount: order.visitorCount,
+      customerId: order.customerId,
+      grandTotal: Number(order.grandTotal),
+    });
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
+    if (order.tableId) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.TABLE_STATUS_CHANGED,
+        `${order.tableId}-OCCUPIED`,
+        { tableId: order.tableId, status: "OCCUPIED" }
+      );
+    }
+
     return order;
   }
 
@@ -208,6 +231,15 @@ export class OrderService {
    * Finds or creates customer by phone, validates table belongs to restaurant.
    */
   async createCustomerOrder(input: CreateCustomerOrderInput, restaurantId: string) {
+    // The QRIS/KASIR payment intent is DINE_IN-only. TAKEAWAY/DELIVERY must
+    // keep the legacy gateway flow, so a paymentMethod on those types is a
+    // server-side validation error (never silently ignored).
+    if (input.paymentMethod && input.orderType !== "DINE_IN") {
+      throw new ValidationError(
+        "Payment method selection hanya tersedia untuk dine-in"
+      );
+    }
+
     // Validate restaurant exists and is active
     const restaurant = await prisma.restaurant.findFirst({
       where: { id: restaurantId, isActive: true },
@@ -412,6 +444,13 @@ export class OrderService {
     // Generate order number
     const orderNumber = generateOrderNumber();
 
+    // Track customer side effects to notify the admin in realtime after the
+    // transaction commits (a guest checkout creates a new Customer row).
+    let createdCustomerId: string | null = null;
+    let updatedCustomerId: string | null = null;
+    let createdCustomerPhone: string | null = null;
+    let createdCashierPaymentId: string | null = null;
+
     // Create order in transaction
     const order = await prisma.$transaction(async (tx) => {
       // Find or create customer
@@ -433,12 +472,15 @@ export class OrderService {
               name: input.customerName,
             },
           });
+          createdCustomerId = customer.id;
+          createdCustomerPhone = normalizedPhone;
         } else if (input.customerName && !customer.name) {
           // Update name if customer exists but has no name
           customer = await tx.customer.update({
             where: { id: customer.id },
             data: { name: input.customerName },
           });
+          updatedCustomerId = customer.id;
         }
       } else {
         // No phone — create customer with a generated placeholder phone
@@ -451,6 +493,8 @@ export class OrderService {
             name: input.customerName,
           },
         });
+        createdCustomerId = customer.id;
+        createdCustomerPhone = placeholderPhone;
       }
 
       // Create order
@@ -501,8 +545,80 @@ export class OrderService {
         });
       }
 
+      // KASIR intent: record the UNPAID cashier payment atomically with the
+      // order (no gateway call), so a DINE-IN order never exists without its
+      // cashier payment row and a refresh/retry can never duplicate it.
+      if (input.paymentMethod === "KASIR") {
+        const cashierPayment = await tx.payment.create({
+          data: {
+            restaurantId,
+            orderId: newOrder.id,
+            status: "UNPAID",
+            amount: grandTotal,
+            method: "KASIR",
+          },
+        });
+        createdCashierPaymentId = cashierPayment.id;
+      }
+
       return newOrder;
     });
+
+    // Realtime (after commit): notify the admin's restaurant channel.
+    if (createdCustomerId) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.CUSTOMER_CREATED,
+        createdCustomerId,
+        {
+          customerId: createdCustomerId,
+          phone: createdCustomerPhone,
+        }
+      );
+    }
+    if (updatedCustomerId) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.CUSTOMER_UPDATED,
+        updatedCustomerId,
+        { customerId: updatedCustomerId }
+      );
+    }
+    if (createdCashierPaymentId) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.PAYMENT_CREATED,
+        createdCashierPaymentId,
+        {
+          paymentId: createdCashierPaymentId,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          amount: Number(order.grandTotal),
+          status: "UNPAID",
+          method: "KASIR",
+          provider: null,
+        }
+      );
+    }
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.ORDER_CREATED, order.id, {
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      orderType: order.orderType,
+      status: order.status,
+      tableId: order.tableId || null,
+      visitorCount: order.visitorCount,
+      customerId: order.customerId,
+      grandTotal: Number(order.grandTotal),
+    });
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
+    if (order.tableId) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.TABLE_STATUS_CHANGED,
+        `${order.tableId}-OCCUPIED`,
+        { tableId: order.tableId, status: "OCCUPIED" }
+      );
+    }
 
     return order;
   }
@@ -548,6 +664,19 @@ export class OrderService {
             include: {
               product: true,
             },
+          },
+          payments: {
+            select: {
+              id: true,
+              method: true,
+              provider: true,
+              status: true,
+              amount: true,
+              paymentUrl: true,
+              paidAt: true,
+            },
+            orderBy: { createdAt: "desc" },
+            take: 3,
           },
         },
         orderBy: { createdAt: "desc" },
@@ -632,6 +761,8 @@ export class OrderService {
             provider: true,
             status: true,
             amount: true,
+            paymentUrl: true,
+            paidAt: true,
           },
           orderBy: { createdAt: "desc" },
           take: 1,
@@ -782,6 +913,39 @@ export class OrderService {
           }
         }
       }
+    }
+
+    // Realtime: order status changed + downstream effects.
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.ORDER_STATUS_CHANGED,
+      `${id}-${input.status}`,
+      {
+        orderId: id,
+        orderNumber: order.orderNumber,
+        fromStatus: order.status,
+        toStatus: input.status,
+        tableId: order.tableId || null,
+      }
+    );
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.ORDER_UPDATED, id, {
+      orderId: id,
+      orderNumber: order.orderNumber,
+      status: input.status,
+    });
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, id);
+
+    // Table freed when an order finishes/cancels.
+    if (
+      (input.status === "COMPLETED" || input.status === "CANCELLED") &&
+      order.tableId
+    ) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.TABLE_STATUS_CHANGED,
+        `${order.tableId}-AVAILABLE`,
+        { tableId: order.tableId, status: "AVAILABLE" }
+      );
     }
 
     return { order: updatedOrder, whatsappTriggered };

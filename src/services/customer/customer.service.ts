@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError } from "@/lib/errors";
+import { emitRealtime } from "@/lib/realtime/bus";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 
 export class CustomerService {
   async getCustomers(
@@ -96,10 +98,19 @@ export class CustomerService {
       throw new NotFoundError("Customer not found");
     }
 
-    return prisma.customer.update({
+    const updated = await prisma.customer.update({
       where: { id },
       data,
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.CUSTOMER_UPDATED,
+      id,
+      { customerId: id }
+    );
+
+    return updated;
   }
 
   async findOrCreateCustomer(restaurantId: string, phone: string, name?: string) {

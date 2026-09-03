@@ -17,6 +17,7 @@ import {
   ShoppingBag,
   Truck,
   CreditCard,
+  Banknote,
 } from "lucide-react";
 import type { Order } from "@/services/order.service";
 
@@ -122,6 +123,7 @@ interface OrderCardProps {
   order: Order;
   onDetail: (order: Order) => void;
   onStatusChange: (orderId: string, status: string) => void;
+  onMarkPaid: (paymentId: string, orderId: string) => void;
   isUpdating: boolean;
 }
 
@@ -133,6 +135,7 @@ export function OrderCard({
   order,
   onDetail,
   onStatusChange,
+  onMarkPaid,
   isUpdating,
 }: OrderCardProps) {
   const statusConfig = STATUS_CONFIG[order.status] || STATUS_CONFIG.PENDING;
@@ -153,6 +156,14 @@ export function OrderCard({
   const isConfirmed = order.status === "CONFIRMED";
   const isProcessing = order.status === "PROCESSING";
   const isReady = order.status === "READY";
+
+  // KASIR payment intent (latest unpaid one wins; fall back to any row).
+  const payments = order.payments || [];
+  const cashierPayment =
+    payments.find((p) => p.method === "KASIR" && p.status !== "PAID") ||
+    payments.find((p) => p.method === "KASIR");
+  const isCashierUnpaid =
+    !!cashierPayment && cashierPayment.status !== "PAID";
 
   return (
     <Card
@@ -199,14 +210,19 @@ export function OrderCard({
             <TypeIcon className="h-3 w-3 mr-1" />
             {typeConfig.label}
           </Badge>
-          {order.table && (
-            <Badge variant="outline" className="text-[11px]">
-              Meja {order.table.number}
-            </Badge>
+          {order.table && (          <Badge variant="outline" className="text-[11px]">
+            Meja {order.table.number}
+          </Badge>
           )}
           {order.visitorCount && (
             <Badge variant="outline" className="text-[11px]">
               {order.visitorCount} orang
+            </Badge>
+          )}
+          {isCashierUnpaid && (
+            <Badge className="bg-amber-50 text-amber-800 border-amber-200 text-[11px] font-medium px-2 py-0.5">
+              <Banknote className="h-3 w-3 mr-1" />
+              Bayar di Kasir
             </Badge>
           )}
         </div>
@@ -375,6 +391,19 @@ export function OrderCard({
             </Button>
           )}
         </div>
+
+        {/* Cashier payment — collect & mark as paid (UNPAID only) */}
+        {isCashierUnpaid && cashierPayment && (
+          <Button
+            size="sm"
+            onClick={() => onMarkPaid(cashierPayment.id, order.id)}
+            disabled={isUpdating}
+            className="w-full bg-green-600 hover:bg-green-700"
+          >
+            <Banknote className="h-3.5 w-3.5 mr-1" />
+            Tandai Sudah Dibayar
+          </Button>
+        )}
       </CardContent>
     </Card>
   );

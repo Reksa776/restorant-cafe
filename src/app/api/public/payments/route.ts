@@ -17,10 +17,22 @@ export async function POST(request: NextRequest) {
       throw new ValidationError("orderNumber is required");
     }
 
+    // Optional DINE-IN payment method: "QRIS" or "KASIR". Absent = the
+    // legacy gateway flow (used by TAKEAWAY/DELIVERY and old callers).
+    const method = body.method;
+    if (method !== undefined && method !== "QRIS" && method !== "KASIR") {
+      throw new ValidationError("Metode pembayaran tidak valid");
+    }
+
     // Find order by order number
     const order = await prisma.order.findFirst({
       where: { orderNumber: body.orderNumber },
-      select: { id: true, restaurantId: true, paymentStatus: true },
+      select: {
+        id: true,
+        restaurantId: true,
+        paymentStatus: true,
+        orderType: true,
+      },
     });
 
     if (!order) {
@@ -32,10 +44,19 @@ export async function POST(request: NextRequest) {
       throw new ValidationError("Order already paid");
     }
 
-    // Create payment
+    // QRIS/KASIR are DINE_IN-only intents — TAKEAWAY/DELIVERY must keep the
+    // legacy gateway flow untouched.
+    if (method && order.orderType !== "DINE_IN") {
+      throw new ValidationError(
+        "Metode pembayaran hanya tersedia untuk dine-in"
+      );
+    }
+
+    // Create payment (amount recomputed server-side from the order row)
     const payment = await paymentService.createPayment(
       order.id,
-      order.restaurantId
+      order.restaurantId,
+      method ? { method } : undefined
     );
 
     return successResponse(
@@ -43,6 +64,7 @@ export async function POST(request: NextRequest) {
         paymentId: payment.id,
         paymentUrl: payment.paymentUrl,
         status: payment.status,
+        method: payment.method || null,
         amount: payment.amount,
       },
       "Payment created successfully"

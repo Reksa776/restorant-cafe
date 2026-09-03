@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, PaymentError, ConflictError } from "@/lib/errors";
+import { emitRealtime } from "@/lib/realtime/bus";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { IpaymuProvider } from "./providers/ipaymu/ipaymu.provider";
 import type { PaymentProvider } from "./payment.types";
 
@@ -10,7 +12,26 @@ export class PaymentService {
     this.provider = new IpaymuProvider();
   }
 
-  async createPayment(orderId: string, restaurantId: string) {
+  /**
+   * Create a payment for an order.
+   *
+   * `options.method`:
+   * - "KASIR" — no payment gateway is contacted. An UNPAID Payment row with
+   *   method KASIR is recorded and the order stays UNPAID until a cashier
+   *   marks it paid. Idempotent: an existing UNPAID KASIR row is returned.
+   * - "QRIS"  — DINE-IN QRIS: creates the transaction through the iPaymu
+   *   gateway with the qris channel (amount = order.grandTotal).
+   * - undefined — existing flow for TAKEAWAY/DELIVERY/admin: iPaymu BCA
+   *   virtual account. Unchanged behaviour.
+   *
+   * The amount is ALWAYS recomputed from the order in the database — the
+   * client can never influence the amount.
+   */
+  async createPayment(
+    orderId: string,
+    restaurantId: string,
+    options?: { method?: "QRIS" | "KASIR" }
+  ) {
     const order = await prisma.order.findFirst({
       where: {
         id: orderId,
@@ -30,7 +51,10 @@ export class PaymentService {
       throw new NotFoundError("Order not found");
     }
 
-    // Check if payment already exists
+    // Check if an online payment (gateway transaction) already exists.
+    // PENDING/PAID online payments are terminal for creating a new one;
+    // an UNPAID KASIR row also blocks a different method for the same order
+    // so an order never ends up with two live payment intents.
     const existingPayment = await prisma.payment.findFirst({
       where: {
         orderId,
@@ -39,10 +63,92 @@ export class PaymentService {
     });
 
     if (existingPayment) {
-      throw new ConflictError("Payment already exists for this order");
+      throw new ConflictError(
+        existingPayment.status === "PAID"
+          ? "Order already paid"
+          : "Payment already exists for this order"
+      );
     }
 
-    // Create payment with provider
+    // ============================================================
+    // KASIR — no gateway call. Record UNPAID and let a cashier collect.
+    // ============================================================
+    if (options?.method === "KASIR") {
+      const existingCashier = await prisma.payment.findFirst({
+        where: {
+          orderId,
+          restaurantId,
+          method: "KASIR",
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (existingCashier) {
+        if (existingCashier.status === "PAID") {
+          throw new ConflictError("Order already paid");
+        }
+        // Idempotent retry: the UNPAID KASIR row is already recorded.
+        return existingCashier;
+      }
+
+      const cashierPayment = await prisma.payment.create({
+        data: {
+          restaurantId: order.restaurantId,
+          orderId: order.id,
+          status: "UNPAID",
+          amount: order.grandTotal,
+          method: "KASIR",
+          provider: null,
+        },
+        include: {
+          order: true,
+        },
+      });
+
+      // Order payment status stays UNPAID — no gateway, nothing paid yet.
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.PAYMENT_CREATED,
+        cashierPayment.id,
+        {
+          paymentId: cashierPayment.id,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          amount: Number(cashierPayment.amount),
+          status: cashierPayment.status,
+          method: cashierPayment.method,
+          provider: null,
+        }
+      );
+      emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
+
+      return cashierPayment;
+    }
+
+    // ============================================================
+    // Gateway payment — QRIS (DINE-IN) or VA (legacy TAKEAWAY/DELIVERY)
+    // ============================================================
+    // A DINE-IN order that chose cashier first must not silently create a
+    // different payment intent on top of the UNPAID KASIR row.
+    if (options?.method !== "QRIS") {
+      const cashierUnpaid = await prisma.payment.findFirst({
+        where: {
+          orderId,
+          restaurantId,
+          method: "KASIR",
+          status: "UNPAID",
+        },
+      });
+      if (cashierUnpaid) {
+        throw new ConflictError(
+          "Pembayaran di kasir sudah dicatat untuk pesanan ini"
+        );
+      }
+    }
+
+    const isQris = options?.method === "QRIS";
+
+    // Create payment with provider (amount = grandTotal from the DB).
     const paymentResult = await this.provider.createPayment({
       orderId: order.id,
       orderNumber: order.orderNumber,
@@ -54,6 +160,7 @@ export class PaymentService {
         quantity: item.quantity,
         price: Number(item.unitPrice),
       })),
+      channel: isQris ? "qris" : "va",
     });
 
     // Save payment to database
@@ -63,6 +170,7 @@ export class PaymentService {
         orderId: order.id,
         status: "PENDING",
         amount: order.grandTotal,
+        method: isQris ? "QRIS" : null,
         provider: "ipaymu",
         providerRef: paymentResult.reference,
         paymentUrl: paymentResult.paymentUrl,
@@ -79,7 +187,150 @@ export class PaymentService {
       data: { paymentStatus: "PENDING" },
     });
 
+    // Realtime: a payment was initiated for an order.
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.PAYMENT_CREATED,
+      payment.id,
+      {
+        paymentId: payment.id,
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        amount: Number(payment.amount),
+        status: payment.status,
+        method: payment.method || null,
+        provider: payment.provider,
+      }
+    );
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
+
     return payment;
+  }
+
+  /**
+   * Cashier action — mark a KASIR payment as paid.
+   *
+   * Security: the payment must belong to the admin's own restaurant
+   * (restaurantId comes from the authenticated session) and must still be
+   * UNPAID. A concurrent or repeated click is safe: the status update is a
+   * guarded conditional update, so the payment can only ever be paid once.
+   * Order STATUS is left untouched — only the payment state (and the order's
+   * payment-status mirror) changes.
+   */
+  async markCashierPaymentPaid(
+    paymentId: string,
+    restaurantId: string,
+    changedBy?: string
+  ) {
+    const payment = await prisma.payment.findFirst({
+      where: {
+        id: paymentId,
+        restaurantId,
+        method: "KASIR",
+      },
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            restaurantId: true,
+            status: true,
+            paymentStatus: true,
+          },
+        },
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundError("Pembayaran kasir tidak ditemukan");
+    }
+
+    // Already paid — idempotent no-op, never a double charge.
+    if (payment.status === "PAID") {
+      return { payment, alreadyPaid: true };
+    }
+
+    // Guarded update: only an UNPAID row can flip to PAID, so two cashiers
+    // clicking at the same time can never double-pay.
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.payment.updateMany({
+        where: {
+          id: payment.id,
+          status: "UNPAID",
+        },
+        data: {
+          status: "PAID",
+          paidAt: new Date(),
+        },
+      });
+
+      if (updated.count === 0) {
+        // Lost the race — someone else already marked it paid.
+        return { alreadyPaid: true };
+      }
+
+      // Mirror payment status on the order row ONLY (order.status untouched).
+      await tx.order.update({
+        where: { id: payment.orderId },
+        data: { paymentStatus: "PAID" },
+      });
+
+      return { alreadyPaid: false };
+    });
+
+    const paidPayment = await prisma.payment.findUnique({
+      where: { id: payment.id },
+      include: {
+        order: {
+          select: {
+            id: true,
+            orderNumber: true,
+            restaurantId: true,
+            status: true,
+            paymentStatus: true,
+          },
+        },
+      },
+    });
+
+    // Realtime: UNPAID → PAID for the KASIR method.
+    if (!result.alreadyPaid) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.PAYMENT_STATUS_CHANGED,
+        `${payment.id}-PAID`,
+        {
+          paymentId: payment.id,
+          orderId: payment.orderId,
+          orderNumber: payment.order?.orderNumber,
+          amount: Number(payment.amount),
+          status: "PAID",
+          method: "KASIR",
+          provider: null,
+        }
+      );
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.PAYMENT_UPDATED,
+        payment.id,
+        {
+          paymentId: payment.id,
+          orderId: payment.orderId,
+          status: "PAID",
+        }
+      );
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.DASHBOARD_UPDATED,
+        payment.orderId
+      );
+    }
+
+    return {
+      payment: paidPayment || payment,
+      alreadyPaid: result.alreadyPaid,
+      changedBy: changedBy || null,
+    };
   }
 
   async getPayments(
@@ -236,6 +487,36 @@ export class PaymentService {
 
       return updated;
     });
+
+    // Realtime: payment status changed (webhook → paid/failed/expired).
+    emitRealtime(
+      payment.restaurantId,
+      REALTIME_EVENT_TYPES.PAYMENT_STATUS_CHANGED,
+      `${payment.id}-${webhookData.status}`,
+      {
+        paymentId: payment.id,
+        orderId: payment.orderId,
+        orderNumber: payment.order?.orderNumber,
+        amount: Number(updatedPayment.amount),
+        status: webhookData.status,
+        provider: payment.provider,
+      }
+    );
+    emitRealtime(
+      payment.restaurantId,
+      REALTIME_EVENT_TYPES.PAYMENT_UPDATED,
+      payment.id,
+      {
+        paymentId: payment.id,
+        orderId: payment.orderId,
+        status: webhookData.status,
+      }
+    );
+    emitRealtime(
+      payment.restaurantId,
+      REALTIME_EVENT_TYPES.DASHBOARD_UPDATED,
+      payment.orderId
+    );
 
     return updatedPayment;
   }

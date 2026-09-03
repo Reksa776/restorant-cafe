@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ConflictError, ValidationError } from "@/lib/errors";
+import { emitRealtime } from "@/lib/realtime/bus";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 
 export class MenuService {
   // ============================================================
@@ -38,12 +40,21 @@ export class MenuService {
       throw new ConflictError("Category with this name already exists");
     }
 
-    return prisma.category.create({
+    const category = await prisma.category.create({
       data: {
         restaurantId,
         ...data,
       },
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.CATEGORY_CREATED,
+      category.id,
+      { categoryId: category.id, name: category.name }
+    );
+
+    return category;
   }
 
   async updateCategory(
@@ -73,10 +84,19 @@ export class MenuService {
       }
     }
 
-    return prisma.category.update({
+    const updated = await prisma.category.update({
       where: { id },
       data,
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.CATEGORY_UPDATED,
+      id,
+      { categoryId: id, name: updated.name }
+    );
+
+    return updated;
   }
 
   async deleteCategory(id: string, restaurantId: string) {
@@ -95,7 +115,16 @@ export class MenuService {
       );
     }
 
-    return prisma.category.delete({ where: { id } });
+    const deleted = await prisma.category.delete({ where: { id } });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.CATEGORY_DELETED,
+      id,
+      { categoryId: id }
+    );
+
+    return deleted;
   }
 
   // ============================================================
@@ -189,7 +218,7 @@ export class MenuService {
       );
     }
 
-    return prisma.product.create({
+    const product = await prisma.product.create({
       data: {
         restaurantId,
         ...data,
@@ -199,6 +228,20 @@ export class MenuService {
         category: true,
       },
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.PRODUCT_CREATED,
+      product.id,
+      {
+        productId: product.id,
+        name: product.name,
+        categoryId: product.categoryId,
+        isAvailable: product.isAvailable,
+      }
+    );
+
+    return product;
   }
 
   async updateProduct(
@@ -250,7 +293,7 @@ export class MenuService {
       }
     }
 
-    return prisma.product.update({
+    const updated = await prisma.product.update({
       where: { id },
       data: {
         ...data,
@@ -260,6 +303,20 @@ export class MenuService {
         category: true,
       },
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.PRODUCT_UPDATED,
+      updated.id,
+      {
+        productId: updated.id,
+        name: updated.name,
+        categoryId: updated.categoryId,
+        isAvailable: updated.isAvailable,
+      }
+    );
+
+    return updated;
   }
 
   async deleteProduct(id: string, restaurantId: string) {
@@ -272,10 +329,19 @@ export class MenuService {
     }
 
     // Soft delete - set isActive to false
-    return prisma.product.update({
+    const updated = await prisma.product.update({
       where: { id },
       data: { isActive: false },
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.PRODUCT_DELETED,
+      id,
+      { productId: id }
+    );
+
+    return updated;
   }
 
   async toggleProductAvailability(id: string, restaurantId: string) {
@@ -287,13 +353,27 @@ export class MenuService {
       throw new NotFoundError("Product not found");
     }
 
-    return prisma.product.update({
+    const updated = await prisma.product.update({
       where: { id },
       data: { isAvailable: !product.isAvailable },
       include: {
         category: true,
       },
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.PRODUCT_UPDATED,
+      updated.id,
+      {
+        productId: updated.id,
+        name: updated.name,
+        categoryId: updated.categoryId,
+        isAvailable: updated.isAvailable,
+      }
+    );
+
+    return updated;
   }
 
   // ============================================================

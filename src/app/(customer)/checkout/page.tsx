@@ -4,7 +4,15 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCart } from "@/hooks/use-cart";
-import { ArrowLeft, Loader2, Table2, User, Phone } from "lucide-react";
+import {
+  ArrowLeft,
+  Loader2,
+  Table2,
+  User,
+  Phone,
+  QrCode,
+  Banknote,
+} from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 
@@ -48,6 +56,9 @@ export default function CheckoutPage() {
   const [tables, setTables] = useState<Table[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [step, setStep] = useState<"form" | "creating" | "paying">("form");
+
+  // DINE-IN checkout offers exactly two methods: QRIS (default) and Kasir.
+  const [paymentMethod, setPaymentMethod] = useState<"QRIS" | "KASIR">("QRIS");
 
   // DINE_IN orders (QR table flow or manually selected) are tax-free and
   // service-free — subtotal = total. TAKEAWAY / DELIVERY keep tax + service.
@@ -137,7 +148,8 @@ export default function CheckoutPage() {
         return orderItem;
       });
 
-      // Step 1: Create order
+      // Step 1: Create order. The KASIR intent also records the UNPAID
+      // cashier payment atomically on the server (no gateway involved).
       const orderData: Record<string, unknown> = {
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim() || null,
@@ -146,26 +158,39 @@ export default function CheckoutPage() {
         visitorCount: tableContext?.visitorCount || undefined,
         notes: notes.trim() || undefined,
         items: orderItems,
+        paymentMethod: isDineIn ? paymentMethod : undefined,
       };
 
       const orderRes = await api.post("/public/orders", orderData);
       const orderNumber = orderRes.data.data.orderNumber;
 
-      // Step 2: Create payment
+      // Clear the cart right after the order exists so a refresh during the
+      // payment step can never re-submit the same items (no duplicate order).
+      clearCart();
+      clearTableContext();
+
+      // Step 2 (Kasir): order done — no gateway, nothing more to pay online.
+      if (isDineIn && paymentMethod === "KASIR") {
+        toast.success("Pesanan berhasil dibuat!");
+        toast.success("Silakan lakukan pembayaran di kasir.");
+        router.push(`/order/${orderNumber}`);
+        return;
+      }
+
+      // Step 2 (QRIS / legacy gateway): create the payment transaction.
       setStep("paying");
       try {
         const paymentRes = await api.post("/public/payments", {
           orderNumber,
+          // DINE-IN always pays online via QRIS; TAKEAWAY/DELIVERY keep the
+          // legacy gateway flow (no method sent).
+          method: isDineIn ? "QRIS" : undefined,
         });
 
         const paymentUrl = paymentRes.data.data.paymentUrl;
-
-        // Clear cart and table context
-        clearCart();
-        clearTableContext();
         toast.success("Pesanan berhasil dibuat!");
 
-        // Step 3: Redirect to iPaymu payment page
+        // Step 3: Redirect to the payment page (QRIS/VA)
         if (paymentUrl) {
           window.location.href = paymentUrl;
         } else {
@@ -174,10 +199,16 @@ export default function CheckoutPage() {
         }
       } catch {
         // Payment creation failed — order still exists, redirect to order page
-        clearCart();
-        clearTableContext();
         toast.success("Pesanan berhasil dibuat!");
-        toast.error("Gagal membuat pembayaran. Silakan bayar dari halaman pesanan.");
+        if (isDineIn) {
+          toast.error(
+            "Gagal membuat pembayaran QRIS. Silakan coba lagi atau bayar di kasir."
+          );
+        } else {
+          toast.error(
+            "Gagal membuat pembayaran. Silakan bayar dari halaman pesanan."
+          );
+        }
         router.push(`/order/${orderNumber}`);
       }
     } catch (error: unknown) {
@@ -207,8 +238,16 @@ export default function CheckoutPage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <Loader2 className="h-10 w-10 animate-spin text-gray-400" />
-        <p className="text-gray-500 font-medium">Membuka halaman pembayaran...</p>
-        <p className="text-xs text-gray-400">Anda akan dialihkan ke iPaymu</p>
+        <p className="text-gray-500 font-medium">
+          {isDineIn
+            ? "Menyiapkan pembayaran QRIS..."
+            : "Membuka halaman pembayaran..."}
+        </p>
+        <p className="text-xs text-gray-400">
+          {isDineIn
+            ? "Anda akan dialihkan ke halaman pembayaran QRIS"
+            : "Anda akan dialihkan ke iPaymu"}
+        </p>
       </div>
     );
   }
@@ -429,33 +468,108 @@ export default function CheckoutPage() {
                 </div>
               </>
             )}
-            <div className="border-t pt-2 flex justify-between font-bold">
-              <span>Total</span>
-              <span>Rp{displayTotal.toLocaleString("id-ID")}</span>
-            </div>
+          <div className="border-t pt-2 flex justify-between font-bold">
+            <span>Total</span>
+            <span>Rp{displayTotal.toLocaleString("id-ID")}</span>
           </div>
         </div>
+      </div>
 
-        {/* Payment Info */}
+      {/* Payment Method — DINE_IN only: QRIS or Kasir (nothing else) */}
+      {isDineIn && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+          <h2 className="font-medium">Metode Pembayaran</h2>
+          <div className="grid grid-cols-1 gap-3">
+            {[
+              {
+                value: "QRIS" as const,
+                icon: QrCode,
+                label: "QRIS",
+                desc: "Bayar menggunakan QRIS",
+              },
+              {
+                value: "KASIR" as const,
+                icon: Banknote,
+                label: "Kasir",
+                desc: "Bayar langsung di kasir",
+              },
+            ].map((opt) => {
+              const Icon = opt.icon;
+              const isSelected = paymentMethod === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setPaymentMethod(opt.value)}
+                  aria-pressed={isSelected}
+                  className={`flex items-center gap-3 p-3.5 rounded-xl border-2 text-left transition-colors ${
+                    isSelected
+                      ? "border-gray-900 bg-gray-50"
+                      : "border-gray-200 hover:border-gray-300"
+                  }`}
+                >
+                  {/* Radio dot */}
+                  <span
+                    className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                      isSelected ? "border-gray-900" : "border-gray-300"
+                    }`}
+                  >
+                    {isSelected && (
+                      <span className="w-2 h-2 rounded-full bg-gray-900" />
+                    )}
+                  </span>
+                  <Icon
+                    className={`h-5 w-5 flex-shrink-0 ${
+                      isSelected ? "text-gray-900" : "text-gray-400"
+                    }`}
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">
+                      {opt.label}
+                    </span>
+                    <span className="block text-xs text-gray-500">
+                      {opt.desc}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Payment Info */}
+      {isDineIn ? (
+        <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 text-center">
+          {paymentMethod === "KASIR" ? (
+            <>Bayar langsung di kasir setelah pesanan Anda diterima restoran.</>
+          ) : (
+            <>Setelah pesanan dibuat, Anda akan dialihkan untuk membayar dengan QRIS.</>
+          )}
+        </div>
+      ) : (
         <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 text-center">
           Pembayaran diproses oleh iPaymu Sandbox. Anda akan dialihkan ke halaman pembayaran setelah pesanan dibuat.
         </div>
+      )}
 
-        {/* Submit */}
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-        >
-          {isSubmitting ? (
-            <>
-              <Loader2 className="h-5 w-5 animate-spin" />
-              Memproses...
-            </>
-          ) : (
-            "Konfirmasi & Bayar"
-          )}
-        </button>
+      {/* Submit */}
+      <button
+        type="submit"
+        disabled={isSubmitting}
+        className="w-full bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      >
+        {isSubmitting ? (
+          <>
+            <Loader2 className="h-5 w-5 animate-spin" />
+            Memproses...
+          </>
+        ) : isDineIn && paymentMethod === "KASIR" ? (
+          "Konfirmasi Pesanan"
+        ) : (
+          "Konfirmasi & Bayar"
+        )}
+      </button>
       </form>
     </div>
   );

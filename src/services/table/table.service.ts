@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import QRCode from "qrcode";
 import { NotFoundError, ValidationError, ConflictError } from "@/lib/errors";
+import { emitRealtime } from "@/lib/realtime/bus";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 
 export class TableService {
   async getTables(
@@ -63,13 +65,22 @@ export class TableService {
       throw new ConflictError(`Table number ${data.number} already exists`);
     }
 
-    return prisma.table.create({
+    const table = await prisma.table.create({
       data: {
         restaurantId,
         ...data,
         capacity: data.capacity || 4,
       },
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.TABLE_CREATED,
+      table.id,
+      { tableId: table.id, number: table.number, status: table.status }
+    );
+
+    return table;
   }
 
   async updateTable(
@@ -100,10 +111,24 @@ export class TableService {
       }
     }
 
-    return prisma.table.update({
+    const updated = await prisma.table.update({
       where: { id },
       data,
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.TABLE_UPDATED,
+      id,
+      {
+        tableId: id,
+        number: updated.number,
+        status: updated.status,
+        capacity: updated.capacity,
+      }
+    );
+
+    return updated;
   }
 
   async deleteTable(id: string, restaurantId: string) {
@@ -126,7 +151,16 @@ export class TableService {
       );
     }
 
-    return prisma.table.delete({ where: { id } });
+    const deleted = await prisma.table.delete({ where: { id } });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.TABLE_DELETED,
+      id,
+      { tableId: id }
+    );
+
+    return deleted;
   }
 
   async updateTableStatus(
@@ -148,10 +182,19 @@ export class TableService {
       );
     }
 
-    return prisma.table.update({
+    const updated = await prisma.table.update({
       where: { id },
       data: { status },
     });
+
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.TABLE_STATUS_CHANGED,
+      `${id}-${status}`,
+      { tableId: id, number: updated.number, status }
+    );
+
+    return updated;
   }
 
   async generateQrCode(id: string, restaurantId: string, baseUrl?: string) {

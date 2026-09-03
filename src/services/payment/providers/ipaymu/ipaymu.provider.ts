@@ -73,8 +73,18 @@ export class IpaymuProvider implements PaymentProvider {
   }
 
   async createPayment(input: CreatePaymentInput): Promise<PaymentResult> {
+    // Cap log/error excerpts (never logs secrets — raw gateway bodies are
+    // request echoes/error text, not credentials).
+    const preview = (text: string, max = 400) =>
+      text.length > max ? `${text.slice(0, max)}…` : text;
+
     try {
-      const body = {
+      // "qris" = QRIS direct payment; anything else keeps the existing
+      // BCA virtual-account flow so TAKEAWAY/DELIVERY/legacy callers are
+      // byte-for-byte unchanged.
+      const channel = input.channel === "qris" ? "qris" : "va";
+
+      const body: Record<string, unknown> = {
         product: input.items.map((item) => ({
           name: item.name,
           price: item.price,
@@ -85,10 +95,7 @@ export class IpaymuProvider implements PaymentProvider {
         buyerPhone: input.customerPhone || "",
         buyerEmail: "",
         buyerAddress: "",
-        paymentMethod: "va",
-        paymentBank: "bca",
-        vaName: "Restaurant Bahagia",
-        vaNumber: this.va,
+        paymentMethod: channel,
         phone: input.customerPhone || "",
         email: "",
         returnUrl: `${process.env.NEXT_PUBLIC_APP_URL}/payment/callback`,
@@ -97,6 +104,16 @@ export class IpaymuProvider implements PaymentProvider {
         reference: input.orderNumber,
         expired: 24,
       };
+
+      if (channel === "qris") {
+        // QRIS is a single channel — no bank/VA fields are sent.
+        body.paymentChannel = "qris";
+      } else {
+        // Virtual account fields (existing behaviour).
+        body.paymentBank = "bca";
+        body.vaName = "Restaurant Bahagia";
+        body.vaNumber = this.va;
+      }
 
       const signature = this.generateSignature("POST", body);
       const timestamp = this.generateTimestamp();
@@ -112,24 +129,109 @@ export class IpaymuProvider implements PaymentProvider {
         body: JSON.stringify(body),
       });
 
-      const result = await response.json();
+      // NEVER call response.json() directly: the gateway is not guaranteed to
+      // answer JSON (HTML/plain-text error pages, empty bodies, proxy pages…)
+      // and response.json() throws an unhandled SyntaxError deep inside the
+      // payment flow on such bodies. Read the raw body as TEXT first, then
+      // parse it ourselves so every failure is structured and debuggable.
+      // The raw body never contains API keys/VA secrets, so it is safe to
+      // log for diagnostics.
+      const responseText = await response.text();
+      const contentType = response.headers.get("content-type") || "";
 
-      if (!result.Status || result.Status !== 200) {
+      let result: unknown;
+      try {
+        result = responseText.trim()
+          ? JSON.parse(responseText)
+          : null;
+      } catch {
+        // Non-JSON response body — preserve the original response for
+        // debugging and surface it as a structured PaymentError.
+        console.error(
+          `[iPaymu] Non-JSON response for ${channel} create-payment`,
+          {
+            httpStatus: response.status,
+            contentType,
+            rawBody: preview(responseText, 1000),
+          }
+        );
         throw new PaymentError(
-          result.Message || "Failed to create payment"
+          `Payment gateway returned a non-JSON response (HTTP ${response.status}, ${contentType || "no content-type"}). ` +
+            `Raw response: ${preview(responseText, 180)}`
         );
       }
 
+      // Success payloads are objects with Status/Data; anything else or an
+      // error Status must surface the gateway's own message.
+      if (
+        !result ||
+        typeof result !== "object" ||
+        Array.isArray(result) ||
+        !("Status" in result)
+      ) {
+        console.error(
+          `[iPaymu] Unexpected payload shape for ${channel} create-payment`,
+          {
+            httpStatus: response.status,
+            contentType,
+            rawBody: preview(responseText, 1000),
+          }
+        );
+        throw new PaymentError(
+          `Payment gateway returned an unexpected payload (HTTP ${response.status}). ` +
+            `Raw response: ${preview(responseText, 180)}`
+        );
+      }
+
+      const body2 = result as Record<string, unknown>;
+      if (!body2.Status || body2.Status !== 200) {
+        // Log the gateway's own reason (message never contains secrets).
+        console.error(
+          `[iPaymu] ${channel} create-payment rejected by gateway`,
+          {
+            httpStatus: response.status,
+            gatewayStatus: body2.Status,
+            gatewayMessage:
+              typeof body2.Message === "string" ? preview(body2.Message, 300) : "",
+          }
+        );
+        throw new PaymentError(
+          (typeof body2.Message === "string" && body2.Message
+            ? body2.Message
+            : "Failed to create payment") +
+            ` (gateway status ${String(body2.Status)}, HTTP ${response.status})`
+        );
+      }
+
+      const data = body2.Data as
+        | Record<string, unknown>
+        | undefined;
+
       return {
-        reference: result.Data?.Reference || input.orderNumber,
-        paymentUrl: result.Data?.PaymentUrl || "",
+        reference:
+          (typeof data?.Reference === "string" && data.Reference) ||
+          input.orderNumber,
+        paymentUrl:
+          (typeof data?.PaymentUrl === "string" && data.PaymentUrl) || "",
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       };
     } catch (error) {
       if (error instanceof PaymentError) {
         throw error;
       }
-      throw new PaymentError("Failed to communicate with payment provider");
+      // Network-level failure (fetch threw) — never swallow the real cause
+      // behind a generic message, but never include secrets either.
+      const message =
+        error instanceof Error
+          ? error.message
+          : String(error);
+      console.error(
+        `[iPaymu] Network error during ${input.channel === "qris" ? "qris" : "va"} create-payment`,
+        { message: preview(message, 300) }
+      );
+      throw new PaymentError(
+        `Failed to communicate with payment provider: ${preview(message, 200)}`
+      );
     }
   }
 

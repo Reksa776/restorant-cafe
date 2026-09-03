@@ -34,6 +34,8 @@ import {
 } from "@/services/menu.service";
 import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
+import { useRealtimeListener } from "@/components/admin/realtime-provider";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 
 // ============================================================
 // Helpers
@@ -84,8 +86,8 @@ export default function MenuPage() {
   const [editingAddon, setEditingAddon] = useState<ProductAddon | null>(null);
   const [addonForm, setAddonForm] = useState({ name: "", price: 0, sortOrder: 0 });
 
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const [cats, prods] = await Promise.all([
         menuService.getCategories(),
@@ -102,6 +104,25 @@ export default function MenuPage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Realtime: another admin (or an availability toggle) changed products or
+  // categories → refresh the list without reloading the page. The current
+  // tab (categories/products) is preserved because loadData() only swaps the
+  // underlying arrays, not the view state.
+  useRealtimeListener(
+    [
+      REALTIME_EVENT_TYPES.PRODUCT_CREATED,
+      REALTIME_EVENT_TYPES.PRODUCT_UPDATED,
+      REALTIME_EVENT_TYPES.PRODUCT_DELETED,
+      REALTIME_EVENT_TYPES.CATEGORY_CREATED,
+      REALTIME_EVENT_TYPES.CATEGORY_UPDATED,
+      REALTIME_EVENT_TYPES.CATEGORY_DELETED,
+      REALTIME_EVENT_TYPES.OFFLINE_POLL,
+    ],
+    () => {
+      if (!isLoading) loadData(true);
+    }
+  );
 
   // Refresh customization data for the currently editing product
   const refreshCustomization = useCallback(async () => {
@@ -425,7 +446,7 @@ export default function MenuPage() {
           {/* Categories Tab */}
           <TabsContent value="categories">
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
+              <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Kategori</CardTitle>
                 <Button onClick={() => { setEditingCategory(null); setCategoryForm({ name: "", description: "" }); setIsCategoryDialogOpen(true); }}>
                   <Plus className="h-4 w-4 mr-2" /> Tambah Kategori
@@ -439,12 +460,12 @@ export default function MenuPage() {
                 ) : (
                   <div className="space-y-2">
                     {categories.map((cat) => (
-                      <div key={cat.id} className="flex items-center justify-between border-b pb-2 last:border-0">
+                      <div key={cat.id} className="flex flex-col gap-2 border-b pb-2 last:border-0 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <p className="font-medium">{cat.name}</p>
                           <p className="text-sm text-gray-500">{cat.productCount || 0} produk</p>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex shrink-0 gap-2">
                           <Button variant="outline" size="sm" onClick={() => { setEditingCategory(cat); setCategoryForm({ name: cat.name, description: cat.description || "" }); setIsCategoryDialogOpen(true); }}>
                             <Pencil className="h-4 w-4" />
                           </Button>
@@ -463,7 +484,7 @@ export default function MenuPage() {
           {/* Products Tab */}
           <TabsContent value="products">
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
+              <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Produk</CardTitle>
                 <Button onClick={() => { setEditingProduct(null); setProductForm({ name: "", description: "", price: "", categoryId: categories[0]?.id || "" }); setIsProductDialogOpen(true); }}>
                   <Plus className="h-4 w-4 mr-2" /> Tambah Produk
@@ -477,16 +498,16 @@ export default function MenuPage() {
                 ) : (
                   <div className="space-y-2">
                     {products.map((prod) => (
-                      <div key={prod.id} className="flex items-center justify-between border-b pb-2 last:border-0">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
+                      <div key={prod.id} className="flex flex-col gap-2 border-b pb-2 last:border-0 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
                             <p className="font-medium">{prod.name}</p>
                             <Badge variant="outline">{prod.category.name}</Badge>
                             {!prod.isAvailable && <Badge variant="destructive">Tidak Tersedia</Badge>}
                           </div>
                           <p className="text-sm text-gray-500">{formatPrice(Number(prod.price))}</p>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap shrink-0 gap-1.5 sm:gap-2">
                           <Button variant="outline" size="sm" onClick={() => handleToggleAvailability(prod.id)}>
                             {prod.isAvailable ? <ToggleRight className="h-4 w-4" /> : <ToggleLeft className="h-4 w-4" />}
                           </Button>
@@ -758,9 +779,9 @@ function CustomizationView({
 
       {/* Option Groups */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-base">Option Groups</CardTitle>
-          <Button size="sm" onClick={onAddGroup}>
+          <Button size="sm" onClick={onAddGroup} className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-1" /> Tambah Group
           </Button>
         </CardHeader>
@@ -776,9 +797,9 @@ function CustomizationView({
                 return (
                   <div key={group.id} className="border rounded-lg overflow-hidden">
                     {/* Group Header */}
-                    <div className="flex items-center justify-between p-3 bg-gray-50">
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => toggleExpand(group.id)} className="text-gray-500 hover:text-gray-700">
+                    <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-gray-50">
+                      <div className="flex flex-wrap items-center gap-2 min-w-0">
+                        <button onClick={() => toggleExpand(group.id)} className="text-gray-500 hover:text-gray-700" aria-label={isExpanded ? "Ciutkan group" : "Bentangkan group"}>
                           {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
                         </button>
                         <span className="font-medium text-sm">{group.name}</span>
@@ -788,7 +809,7 @@ function CustomizationView({
                         <Badge variant="outline" className="text-[10px]">{group.type}</Badge>
                         {group.isRequired && <Badge variant="outline" className="text-[10px]">Wajib</Badge>}
                       </div>
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center gap-1 shrink-0">
                         <Button variant="ghost" size="sm" onClick={() => onToggleGroup(group)}>
                           {group.isActive ? <ToggleRight className="h-4 w-4" /> : <ToggleLeft className="h-4 w-4" />}
                         </Button>
@@ -808,8 +829,8 @@ function CustomizationView({
                           <p className="text-xs text-gray-400 text-center py-2">Belum ada option</p>
                         ) : (
                           group.options.map((opt) => (
-                            <div key={opt.id} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-gray-50">
-                              <div className="flex items-center gap-2">
+                            <div key={opt.id} className="flex flex-wrap items-center justify-between gap-1.5 py-1.5 px-2 rounded hover:bg-gray-50">
+                              <div className="flex flex-wrap items-center gap-2 min-w-0">
                                 <span className={`text-sm ${opt.isActive ? "" : "text-gray-400 line-through"}`}>{opt.name}</span>
                                 {opt.priceAdjustment !== 0 && (
                                   <span className="text-xs text-gray-500">
@@ -846,9 +867,9 @@ function CustomizationView({
 
       {/* Addons */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle className="text-base">Addons</CardTitle>
-          <Button size="sm" onClick={onAddAddon}>
+          <Button size="sm" onClick={onAddAddon} className="w-full sm:w-auto">
             <Plus className="h-4 w-4 mr-1" /> Tambah Addon
           </Button>
         </CardHeader>
@@ -860,8 +881,8 @@ function CustomizationView({
           ) : (
             <div className="space-y-2">
               {product.addons.map((addon) => (
-                <div key={addon.id} className="flex items-center justify-between py-2 px-3 border rounded-lg">
-                  <div className="flex items-center gap-2">
+                <div key={addon.id} className="flex flex-wrap items-center justify-between gap-1.5 py-2 px-3 border rounded-lg">
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
                     <span className={`text-sm font-medium ${addon.isActive ? "" : "text-gray-400 line-through"}`}>{addon.name}</span>
                     <span className="text-sm text-gray-500">{formatPrice(addon.price)}</span>
                   </div>

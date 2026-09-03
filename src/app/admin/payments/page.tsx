@@ -12,8 +12,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { paymentService, type Payment } from "@/services/payment.service";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Banknote, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useRealtimeListener } from "@/components/admin/realtime-provider";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 
 const statusColors: Record<string, string> = {
   UNPAID: "bg-gray-100 text-gray-800",
@@ -27,13 +29,10 @@ export default function PaymentsPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [markingId, setMarkingId] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadPayments();
-  }, [statusFilter]);
-
-  const loadPayments = async () => {
-    setIsLoading(true);
+  const loadPayments = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const result = await paymentService.getPayments({
         status: statusFilter === "all" ? undefined : statusFilter,
@@ -44,6 +43,39 @@ export default function PaymentsPage() {
       toast.error("Gagal memuat data pembayaran");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPayments();
+  }, [statusFilter]);
+
+  // Realtime: payment created/status changed → refresh without reload.
+  // The currently selected status filter is preserved (closure state).
+  useRealtimeListener(
+    [
+      REALTIME_EVENT_TYPES.PAYMENT_CREATED,
+      REALTIME_EVENT_TYPES.PAYMENT_UPDATED,
+      REALTIME_EVENT_TYPES.PAYMENT_STATUS_CHANGED,
+      REALTIME_EVENT_TYPES.OFFLINE_POLL,
+    ],
+    () => {
+      if (!isLoading) loadPayments(true);
+    }
+  );
+
+  // Cashier collects a KASIR payment → mark PAID (server enforces once).
+  const handleMarkPaid = async (payment: Payment) => {
+    setMarkingId(payment.id);
+    try {
+      await paymentService.markCashierPaymentPaid(payment.id);
+      toast.success("Pembayaran kasir berhasil ditandai lunas");
+      await loadPayments(true);
+    } catch (error) {
+      console.error("Failed to mark cashier payment paid:", error);
+      toast.error("Gagal menandai pembayaran kasir");
+    } finally {
+      setMarkingId(null);
     }
   };
 
@@ -92,10 +124,10 @@ export default function PaymentsPage() {
               {payments.map((payment) => (
                 <div
                   key={payment.id}
-                  className="flex items-center justify-between border-b pb-4 last:border-0"
+                  className="flex flex-col gap-3 border-b pb-4 last:border-0 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <div>
-                    <div className="flex items-center gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
                       <p className="font-medium">
                         {payment.order.orderNumber}
                       </p>
@@ -103,15 +135,20 @@ export default function PaymentsPage() {
                         {payment.status}
                       </Badge>
                     </div>
-                    <p className="text-sm text-gray-500">
-                      {payment.method || "N/A"} • {payment.provider || "N/A"}
+                    <p className="text-sm text-gray-500 truncate">
+                      {payment.method === "KASIR"
+                        ? "Kasir"
+                        : payment.method === "QRIS"
+                          ? "QRIS"
+                          : payment.method || "N/A"}{" "}
+                      • {payment.provider || "—"}
                     </p>
                     <p className="text-sm text-gray-400">
                       {new Date(payment.createdAt).toLocaleString("id-ID")}
                     </p>
                   </div>
-                  <div className="flex items-center gap-4">
-                    <p className="font-medium">
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <p className="font-medium whitespace-nowrap">
                       Rp{Number(payment.amount).toLocaleString("id-ID")}
                     </p>
                     {payment.paymentUrl &&
@@ -126,6 +163,22 @@ export default function PaymentsPage() {
                         >
                           <ExternalLink className="h-4 w-4 mr-1" />
                           Bayar
+                        </Button>
+                      )}
+                    {payment.method === "KASIR" &&
+                      payment.status !== "PAID" && (
+                        <Button
+                          size="sm"
+                          className="bg-green-600 hover:bg-green-700"
+                          disabled={markingId === payment.id}
+                          onClick={() => handleMarkPaid(payment)}
+                        >
+                          {markingId === payment.id ? (
+                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                          ) : (
+                            <Banknote className="h-4 w-4 mr-1" />
+                          )}
+                          Tandai Dibayar
                         </Button>
                       )}
                   </div>

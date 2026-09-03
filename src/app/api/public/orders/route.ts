@@ -60,13 +60,33 @@ export async function POST(request: NextRequest) {
     // Create order
     const order = await orderService.createCustomerOrder(input, restaurantId);
 
+    // KASIR orders get their UNPAID payment row atomically with the order —
+    // surface it so the checkout never needs a second request.
+    let payment = null;
+    if (input.paymentMethod === "KASIR") {
+      const { prisma } = await import("@/lib/prisma");
+      payment = await prisma.payment.findFirst({
+        where: { orderId: order.id, method: "KASIR" },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          status: true,
+          method: true,
+          amount: true,
+        },
+      });
+    }
+
     return createdResponse(
       {
         orderId: order.id,
         orderNumber: order.orderNumber,
         status: order.status,
+        paymentStatus: order.paymentStatus,
+        orderType: order.orderType,
         grandTotal: order.grandTotal,
         items: order.items,
+        payment,
         customer: {
           name: order.customer.name,
           phone: order.customer.phone?.startsWith("guest-")

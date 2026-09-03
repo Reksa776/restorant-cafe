@@ -51,4 +51,15 @@ export const paymentService = {
     const response = await api.get(`/payments/${id}/url`);
     return response.data.data.paymentUrl;
   },
+
+  /**
+   * Cashier action — mark a KASIR payment as paid (admin only).
+   * Returns { payment, alreadyPaid }.
+   */
+  async markCashierPaymentPaid(
+    paymentId: string
+  ): Promise<{ payment: Payment; alreadyPaid: boolean }> {
+    const response = await api.post(`/payments/${paymentId}/mark-paid`);
+    return response.data.data;
+  },
 };

@@ -22,7 +22,9 @@ import {
   XCircle,
   User,
   CreditCard,
+  Banknote,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { Order } from "@/services/order.service";
 
 // ============================================================
@@ -87,14 +89,28 @@ interface OrderDetailProps {
   order: Order | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onMarkPaid?: (paymentId: string, orderId: string) => void;
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export function OrderDetail({ order, open, onOpenChange }: OrderDetailProps) {
+export function OrderDetail({
+  order,
+  open,
+  onOpenChange,
+  onMarkPaid,
+}: OrderDetailProps) {
   if (!order) return null;
+
+  // KASIR payment intent (latest unpaid wins; fall back to any row).
+  const payments = order.payments || [];
+  const cashierPayment =
+    payments.find((p) => p.method === "KASIR" && p.status !== "PAID") ||
+    payments.find((p) => p.method === "KASIR");
+  const isCashierUnpaid =
+    !!cashierPayment && cashierPayment.status !== "PAID";
 
   const statusConfig = STATUS_CONFIG[order.status] || STATUS_CONFIG.PENDING;
   const typeConfig = ORDER_TYPE_LABELS[order.orderType] || ORDER_TYPE_LABELS.DINE_IN;
@@ -324,6 +340,34 @@ export function OrderDetail({ order, open, onOpenChange }: OrderDetailProps) {
               </span>
             </div>
           </div>
+
+          {/* Cashier payment action (KASIR UNPAID only) */}
+          {isCashierUnpaid && cashierPayment && (
+            <>
+              <Separator />
+              <div className="flex items-center justify-between gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Banknote className="h-4 w-4 text-amber-700 flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-amber-900">
+                      Bayar di Kasir
+                    </p>
+                    <p className="text-xs text-amber-700">Belum dibayar</p>
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700 flex-shrink-0"
+                  onClick={() =>
+                    onMarkPaid?.(cashierPayment.id, order.id)
+                  }
+                >
+                  <Banknote className="h-3.5 w-3.5 mr-1" />
+                  Tandai Sudah Dibayar
+                </Button>
+              </div>
+            </>
+          )}
 
           {/* Notes */}
           {order.notes && (

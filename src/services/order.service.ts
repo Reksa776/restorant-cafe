@@ -49,6 +49,15 @@ export interface Order {
       name: string;
     };
   }>;
+  payments?: Array<{
+    id: string;
+    method: string | null;
+    provider: string | null;
+    status: string;
+    amount: string;
+    paymentUrl?: string | null;
+    paidAt?: string | null;
+  }>;
 }
 
 export interface OrdersResponse {

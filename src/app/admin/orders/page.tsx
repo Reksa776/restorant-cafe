@@ -2,8 +2,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { orderService, type Order } from "@/services/order.service";
+import { paymentService } from "@/services/payment.service";
 import { toast } from "sonner";
 import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { useRealtimeListener } from "@/components/admin/realtime-provider";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { Button } from "@/components/ui/button";
 import { OrderSummary } from "@/components/admin/orders/order-summary";
 import { OrderFilters } from "@/components/admin/orders/order-filters";
@@ -84,6 +87,47 @@ export default function OrdersPage() {
   }, [loadOrders]);
 
   // ============================================================
+  // Realtime updates (no page refresh)
+  // ============================================================
+  useRealtimeListener(
+    [
+      REALTIME_EVENT_TYPES.ORDER_CREATED,
+      REALTIME_EVENT_TYPES.ORDER_UPDATED,
+      REALTIME_EVENT_TYPES.ORDER_STATUS_CHANGED,
+      REALTIME_EVENT_TYPES.PAYMENT_CREATED,
+      REALTIME_EVENT_TYPES.PAYMENT_STATUS_CHANGED,
+      REALTIME_EVENT_TYPES.OFFLINE_POLL,
+    ],
+    (evt) => {
+      const orderId = evt.data?.orderId as string | undefined;
+      // Keep an open detail sheet live without waiting for the refetch.
+      if (orderId) {
+        setSelectedOrder((prev) => {
+          if (!prev || prev.id !== orderId) return prev;
+          const next = { ...prev };
+          if (
+            evt.type === REALTIME_EVENT_TYPES.ORDER_STATUS_CHANGED &&
+            evt.data?.toStatus
+          ) {
+            next.status = String(evt.data.toStatus) as Order["status"];
+          }
+          if (
+            (evt.type === REALTIME_EVENT_TYPES.PAYMENT_STATUS_CHANGED ||
+              evt.type === REALTIME_EVENT_TYPES.PAYMENT_CREATED) &&
+            evt.data?.status
+          ) {
+            next.paymentStatus = String(
+              evt.data.status
+            ) as Order["paymentStatus"];
+          }
+          return next;
+        });
+      }
+      if (!isLoading) loadOrders();
+    }
+  );
+
+  // ============================================================
   // Handlers
   // ============================================================
 
@@ -116,6 +160,24 @@ export default function OrdersPage() {
     } catch (err) {
       console.error("Failed to update order status:", err);
       toast.error("Gagal mengupdate status pesanan");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  /** Cashier collects the KASIR payment → server marks it PAID (never twice). */
+  const handleMarkPaid = async (paymentId: string, orderId: string) => {
+    setIsUpdating(true);
+    try {
+      await paymentService.markCashierPaymentPaid(paymentId);
+      toast.success("Pembayaran kasir berhasil ditandai lunas");
+      await loadOrders();
+      // Refresh the open detail sheet with the freshest order too.
+      const fresh = await orderService.getOrder(orderId);
+      setSelectedOrder(fresh);
+    } catch (err) {
+      console.error("Failed to mark cashier payment paid:", err);
+      toast.error("Gagal menandai pembayaran kasir");
     } finally {
       setIsUpdating(false);
     }
@@ -180,7 +242,7 @@ export default function OrdersPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Pesanan</h1>
           <p className="text-muted-foreground">Kelola pesanan restoran</p>
@@ -190,6 +252,7 @@ export default function OrdersPage() {
           size="sm"
           onClick={() => loadOrders(true)}
           disabled={isRefreshing}
+          className="w-full sm:w-auto"
         >
           <RefreshCw
             className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
@@ -255,6 +318,7 @@ export default function OrdersPage() {
               order={order}
               onDetail={handleDetail}
               onStatusChange={handleStatusUpdate}
+              onMarkPaid={handleMarkPaid}
               isUpdating={isUpdating}
             />
           ))}
@@ -266,6 +330,7 @@ export default function OrdersPage() {
         order={selectedOrder}
         open={isDetailOpen}
         onOpenChange={setIsDetailOpen}
+        onMarkPaid={handleMarkPaid}
       />
     </div>
   );

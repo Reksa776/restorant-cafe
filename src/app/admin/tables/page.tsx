@@ -26,6 +26,8 @@ import {
   type RestaurantTable,
 } from "@/services/table.service";
 import { cn } from "@/lib/utils";
+import { useRealtimeListener } from "@/components/admin/realtime-provider";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import {
   Plus,
   Pencil,
@@ -104,12 +106,8 @@ export default function TablesPage() {
       : ""
   );
 
-  useEffect(() => {
-    loadTables();
-  }, []);
-
-  const loadTables = async () => {
-    setIsLoading(true);
+  const loadTables = async (silent = false) => {
+    if (!silent) setIsLoading(true);
     try {
       const result = await tableService.getTables();
       setTables(result);
@@ -120,6 +118,25 @@ export default function TablesPage() {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadTables();
+  }, []);
+
+  // Realtime: table status/CRUD changes (e.g. an order occupying/freeing a
+  // table, or another admin) → refresh cards without a page reload.
+  useRealtimeListener(
+    [
+      REALTIME_EVENT_TYPES.TABLE_CREATED,
+      REALTIME_EVENT_TYPES.TABLE_UPDATED,
+      REALTIME_EVENT_TYPES.TABLE_DELETED,
+      REALTIME_EVENT_TYPES.TABLE_STATUS_CHANGED,
+      REALTIME_EVENT_TYPES.OFFLINE_POLL,
+    ],
+    () => {
+      if (!isLoading) loadTables(true);
+    }
+  );
 
   const handleSave = async () => {
     try {
@@ -220,7 +237,7 @@ export default function TablesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Meja</h1>
           <p className="text-gray-500">Kelola meja dan link QR restoran</p>
@@ -231,6 +248,7 @@ export default function TablesPage() {
             setForm({ number: "", name: "", capacity: "4" });
             setIsDialogOpen(true);
           }}
+          className="w-full sm:w-auto"
         >
           <Plus className="h-4 w-4 mr-2" />
           Tambah Meja

@@ -289,7 +289,7 @@ export default function WhatsAppPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <MessageSquare className="h-8 w-8" />
@@ -303,6 +303,7 @@ export default function WhatsAppPage() {
           variant="outline"
           onClick={handleRefresh}
           disabled={isLoading}
+          className="w-full sm:w-auto"
         >
           <RefreshCw
             className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
@@ -446,11 +447,11 @@ export default function WhatsAppPage() {
             {status?.status === "QR_REQUIRED" && qrCode ? (
               <div className="space-y-4">
                 {/* QR Code Image */}
-                <div className="p-4 bg-white rounded-lg border-2 border-dashed border-gray-200">
+                <div className="p-3 sm:p-4 bg-white rounded-lg border-2 border-dashed border-gray-200">
                   <img
                     src={qrCode}
                     alt="WhatsApp QR Code"
-                    className="w-64 h-64"
+                    className="w-52 h-52 sm:w-64 sm:h-64 max-w-full"
                   />
                 </div>
                 <p className="text-sm text-center text-gray-600">
@@ -551,7 +552,7 @@ export default function WhatsAppPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               <div className="text-center">
                 <p className="text-2xl font-bold">{status.queue.waiting}</p>
                 <p className="text-sm text-gray-500">Menunggu</p>
