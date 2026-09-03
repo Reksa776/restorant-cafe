@@ -22,6 +22,19 @@ export class IpaymuProvider implements PaymentProvider {
   }
 
   /**
+   * SHA256 (lowercase hex) of the exact JSON-serialized request body.
+   * Serialization happens ONCE in createPayment: the exact string that is
+   * hashed for the signature is the exact string sent in fetch().
+   */
+  private hashBody(jsonBody: string): string {
+    return crypto
+      .createHash("sha256")
+      .update(jsonBody)
+      .digest("hex")
+      .toLowerCase();
+  }
+
+  /**
    * Generate iPaymu API v2 request signature per official Node.js SDK.
    *
    * Algorithm (verified against github.com/ipaymu/ipaymu-nodejs-api/src/curl.ts):
@@ -32,16 +45,17 @@ export class IpaymuProvider implements PaymentProvider {
    *
    * Headers: va, signature, timestamp
    */
-  private generateSignature(method: string, body: Record<string, unknown>): string {
-    // Step 1: Serialize body to JSON (no spaces)
-    const jsonBody = JSON.stringify(body);
+  private generateSignature(
+    method: string,
+    body: Record<string, unknown>,
+    jsonBody?: string
+  ): string {
+    // Step 1: Serialize body to JSON (no spaces) — or reuse the exact string
+    // already serialized by the caller so hash and wire bytes are identical.
+    const bodyJson = jsonBody ?? JSON.stringify(body);
 
     // Step 2: SHA256 hash the JSON body (lowercase hex) — matches official SDK
-    const bodyHash = crypto
-      .createHash("sha256")
-      .update(jsonBody)
-      .digest("hex")
-      .toLowerCase();
+    const bodyHash = this.hashBody(bodyJson);
 
     // Step 3: StringToSign = METHOD:VA:HASH:SECRET
     const stringToSign = `${method.toUpperCase()}:${this.va}:${bodyHash}:${this.apiKey}`;
@@ -79,43 +93,45 @@ export class IpaymuProvider implements PaymentProvider {
       text.length > max ? `${text.slice(0, max)}…` : text;
 
     try {
-      // "qris" = QRIS direct payment; anything else keeps the existing
-      // BCA virtual-account flow so TAKEAWAY/DELIVERY/legacy callers are
-      // byte-for-byte unchanged.
+      // "qris" = QRIS direct payment; anything else keeps the BCA virtual
+      // account channel. Both channels use the iPaymu v2 direct-payment
+      // request format proven against the sandbox from the VPS control test:
+      // parallel string arrays (product/qty/price), string amount, and
+      // account = merchant VA. Signature is computed over this exact final
+      // body — it is never mutated afterwards.
       const channel = input.channel === "qris" ? "qris" : "va";
 
+      // iPaymu's direct endpoint rejects requests with an EMPTY phone or
+      // email (it responds with a misleading "unauthorized signature"), and
+      // the VA channel additionally rejects non-numeric phones ("phone harus
+      // berupa angka"). The service already passes the restaurant's real
+      // contact as fallback; normalize the phone to digits and guarantee the
+      // fields are never empty on the wire.
+      const buyerPhone = (input.customerPhone || "081000000000").replace(/\D/g, "");
+      const buyerEmail = input.customerEmail || "customer@example.com";
+
       const body: Record<string, unknown> = {
-        product: input.items.map((item) => ({
-          name: item.name,
-          price: item.price,
-          quantity: item.quantity,
-        })),
-        amount: input.amount,
-        buyerName: input.customerName,
-        buyerPhone: input.customerPhone || "",
-        buyerEmail: "",
-        buyerAddress: "",
+        name: input.customerName,
+        phone: buyerPhone,
+        email: buyerEmail,
+        amount: String(input.amount),
         paymentMethod: channel,
-        phone: input.customerPhone || "",
-        email: "",
+        paymentChannel: channel === "qris" ? "qris" : "bca",
+        product: input.items.map((item) => item.name),
+        qty: input.items.map((item) => String(item.quantity)),
+        price: input.items.map((item) => String(item.price)),
         returnUrl: `${process.env.NEXT_PUBLIC_APP_URL}/payment/callback`,
         notifyUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/ipaymu`,
         cancelUrl: `${process.env.NEXT_PUBLIC_APP_URL}/order/${input.orderNumber}`,
-        reference: input.orderNumber,
-        expired: 24,
+        referenceId: input.orderNumber,
+        account: this.va,
       };
 
-      if (channel === "qris") {
-        // QRIS is a single channel — no bank/VA fields are sent.
-        body.paymentChannel = "qris";
-      } else {
-        // Virtual account fields (existing behaviour).
-        body.paymentBank = "bca";
-        body.vaName = "Restaurant Bahagia";
-        body.vaNumber = this.va;
-      }
-
-      const signature = this.generateSignature("POST", body);
+      // Serialize the final body EXACTLY ONCE. The same string is hashed for
+      // the signature and sent on the wire — there is no second
+      // reconstruction, sorting, or mutation in between.
+      const jsonBody = JSON.stringify(body);
+      const signature = this.generateSignature("POST", body, jsonBody);
       const timestamp = this.generateTimestamp();
 
       const response = await fetch(`${this.baseUrl}/payment/direct`, {
@@ -126,7 +142,7 @@ export class IpaymuProvider implements PaymentProvider {
           signature: signature,
           timestamp: timestamp,
         },
-        body: JSON.stringify(body),
+        body: jsonBody,
       });
 
       // NEVER call response.json() directly: the gateway is not guaranteed to
@@ -207,12 +223,18 @@ export class IpaymuProvider implements PaymentProvider {
         | Record<string, unknown>
         | undefined;
 
+      // VA responses carry PaymentUrl (redirect to the VA payment page); QRIS
+      // responses carry QrImage/QrTemplate instead (no PaymentUrl). Surface a
+      // usable URL for both so the customer redirect flow keeps working.
       return {
         reference:
           (typeof data?.Reference === "string" && data.Reference) ||
           input.orderNumber,
         paymentUrl:
-          (typeof data?.PaymentUrl === "string" && data.PaymentUrl) || "",
+          (typeof data?.PaymentUrl === "string" && data.PaymentUrl) ||
+          (typeof data?.QrTemplate === "string" && data.QrTemplate) ||
+          (typeof data?.QrImage === "string" && data.QrImage) ||
+          "",
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       };
     } catch (error) {

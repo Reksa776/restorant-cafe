@@ -39,6 +39,9 @@ export class PaymentService {
       },
       include: {
         customer: true,
+        restaurant: {
+          select: { phone: true, email: true },
+        },
         items: {
           include: {
             product: true,
@@ -149,12 +152,17 @@ export class PaymentService {
     const isQris = options?.method === "QRIS";
 
     // Create payment with provider (amount = grandTotal from the DB).
+    // The iPaymu direct endpoint rejects empty buyer phone/email (reported as
+    // "unauthorized signature"), so fall back to the restaurant's real contact
+    // data when the customer did not provide any. The provider applies a final
+    // non-empty placeholder only if the restaurant has none either.
     const paymentResult = await this.provider.createPayment({
       orderId: order.id,
       orderNumber: order.orderNumber,
       amount: Number(order.grandTotal),
       customerName: order.customer.name || "Customer",
-      customerPhone: order.customer.phone,
+      customerPhone: order.customer.phone || order.restaurant.phone || "",
+      customerEmail: order.restaurant.email || "",
       items: order.items.map((item) => ({
         name: item.product.name,
         quantity: item.quantity,

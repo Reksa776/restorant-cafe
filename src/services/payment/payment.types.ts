@@ -10,6 +10,13 @@ export interface CreatePaymentInput {
   amount: number;
   customerName: string;
   customerPhone: string | null;
+  /**
+   * Buyer email. The iPaymu direct endpoint rejects requests with an empty
+   * `email` (returning a misleading "unauthorized signature"), so the caller
+   * should provide a real fallback (e.g. the restaurant's email) whenever the
+   * customer has none.
+   */
+  customerEmail?: string | null;
   items: PaymentItem[];
   /**
    * iPaymu direct-payment channel: "va" (existing BCA virtual account) or

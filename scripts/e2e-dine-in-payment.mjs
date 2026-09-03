@@ -7,18 +7,20 @@
 //    "Tandai Sudah Dibayar" → PAID + paidAt + PAYMENT_STATUS_CHANGED
 //    realtime → no double payment → customer refresh shows PAID.
 //  - QRIS flow: checkout default QRIS → gateway request (amount =
-//    grandTotal) → graceful handling when the gateway is unreachable →
-//    webhook pipeline (signed iPaymu callback) → PAID, realtime to admin,
-//    amount mismatch rejected.
+//    grandTotal) → PENDING QRIS payment + paymentUrl when the gateway
+//    accepts (or graceful recovery when it is unreachable) → webhook
+//    pipeline (signed iPaymu callback) → PAID, realtime to admin, amount
+//    mismatch rejected.
 //  - TAKEAWAY/DELIVERY regression: legacy gateway flow unchanged, no
 //    QRIS/Kasir selector, paymentMethod rejected server-side.
 //
-// NOTE: the iPaymu sandbox credentials in this environment reject every
-// signature ("unauthorized signature" — pre-existing, seen in earlier
-// phases), so the QRIS leg cannot complete live on the sandbox. The test
-// covers the app-side QRIS pipeline end-to-end instead: the checkout
-// gracefully handles the gateway failure and the webhook handler is driven
-// with a REAL HMAC signature (same algorithm the provider validates).
+// NOTE: the QRIS leg completes LIVE against the iPaymu sandbox when the
+// configured credentials accept /payment/direct (they do in this
+// environment since the buyer phone/email fallback fix). When the gateway
+// is unreachable or rejects, the app must still fall back to the order page
+// with payment UNPAID and offer recovery actions — both branches are
+// asserted below. The webhook handler is driven with a REAL HMAC signature
+// (same algorithm the provider validates).
 import puppeteer from "puppeteer-core";
 import { createConnection } from "mysql2/promise";
 import crypto from "node:crypto";
@@ -549,8 +551,9 @@ if (!qrisRedirected && qrisOrderNumber) {
 }
 check("TEST16 order created via QRIS flow",
   (qrisRedirected || qrisOnGateway) && !!qrisOrderNumber, `order=${qrisOrderNumber}`);
-// In this environment the sandbox refuses every signature (pre-existing), so
-// the app must fall back to the order page with payment still UNPAID.
+// Gateway result decides the branch: when it rejects, the app must fall back
+// to the order page with payment still UNPAID; when it accepts, a PENDING
+// QRIS row with a paymentUrl exists.
 const qOrders = await q("SELECT * FROM `Order` WHERE orderNumber = ?", [qrisOrderNumber]);
 const qOrder = qOrders[0];
 const qPayRows = await q("SELECT * FROM Payment WHERE orderId = ?", [qOrder.id]);
@@ -803,11 +806,19 @@ check("TEST20 DINE-IN selector appears when DINE-IN tab active",
 const twOrder = await mkOrder("TAKEAWAY", null);
 check("TEST20 TAKEAWAY order created (legacy, no paymentMethod)",
   twOrder.status === 201 && !!twOrder.orderNumber, `status=${twOrder.status} order=${twOrder.orderNumber}`);
-const twRows = await q("SELECT paymentStatus, orderType FROM `Order` WHERE orderNumber = ?", [twOrder.orderNumber]);
 const twPay = await attemptLegacyPayment(twOrder.orderNumber);
-const twPayRows = await q("SELECT id FROM Payment WHERE orderId = (SELECT id FROM `Order` WHERE orderNumber = ?)", [twOrder.orderNumber]);
-check("TEST20 TAKEAWAY legacy payment attempt: gateway error only, no Payment row, order UNPAID",
-  twPay.status >= 400 && twPayRows.length === 0 && twRows.length === 1 && twRows[0].paymentStatus === "UNPAID" && twRows[0].orderType === "TAKEAWAY",
+// Order state is read AFTER the payment attempt so paymentStatus reflects
+// the attempt (PENDING on success / UNPAID on rejection).
+const twRows = await q("SELECT paymentStatus, orderType FROM `Order` WHERE orderNumber = ?", [twOrder.orderNumber]);
+const twPayRows = await q("SELECT method, provider, status, amount FROM Payment WHERE orderId = (SELECT id FROM `Order` WHERE orderNumber = ?)", [twOrder.orderNumber]);
+const twGrand = (await q("SELECT grandTotal FROM `Order` WHERE orderNumber = ?", [twOrder.orderNumber]))[0].grandTotal;
+// Legacy TAKEAWAY flow: no method sent, VA channel, amount = grandTotal. When
+// the gateway accepts, exactly one PENDING row is stored; when it rejects,
+// no row and the order stays UNPAID (recovery on the order page).
+check("TEST20 TAKEAWAY legacy payment attempt: PENDING row (amount=grandTotal) or clean rejection, no duplicates",
+  twRows.length === 1 && twRows[0].orderType === "TAKEAWAY" &&
+    ((twPay.status === 200 && twPayRows.length === 1 && twPayRows[0].provider === "ipaymu" && twPayRows[0].method === null && twPayRows[0].status === "PENDING" && Number(twPayRows[0].amount) === Number(twGrand) && twRows[0].paymentStatus === "PENDING") ||
+     (twPay.status >= 400 && twPayRows.length === 0 && twRows[0].paymentStatus === "UNPAID")),
   `payStatus=${twPay.status} payRows=${twPayRows.length}`);
 const twKasirRejected = await mkOrder("TAKEAWAY", "KASIR");
 check("TEST20 TAKEAWAY + paymentMethod=KASIR rejected server-side",
@@ -817,11 +828,14 @@ check("TEST20 TAKEAWAY + paymentMethod=KASIR rejected server-side",
 const dlOrder = await mkOrder("DELIVERY", null);
 check("TEST21 DELIVERY order created (legacy, no paymentMethod)",
   dlOrder.status === 201 && !!dlOrder.orderNumber, `status=${dlOrder.status}`);
-const dlRows = await q("SELECT paymentStatus, orderType FROM `Order` WHERE orderNumber = ?", [dlOrder.orderNumber]);
 const dlPay = await attemptLegacyPayment(dlOrder.orderNumber);
-const dlPayRows = await q("SELECT id FROM Payment WHERE orderId = (SELECT id FROM `Order` WHERE orderNumber = ?)", [dlOrder.orderNumber]);
-check("TEST21 DELIVERY legacy payment attempt: gateway error only, no Payment row, order UNPAID",
-  dlPay.status >= 400 && dlPayRows.length === 0 && dlRows.length === 1 && dlRows[0].paymentStatus === "UNPAID" && dlRows[0].orderType === "DELIVERY",
+const dlRows = await q("SELECT paymentStatus, orderType FROM `Order` WHERE orderNumber = ?", [dlOrder.orderNumber]);
+const dlPayRows = await q("SELECT method, provider, status, amount FROM Payment WHERE orderId = (SELECT id FROM `Order` WHERE orderNumber = ?)", [dlOrder.orderNumber]);
+const dlGrand = (await q("SELECT grandTotal FROM `Order` WHERE orderNumber = ?", [dlOrder.orderNumber]))[0].grandTotal;
+check("TEST21 DELIVERY legacy payment attempt: PENDING row (amount=grandTotal) or clean rejection, no duplicates",
+  dlRows.length === 1 && dlRows[0].orderType === "DELIVERY" &&
+    ((dlPay.status === 200 && dlPayRows.length === 1 && dlPayRows[0].provider === "ipaymu" && dlPayRows[0].method === null && dlPayRows[0].status === "PENDING" && Number(dlPayRows[0].amount) === Number(dlGrand) && dlRows[0].paymentStatus === "PENDING") ||
+     (dlPay.status >= 400 && dlPayRows.length === 0 && dlRows[0].paymentStatus === "UNPAID")),
   `payStatus=${dlPay.status} payRows=${dlPayRows.length}`);
 
 // ============================================================
