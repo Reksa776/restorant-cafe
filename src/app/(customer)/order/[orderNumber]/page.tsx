@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -17,6 +17,8 @@ import {
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { QrCodeDisplay } from "@/components/qr-code-display";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
+import type { RealtimeEvent } from "@/lib/realtime/types";
 
 // ============================================================
 // Types
@@ -92,6 +94,34 @@ const STATUS_STEPS = [
   { key: "COMPLETED", label: "Selesai", icon: CheckCircle },
 ];
 
+/**
+ * Customer-facing copy for an order status transition (live SSE toast).
+ * Returns null when no toast should be shown (no-op / unknown target).
+ */
+function statusTransitionMessage(
+  orderType: string,
+  fromStatus: string,
+  toStatus: string
+): string | null {
+  if (!toStatus || toStatus === fromStatus) return null;
+  switch (toStatus) {
+    case "CONFIRMED":
+      return "Pesanan telah dikonfirmasi";
+    case "PROCESSING":
+      return "Pesanan sedang diproses oleh dapur";
+    case "READY":
+      return orderType === "DELIVERY"
+        ? "Pesanan siap diantar"
+        : "Pesanan siap diambil";
+    case "COMPLETED":
+      return "Pesanan telah selesai";
+    case "CANCELLED":
+      return "Pesanan dibatalkan";
+    default:
+      return null;
+  }
+}
+
 // ============================================================
 // Component
 // ============================================================
@@ -106,9 +136,40 @@ export default function OrderTrackingPage({
   const [isLoading, setIsLoading] = useState(true);
   const [isPaying, setIsPaying] = useState(false);
 
+  // Resolved order number (params is a Promise in the App Router).
+  const [orderNumber, setOrderNumber] = useState<string | null>(null);
+  // Becomes true after the first successful load — the SSE stream is only
+  // opened for a real order (an unknown order just shows the not-found UI).
+  const [orderReady, setOrderReady] = useState(false);
+
+  // Latest-value refs so the realtime handlers never act on stale state
+  // without forcing the SSE stream to re-subscribe.
+  const orderRef = useRef<OrderData | null>(null);
+  const loadOrderRef = useRef<() => Promise<void>>(async () => {});
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    orderRef.current = order;
+  });
+  useEffect(() => {
+    loadOrderRef.current = loadOrder;
+  });
+
+  // Resolve the order number from the route params exactly once.
+  useEffect(() => {
+    let cancelled = false;
+    params.then(({ orderNumber: num }) => {
+      if (!cancelled) setOrderNumber(num);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [params]);
+
   useEffect(() => {
     loadOrder();
-    // Poll for status updates every 10 seconds
+    // Poll for status updates every 10 seconds — stays as the offline
+    // fallback; live updates arrive over the SSE stream below.
     const interval = setInterval(loadOrder, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -118,15 +179,131 @@ export default function OrderTrackingPage({
       const { orderNumber } = await params;
       const res = await api.get(`/public/orders/${orderNumber}`);
       setOrder(res.data.data);
+      setOrderReady(true);
     } catch (error) {
       console.error("Failed to load order:", error);
-      if (!order) {
+      // Use the latest order (ref) — a transient error must not toast
+      // "not found" while a previously loaded order is on screen.
+      if (!orderRef.current) {
         toast.error("Pesanan tidak ditemukan");
       }
     } finally {
       setIsLoading(false);
     }
   };
+
+  // ============================================================
+  // Realtime (SSE) — admin status/payment changes reach this page
+  // without a refresh. Server filters the stream to this order only.
+  // ============================================================
+  useEffect(() => {
+    if (!orderNumber || !orderReady) return;
+
+    const seenIds = new Set<string>();
+
+    // Debounced authoritative refetch (picks up statusHistory/payments that
+    // events intentionally do not carry). Also serves as the reconnect sync.
+    const scheduleRefetch = () => {
+      if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        loadOrderRef.current();
+      }, 800);
+    };
+
+    const es = new EventSource(`/api/public/orders/${orderNumber}/stream`);
+
+    es.onopen = () => {
+      // First connect or automatic reconnect — reconcile anything missed
+      // while the stream was down.
+      scheduleRefetch();
+    };
+
+    es.onmessage = (msg) => {
+      try {
+        const event = JSON.parse(msg.data) as RealtimeEvent;
+        if (!event || typeof event.type !== "string") return;
+
+        // De-duplicate repeated deliveries of the same event.
+        if (event.id) {
+          if (seenIds.has(event.id)) return;
+          seenIds.add(event.id);
+          if (seenIds.size > 400) {
+            // Drop the oldest half to keep memory bounded.
+            const toRemove = [...seenIds].slice(0, 200);
+            toRemove.forEach((id) => seenIds.delete(id));
+          }
+        }
+
+        const data = event.data ?? {};
+        // Never touch another order's view (belt & braces — the stream is
+        // already server-filtered to this order number).
+        if (
+          data.orderNumber !== undefined &&
+          String(data.orderNumber) !== orderNumber
+        ) {
+          return;
+        }
+
+        if (
+          event.type === REALTIME_EVENT_TYPES.ORDER_STATUS_CHANGED
+        ) {
+          const toStatus = String(data.toStatus ?? "");
+          const fromStatus = String(data.fromStatus ?? "");
+          if (!toStatus) return;
+
+          // Patch the local state immediately — no wait for the refetch.
+          setOrder((prev) =>
+            prev ? { ...prev, status: toStatus } : prev
+          );
+
+          const message = statusTransitionMessage(
+            orderRef.current?.orderType || "DINE_IN",
+            fromStatus,
+            toStatus
+          );
+          if (message) {
+            toast.success(message, {
+              duration: 4000,
+            });
+          }
+          scheduleRefetch();
+          return;
+        }
+
+        if (
+          event.type === REALTIME_EVENT_TYPES.PAYMENT_STATUS_CHANGED ||
+          event.type === REALTIME_EVENT_TYPES.PAYMENT_UPDATED ||
+          event.type === REALTIME_EVENT_TYPES.PAYMENT_CREATED
+        ) {
+          const paymentStatus = String(data.status ?? "");
+          if (!paymentStatus) return;
+          // Patch payment state live (UNPAID → PAID etc.).
+          setOrder((prev) =>
+            prev ? { ...prev, paymentStatus } : prev
+          );
+          scheduleRefetch();
+          return;
+        }
+
+        // ORDER_UPDATED or anything else → light authoritative refetch.
+        scheduleRefetch();
+      } catch {
+        // Ignore malformed frames.
+      }
+    };
+
+    // es.onerror: the browser auto-reconnects with native backoff; the 10s
+    // polling interval above stays as an extra safety net.
+
+    return () => {
+      es.close();
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, [orderNumber, orderReady]);
 
   /**
    * Create a payment with an explicit method. DINE-IN orders may pay online
