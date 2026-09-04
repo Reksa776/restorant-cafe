@@ -190,8 +190,12 @@ export default function CheckoutPage() {
         const paymentUrl = paymentRes.data.data.paymentUrl;
         toast.success("Pesanan berhasil dibuat!");
 
-        // Step 3: Redirect to the payment page (QRIS/VA)
-        if (paymentUrl) {
+        // Step 3: DINE-IN QRIS customers go to the app's own payment page
+        // (never straight to the raw gateway URL). TAKEAWAY/DELIVERY keep the
+        // legacy iPaymu redirect.
+        if (isDineIn) {
+          router.push(`/payment/${orderNumber}`);
+        } else if (paymentUrl) {
           window.location.href = paymentUrl;
         } else {
           // No payment URL — redirect to order tracking

@@ -61,6 +61,7 @@ export async function POST(request: NextRequest) {
 
     return successResponse(
       {
+        orderNumber: body.orderNumber,
         paymentId: payment.id,
         paymentUrl: payment.paymentUrl,
         status: payment.status,

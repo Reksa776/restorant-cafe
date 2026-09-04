@@ -7,10 +7,12 @@
 //    "Tandai Sudah Dibayar" → PAID + paidAt + PAYMENT_STATUS_CHANGED
 //    realtime → no double payment → customer refresh shows PAID.
 //  - QRIS flow: checkout default QRIS → gateway request (amount =
-//    grandTotal) → PENDING QRIS payment + paymentUrl when the gateway
-//    accepts (or graceful recovery when it is unreachable) → webhook
-//    pipeline (signed iPaymu callback) → PAID, realtime to admin, amount
-//    mismatch rejected.
+//    grandTotal) → PENDING QRIS payment + QrImage when the gateway accepts
+//    → customer lands on the APP's own /payment/<order> page (QR image,
+//    countdown, polling — never a raw iPaymu redirect; graceful recovery on
+//    the order page when the gateway is unreachable) → webhook pipeline
+//    (signed iPaymu callback) → PAID on the payment page too, realtime to
+//    admin, amount mismatch rejected, duplicate payment idempotent.
 //  - TAKEAWAY/DELIVERY regression: legacy gateway flow unchanged, no
 //    QRIS/Kasir selector, paymentMethod rejected server-side.
 //
@@ -25,9 +27,18 @@ import puppeteer from "puppeteer-core";
 import { createConnection } from "mysql2/promise";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import QRCode from "qrcode";
 
 const BASE = "http://localhost:3000";
-const CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe";
+// Cross-platform Chrome discovery: CHROME_PATH env > common macOS/Windows
+// locations (this repo is developed on both).
+const chromeCandidates = [
+  process.env.CHROME_PATH,
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+].filter(Boolean);
+const CHROME = chromeCandidates.find((p) => fs.existsSync(p)) || chromeCandidates[0];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 const check = (name, ok, detail = "") => {
@@ -49,13 +60,28 @@ function loadEnv() {
 const ENV = loadEnv();
 const IPAYMU_VA = ENV.IPAYMU_VA || "";
 
-const conn = await createConnection({
+// The app reads DATABASE_URL from .env; default to the legacy local MySQL
+// (docker at 3306) when .env is missing/unparseable.
+let dbConfig = {
   host: "localhost",
   port: 3306,
   user: "root",
   password: "",
   database: "restaurant_app",
-});
+};
+const dbUrlMatch = (ENV.DATABASE_URL || "").match(
+  /^mysql:\/\/([^:]+):([^@]+)@([^:/]+):(\d+)\/(.+)$/
+);
+if (dbUrlMatch) {
+  dbConfig = {
+    host: dbUrlMatch[3],
+    port: Number(dbUrlMatch[4]),
+    user: dbUrlMatch[1],
+    password: dbUrlMatch[2],
+    database: dbUrlMatch[5],
+  };
+}
+const conn = await createConnection(dbConfig);
 
 const q = async (sql, args) => (await conn.query(sql, args))[0];
 
@@ -174,6 +200,27 @@ const waitOrderPage = async (page, getOrderNumber, timeout = 25000) => {
     await sleep(300);
   }
   return false;
+};
+// Same, but for the app's own QRIS payment page /payment/<number>.
+const waitPaymentPage = async (page, getOrderNumber, timeout = 30000) => {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const num = getOrderNumber();
+    if (num) {
+      const onPage = await page
+        .evaluate((n) => location.pathname.startsWith(`/payment/${n}`), num)
+        .catch(() => false);
+      if (onPage) return true;
+    }
+    await sleep(300);
+  }
+  return false;
+};
+// True when the payment page shows the QRIS <img> (data URI or https URL).
+const paymentPageHasQr = () => {
+  const img = document.querySelector("img[alt='QRIS']");
+  return !!img && img.src.length > 0 &&
+    (img.src.startsWith("data:image") || img.src.startsWith("http"));
 };
 
 // ---------------------------------------------------------------
@@ -540,20 +587,23 @@ await Q.evaluate(() => {
   if (b) b.click();
 });
 
-// ---- TEST16b/17: order created; gateway attempt handled gracefully ----
-const qrisRedirected = await waitOrderPage(Q, () => qrisOrderNumber, 30000);
-// Credentials sometimes redirect away to the gateway host; accept either.
-let qrisOnGateway = false;
-if (!qrisRedirected && qrisOrderNumber) {
-  qrisOnGateway = await Q
-    .evaluate(() => location.hostname.includes("ipaymu"))
+// ---- TEST16b/17: order created; redirect target decided by gateway ----
+// QRIS customers now land on the APP's payment page (/payment/<order>) —
+// never on the raw iPaymu page. Only a gateway failure falls back to the
+// order page (with recovery actions).
+const qrisOnPaymentPage = await waitPaymentPage(Q, () => qrisOrderNumber, 30000);
+let qrisOnOrderPage = false;
+if (!qrisOnPaymentPage && qrisOrderNumber) {
+  qrisOnOrderPage = await Q
+    .evaluate((n) => location.pathname.startsWith(`/order/${n}`), qrisOrderNumber)
     .catch(() => false);
 }
-check("TEST16 order created via QRIS flow",
-  (qrisRedirected || qrisOnGateway) && !!qrisOrderNumber, `order=${qrisOrderNumber}`);
+check("TEST16 order created via QRIS flow → app payment page (or order page on gateway failure)",
+  (qrisOnPaymentPage || qrisOnOrderPage) && !!qrisOrderNumber,
+  `order=${qrisOrderNumber} onPayment=${qrisOnPaymentPage}`);
 // Gateway result decides the branch: when it rejects, the app must fall back
 // to the order page with payment still UNPAID; when it accepts, a PENDING
-// QRIS row with a paymentUrl exists.
+// QRIS row with QrImage/QrString exists.
 const qOrders = await q("SELECT * FROM `Order` WHERE orderNumber = ?", [qrisOrderNumber]);
 const qOrder = qOrders[0];
 const qPayRows = await q("SELECT * FROM Payment WHERE orderId = ?", [qOrder.id]);
@@ -562,11 +612,30 @@ if (gatewayFailed) {
   check("TEST16 QRIS gateway unavailable → order page + recovery actions (graceful)",
     await waitText(Q, "Bayar QRIS") &&
       await waitText(Q, "Bayar di Kasir") &&
-      (await Q.evaluate(() => location.pathname.startsWith("/order/")).catch(() => false)),
+      qrisOnOrderPage,
     `payStatus=${qrisPayResponse.status}`);
 } else {
-  // Credentials working: a PENDING QRIS payment exists with a paymentUrl.
-  check("TEST16 QRIS payment created (PENDING)", qPayRows.length === 1 && qPayRows[0].status === "PENDING" && !!qPayRows[0].paymentUrl);
+  // Credentials working: a PENDING QRIS payment exists with QR data (the
+  // page must already be sitting on /payment/<order> from the redirect).
+  check("TEST16 QRIS payment created (PENDING + QrImage)",
+    qPayRows.length === 1 && qPayRows[0].status === "PENDING" &&
+      !!qPayRows[0].qrImage && !!qPayRows[0].paymentUrl,
+    JSON.stringify({ n: qPayRows.length, s: qPayRows[0]?.status, hasQr: !!qPayRows[0]?.qrImage }));
+  if (!qrisOnPaymentPage) {
+    await Q.goto(`${BASE}/payment/${qrisOrderNumber}`, { waitUntil: "networkidle2" });
+  }
+  await sleep(1500);
+  const payBody = await Q.evaluate(() => document.body.innerText || "");
+  check("TEST16 payment page header 'Pembayaran Pesanan' + order number",
+    payBody.includes("Pembayaran Pesanan") && payBody.includes(qrisOrderNumber), "");
+  check("TEST16 payment page total = order grandTotal",
+    payBody.includes("Rp" + Number(qOrder.grandTotal).toLocaleString("id-ID")),
+    `grand=${qOrder.grandTotal}`);
+  check("TEST16 payment page shows QR image from iPaymu (img[alt=QRIS])",
+    await waitOn(Q, paymentPageHasQr, 15000, "qr img"));
+  check("TEST16 payment page shows 'Menunggu pembayaran...' status",
+    (await Q.evaluate(() => document.body.innerText || "")).includes("Menunggu pembayaran"), "");
+  // Back to the order page so the shared pending-resume checks below run there.
   await Q.goto(`${BASE}/order/${qrisOrderNumber}`, { waitUntil: "networkidle2" });
 }
 check("TEST17 QRIS order totals: tax=0 service=0 grandTotal=subtotal (payment amount source)",
@@ -618,13 +687,15 @@ check("TEST17 server recomputed item prices from DB (selections/addons)",
 let qrisPayment = qPayRows[0] || null;
 if (!qrisPayment) {
   // Mirror exactly what the payment service writes after a successful
-  // gateway response (PENDING + providerRef + paymentUrl + amount=grandTotal)
-  // and keep the order's payment-status mirror in sync the same way
-  // createPayment does.
+  // gateway response (PENDING + providerRef + paymentUrl + qrImage + qrString
+  // + amount=grandTotal) and keep the order's payment-status mirror in sync
+  // the same way createPayment does. qrImage is a real renderable data URI so
+  // the payment page has something to display in the offline branch.
+  const qrDataUri = await QRCode.toDataURL(`QRIS-E2E-${tag}`, { width: 240, margin: 1 });
   await q(
-    `INSERT INTO Payment (id, restaurantId, orderId, status, amount, method, provider, providerRef, paymentUrl, expiresAt, createdAt, updatedAt)
-     VALUES (UUID(), ?, ?, 'PENDING', ?, 'QRIS', 'ipaymu', ?, ?, DATE_ADD(NOW(), INTERVAL 24 HOUR), NOW(), NOW())`,
-    [restaurantId, qOrder.id, qOrder.grandTotal, qrisOrderNumber, `${BASE}/payment/callback?ref=${qrisOrderNumber}`]
+    `INSERT INTO Payment (id, restaurantId, orderId, status, amount, method, provider, providerRef, paymentUrl, qrImage, qrString, expiresAt, createdAt, updatedAt)
+     VALUES (UUID(), ?, ?, 'PENDING', ?, 'QRIS', 'ipaymu', ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 24 HOUR), NOW(), NOW())`,
+    [restaurantId, qOrder.id, qOrder.grandTotal, qrisOrderNumber, `${BASE}/payment/callback?ref=${qrisOrderNumber}`, qrDataUri, `QRIS-E2E-${tag}`]
   );
   await q("UPDATE `Order` SET paymentStatus = 'PENDING' WHERE id = ?", [qOrder.id]);
   qrisPayment = (await q("SELECT * FROM Payment WHERE orderId = ? ORDER BY createdAt DESC LIMIT 1", [qOrder.id]))[0];
@@ -632,6 +703,37 @@ if (!qrisPayment) {
 check("TEST18 QRIS payment row PENDING with amount = grandTotal",
   Number(qrisPayment.amount) === Number(qOrder.grandTotal) && qrisPayment.status === "PENDING", `amount=${qrisPayment.amount}`);
 const expectedQrisAmount = Number(qOrder.grandTotal);
+
+// Duplicate QRIS payment request while PENDING → idempotent rejection (409),
+// no second row ever created.
+{
+  const dup = await Q.evaluate(async (num) => {
+    const res = await fetch("/api/public/payments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ orderNumber: num, method: "QRIS" }),
+    });
+    return { status: res.status };
+  }, qrisOrderNumber);
+  const qPayCount = await q("SELECT COUNT(*) n FROM Payment WHERE orderId = ?", [qOrder.id]);
+  check("TEST18 duplicate QRIS payment is idempotent (409, single row)",
+    dup.status === 409 && qPayCount[0].n === 1, `status=${dup.status} rows=${qPayCount[0].n}`);
+}
+
+// Payment page while PENDING: QR visible + countdown (never "Menunggu" past
+// expiry — expiresAt is 24h out so the countdown is shown).
+await Q.goto(`${BASE}/payment/${qrisOrderNumber}`, { waitUntil: "networkidle2" });
+await sleep(1500);
+const payPendingOk = await waitOn(Q, () => {
+  const img = document.querySelector("img[alt='QRIS']");
+  const hasQr =
+    !!img && img.src.length > 0 &&
+    (img.src.startsWith("data:image") || img.src.startsWith("http"));
+  const t = document.body.innerText || "";
+  return hasQr && t.includes("Menunggu pembayaran") && t.includes("Pembayaran berlaku hingga");
+}, 15000, "payment page pending UI");
+check("TEST18 payment page: QR + 'Menunggu pembayaran' + countdown", !!payPendingOk, "");
+await Q.goto(`${BASE}/order/${qrisOrderNumber}`, { waitUntil: "networkidle2" });
 
 // Customer refresh while payment pending → resume UI visible.
 await Q.reload({ waitUntil: "networkidle2" });
@@ -732,6 +834,13 @@ await Q.reload({ waitUntil: "networkidle2" });
 await sleep(1500);
 const qPaidBody = await Q.evaluate(() => document.body.innerText || "");
 check("TEST18 customer order page shows QRIS PAID", qPaidBody.includes("Pembayaran berhasil") && qPaidBody.includes("QRIS"), "");
+
+// The payment page itself reflects PAID (server-driven, not client claims).
+await Q.goto(`${BASE}/payment/${qrisOrderNumber}`, { waitUntil: "networkidle2" });
+await sleep(1000);
+const qPaidPayBody = await Q.evaluate(() => document.body.innerText || "");
+check("TEST18 payment page shows 'Pembayaran Berhasil' after webhook",
+  qPaidPayBody.includes("Pembayaran Berhasil"), "");
 
 // ============================================================
 // FLOW C — TAKEAWAY / DELIVERY regression
@@ -923,11 +1032,64 @@ const dRowPaid = await waitOn(
 check("FLOW D payments page row PAID, button gone (no double pay UI)", !!dRowPaid, "");
 
 // ============================================================
+// FLOW E — payment page edge cases
+// ============================================================
+// E1: unknown order → GET payment-status API 404 + page not-found state.
+{
+  const notFound = await Q.evaluate(async () => {
+    const res = await fetch("/api/public/payments/ORD-NOT-EXIST-404");
+    return { status: res.status };
+  });
+  check("FLOW E invalid order → payment status API 404", notFound.status === 404, `status=${notFound.status}`);
+  await Q.goto(`${BASE}/payment/ORD-NOT-EXIST-404`, { waitUntil: "domcontentloaded" });
+  check("FLOW E payment page shows 'Pesanan Tidak Ditemukan'", await waitText(Q, "Pesanan Tidak Ditemukan", 15000));
+}
+
+// E2: order created WITHOUT a payment → graceful "belum dibuat" state, and
+// the payment page must stay READ-only (no payment row is ever created by
+// merely opening it).
+let npOrderNumber = null;
+{
+  const created = await T.evaluate(
+    async ({ tableId, productId, tag }) => {
+      const res = await fetch("/api/public/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerName: `E2EPAY-NOPAY ${tag}`,
+          orderType: "DINE_IN",
+          tableId,
+          visitorCount: 1,
+          items: [{ productId, quantity: 1 }],
+        }),
+      });
+      let j = null;
+      try {
+        j = await res.json();
+      } catch {}
+      return { status: res.status, orderNumber: j?.data?.orderNumber || null };
+    },
+    { tableId: t1.id, productId: plain1.id, tag }
+  );
+  npOrderNumber = created.orderNumber;
+  check("FLOW E DINE-IN order without payment created",
+    created.status === 201 && !!created.orderNumber, `status=${created.status}`);
+  await Q.goto(`${BASE}/payment/${created.orderNumber}`, { waitUntil: "domcontentloaded" });
+  check("FLOW E payment page: 'Pembayaran Belum Dibuat' + 'Lihat Pesanan' action",
+    await waitText(Q, "Pembayaran Belum Dibuat", 15000) && await waitText(Q, "Lihat Pesanan", 5000));
+  const npRows = await q(
+    "SELECT COUNT(*) n FROM Payment WHERE orderId = (SELECT id FROM `Order` WHERE orderNumber = ?)",
+    [created.orderNumber]
+  );
+  check("FLOW E opening payment page creates no payment row (read-only)", npRows[0].n === 0, `rows=${npRows[0].n}`);
+}
+
+// ============================================================
 // Cleanup: reset tables + remove test-created rows
 // ============================================================
 const cleanupOrderIds = [kOrder.id, qOrder.id];
 if (typeof dOrderId !== "undefined" && dOrderId) cleanupOrderIds.push(dOrderId);
-for (const num of [twOrder.orderNumber, dlOrder.orderNumber]) {
+for (const num of [twOrder.orderNumber, dlOrder.orderNumber, npOrderNumber].filter(Boolean)) {
   const rows = await q("SELECT id FROM `Order` WHERE orderNumber = ?", [num]);
   if (rows[0]) cleanupOrderIds.push(rows[0].id);
 }

@@ -28,6 +28,13 @@ export interface CreatePaymentInput {
 export interface PaymentResult {
   reference: string;
   paymentUrl: string;
+  /**
+   * QR image for QRIS payments — either a direct image URL or a data URI
+   * (already resolved from the gateway's HTML-wrapped QrImage when possible).
+   */
+  qrImage?: string | null;
+  /** Raw QRIS payload string — used only as a fallback to re-render the QR. */
+  qrString?: string | null;
   expiresAt?: Date;
 }
 

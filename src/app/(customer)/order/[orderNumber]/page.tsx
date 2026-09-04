@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Check,
@@ -99,6 +100,7 @@ export default function OrderTrackingPage({
 }: {
   params: Promise<{ orderNumber: string }>;
 }) {
+  const router = useRouter();
   const [order, setOrder] = useState<OrderData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isPaying, setIsPaying] = useState(false);
@@ -134,16 +136,17 @@ export default function OrderTrackingPage({
     if (!order) return;
     setIsPaying(true);
     try {
-      const res = await api.post("/public/payments", {
+      await api.post("/public/payments", {
         orderNumber: order.orderNumber,
         method,
       });
-      const paymentUrl = res.data.data.paymentUrl;
       if (method === "KASIR") {
         toast.success("Silakan lakukan pembayaran di kasir.");
         await loadOrder();
-      } else if (paymentUrl) {
-        window.location.href = paymentUrl;
+      } else {
+        // QRIS — the customer pays on the app's own payment page, not on
+        // the raw gateway page.
+        router.push(`/payment/${order.orderNumber}`);
         return;
       }
     } catch (error) {
@@ -169,6 +172,11 @@ export default function OrderTrackingPage({
         orderNumber: order.orderNumber,
         method: order.orderType === "DINE_IN" ? "QRIS" : undefined,
       });
+      if (order.orderType === "DINE_IN") {
+        // DINE-IN retries on the app's own QRIS payment page.
+        router.push(`/payment/${order.orderNumber}`);
+        return;
+      }
       const paymentUrl = res.data.data.paymentUrl;
       if (paymentUrl) {
         window.location.href = paymentUrl;
@@ -311,18 +319,14 @@ export default function OrderTrackingPage({
               Bayar Lagi
             </button>
           )}
-          {isPaymentPending &&
-            isDineIn &&
-            latestPayment?.paymentUrl && (
-              <button
-                onClick={() =>
-                  (window.location.href = latestPayment.paymentUrl!)
-                }
-                className="bg-gray-900 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-black transition-colors flex items-center gap-1"
-              >
-                Bayar Sekarang
-              </button>
-            )}
+          {isPaymentPending && isDineIn && (
+            <button
+              onClick={() => router.push(`/payment/${order.orderNumber}`)}
+              className="bg-gray-900 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-black transition-colors flex items-center gap-1"
+            >
+              Bayar Sekarang
+            </button>
+          )}
         </div>
 
         {/* DINE-IN with no live payment yet → QRIS or Kasir */}

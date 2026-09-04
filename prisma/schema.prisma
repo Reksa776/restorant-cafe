@@ -326,6 +326,11 @@ model Payment {
   provider     String?
   providerRef  String?
   paymentUrl   String?       @db.Text
+  // Raw QR data returned by the gateway at payment-creation time (QRIS
+  // channel). qrImage is the QR image (URL or data URI) from iPaymu;
+  // qrString is the QR payload used only as a fallback to re-render.
+  qrImage      String?       @db.Text
+  qrString     String?       @db.Text
   paidAt       DateTime?
   expiresAt    DateTime?
   createdAt    DateTime      @default(now())

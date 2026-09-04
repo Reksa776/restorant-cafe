@@ -182,6 +182,8 @@ export class PaymentService {
         provider: "ipaymu",
         providerRef: paymentResult.reference,
         paymentUrl: paymentResult.paymentUrl,
+        qrImage: paymentResult.qrImage || null,
+        qrString: paymentResult.qrString || null,
         expiresAt: paymentResult.expiresAt,
       },
       include: {

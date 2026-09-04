@@ -6,7 +6,11 @@ import { AppError } from "@/lib/errors";
 /**
  * GET /api/public/payments/[orderNumber]
  * Get payment status for an order (public, no auth required).
- * Customer polls this to check if payment succeeded.
+ * Customer polls this from the payment page to check if payment succeeded.
+ *
+ * Only public-safe data is returned: the QR image/payload the customer needs
+ * to scan, order reference, amount, status and expiry. Provider credentials
+ * and raw gateway payloads are never exposed here.
  */
 export async function GET(
   request: NextRequest,
@@ -19,14 +23,19 @@ export async function GET(
       where: { orderNumber },
       select: {
         id: true,
+        orderType: true,
+        grandTotal: true,
         paymentStatus: true,
         payments: {
           select: {
             id: true,
             status: true,
             amount: true,
-            paymentUrl: true,
+            method: true,
             provider: true,
+            providerRef: true,
+            qrImage: true,
+            qrString: true,
             paidAt: true,
             expiresAt: true,
             createdAt: true,
@@ -45,15 +54,22 @@ export async function GET(
 
     return successResponse({
       orderNumber,
+      orderType: order.orderType,
       paymentStatus: order.paymentStatus,
+      grandTotal: order.grandTotal,
       payment: latestPayment
         ? {
             id: latestPayment.id,
             status: latestPayment.status,
             amount: latestPayment.amount,
-            paymentUrl: latestPayment.paymentUrl,
+            method: latestPayment.method || null,
+            provider: latestPayment.provider || null,
+            reference: latestPayment.providerRef || null,
+            qrImage: latestPayment.qrImage || null,
+            qrString: latestPayment.qrString || null,
             paidAt: latestPayment.paidAt,
             expiresAt: latestPayment.expiresAt,
+            createdAt: latestPayment.createdAt,
           }
         : null,
     });

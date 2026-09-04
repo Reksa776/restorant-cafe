@@ -223,19 +223,34 @@ export class IpaymuProvider implements PaymentProvider {
         | Record<string, unknown>
         | undefined;
 
+      const isQris = channel === "qris";
+      const qrImageRaw =
+        typeof data?.QrImage === "string" && data.QrImage
+          ? data.QrImage
+          : null;
+      const qrString =
+        typeof data?.QrString === "string" && data.QrString
+          ? data.QrString
+          : null;
+
       // VA responses carry PaymentUrl (redirect to the VA payment page); QRIS
-      // responses carry QrImage/QrTemplate instead (no PaymentUrl). Surface a
-      // usable URL for both so the customer redirect flow keeps working.
+      // responses carry QrImage/QrString instead (no PaymentUrl) — QrTemplate
+      // is an HTML payment page and is NEVER used as an image source or as the
+      // customer redirect target.
       return {
         reference:
           (typeof data?.Reference === "string" && data.Reference) ||
           input.orderNumber,
         paymentUrl:
           (typeof data?.PaymentUrl === "string" && data.PaymentUrl) ||
-          (typeof data?.QrTemplate === "string" && data.QrTemplate) ||
-          (typeof data?.QrImage === "string" && data.QrImage) ||
-          "",
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          (isQris && qrImageRaw ? qrImageRaw : ""),
+        qrImage: qrImageRaw
+          ? await this.resolveQrImage(qrImageRaw)
+          : null,
+        qrString,
+        expiresAt: this.parseExpired(
+          typeof data?.Expired === "string" ? data.Expired : undefined
+        ),
       };
     } catch (error) {
       if (error instanceof PaymentError) {
@@ -255,6 +270,43 @@ export class IpaymuProvider implements PaymentProvider {
         `Failed to communicate with payment provider: ${preview(message, 200)}`
       );
     }
+  }
+
+  /**
+   * Normalize the gateway's QrImage into a value the payment page can show as
+   * an <img>. The sandbox returns a URL whose response is a small HTML page
+   * wrapping `<img src="data:image/png;base64,...">` — a browser cannot decode
+   * that HTML directly, so resolve the embedded data URI. If the URL already
+   * IS an image or resolution fails, return the raw value (the payment page
+   * then falls back to rendering QrString).
+   */
+  private async resolveQrImage(raw: string): Promise<string> {
+    // Unescape escaped slashes ("https:\/\/...") if present.
+    const normalized = raw.trim().replace(/\\\//g, "/");
+    if (normalized.startsWith("data:image/")) return normalized;
+    if (!/^https?:\/\//i.test(normalized)) return normalized;
+    try {
+      const res = await fetch(normalized, {
+        signal: AbortSignal.timeout(5000),
+      });
+      const text = await res.text();
+      const embedded = text.match(/src="(data:image\/[^"]+)"/i);
+      if (embedded?.[1]) return embedded[1];
+    } catch {
+      // Unreachable/timeout — keep the raw URL; the page handles failure.
+    }
+    return normalized;
+  }
+
+  /**
+   * Parse the gateway's Expired value ("YYYY-MM-DD HH:MM:SS") into a Date.
+   * Falls back to now + 24h when absent or unparseable.
+   */
+  private parseExpired(raw?: string): Date {
+    const fallback = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    if (!raw) return fallback;
+    const parsed = new Date(raw.replace(" ", "T"));
+    return Number.isNaN(parsed.getTime()) ? fallback : parsed;
   }
 
   /**
