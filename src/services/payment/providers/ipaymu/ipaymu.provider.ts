@@ -15,10 +15,45 @@ export class IpaymuProvider implements PaymentProvider {
   constructor() {
     this.va = process.env.IPAYMU_VA || "";
     this.apiKey = process.env.IPAYMU_API_KEY || "";
-    this.baseUrl =
-      process.env.IPAYMU_ENV === "production"
-        ? "https://my.ipaymu.com/api/v2"
-        : "https://sandbox.ipaymu.com/api/v2";
+    this.baseUrl = this.resolveBaseUrl();
+  }
+
+  /**
+   * Endpoint selection (configuration only — never business logic).
+   *
+   * Production is only ever selected EXPLICITLY, so a leftover sandbox
+   * IPAYMU_BASE_URL can never silently disable it:
+   * 1. IPAYMU_ENV or IPAYMU_ENVIRONMENT equal to "production" →
+   *    https://my.ipaymu.com/api/v2 (docker-compose historically exports
+   *    IPAYMU_ENVIRONMENT, so both names are honored).
+   * 2. IPAYMU_BASE_URL set → used verbatim as an override (trailing "/"
+   *    stripped). Production value: https://my.ipaymu.com/api/v2 — Sandbox
+   *    value: https://sandbox.ipaymu.com/api/v2.
+   * 3. Anything else defaults to the sandbox endpoint.
+   */
+  private resolveBaseUrl(): string {
+    const envName = (
+      process.env.IPAYMU_ENV ||
+      process.env.IPAYMU_ENVIRONMENT ||
+      ""
+    ).toLowerCase();
+    if (envName === "production") {
+      return "https://my.ipaymu.com/api/v2";
+    }
+    const override = (process.env.IPAYMU_BASE_URL || "")
+      .trim()
+      .replace(/\/+$/, "");
+    if (override) {
+      // A bare origin (protocol://host[:port], no path) is normalized to the
+      // v2 API path so a legacy value like "https://sandbox.ipaymu.com" keeps
+      // working — otherwise requests would hit "/payment/direct" instead of
+      // "/api/v2/payment/direct". Full URLs are used verbatim.
+      if (/^https?:\/\/[^/]+$/i.test(override)) {
+        return `${override}/api/v2`;
+      }
+      return override;
+    }
+    return "https://sandbox.ipaymu.com/api/v2";
   }
 
   /**
@@ -327,32 +362,94 @@ export class IpaymuProvider implements PaymentProvider {
     try {
       if (!signatureHeader) return false;
 
-      // Step 1: JSON-marshal the payload with sorted keys (JavaScript objects maintain insertion order)
-      // We sort keys to match Go's json.Marshal behavior (A-Z order)
-      const sortedPayload: Record<string, unknown> = {};
-      const sortedKeys = Object.keys(payload).sort();
-      for (const key of sortedKeys) {
-        sortedPayload[key] = payload[key];
+      // iPaymu signs the JSON representation of its callback payload, where
+      // trx_id/status_code/paid_off/transaction_status_code are numbers and
+      // is_escrow is a boolean (see the official Go SDK CallbackPayload and
+      // the WooCommerce plugin). Form-urlencoded transports deliver every
+      // value as a string, so restore those types before re-serializing —
+      // otherwise the recomputed signature would never match. JSON callbacks
+      // are unaffected (the values are already numbers/booleans).
+      const numericKeys = [
+        "trx_id",
+        "status_code",
+        "paid_off",
+        "transaction_status_code",
+      ];
+      const normalized: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(payload)) {
+        if (
+          numericKeys.includes(key) &&
+          typeof value === "string" &&
+          value !== "" &&
+          !Number.isNaN(Number(value))
+        ) {
+          normalized[key] = Number(value);
+        } else if (key === "is_escrow" && typeof value === "string") {
+          normalized[key] = value === "true" || value === "1";
+        } else {
+          normalized[key] = value;
+        }
       }
 
-      const jsonStr = JSON.stringify(sortedPayload);
-
-      // Step 2: Escape forward slashes — iPaymu does this (http:// → http:\/\/)
-      const escapedJson = jsonStr.replace(/\//g, "\\/");
-
-      // Step 3: HMAC-SHA256 with VA number as secret (NOT API key)
-      const hmac = crypto.createHmac("sha256", this.va);
-      hmac.update(Buffer.from(escapedJson, "utf-8"));
-      const expectedSignature = hmac.digest("hex");
+      // Step 1: JSON-marshal the payload with sorted keys (matches Go's
+      // json.Marshal A-Z order and PHP's ksort + json_encode).
+      // Step 2: Escape forward slashes — iPaymu does this (http:// → http:\/\/).
+      // Step 3: HMAC-SHA256 with VA number as secret (NOT API key).
+      const hmacOf = (obj: Record<string, unknown>): string => {
+        const sortedPayload: Record<string, unknown> = {};
+        for (const key of Object.keys(obj).sort()) {
+          sortedPayload[key] = obj[key];
+        }
+        const escapedJson = JSON.stringify(sortedPayload).replace(/\//g, "\\/");
+        return crypto
+          .createHmac("sha256", this.va)
+          .update(Buffer.from(escapedJson, "utf-8"))
+          .digest("hex");
+      };
 
       // Step 4: Constant-time comparison to prevent timing attacks
-      if (expectedSignature.length !== signatureHeader.length) {
-        return false;
+      const matches = (a: string, b: string): boolean =>
+        a.length === b.length &&
+        crypto.timingSafeEqual(
+          Buffer.from(a, "utf-8"),
+          Buffer.from(b, "utf-8")
+        );
+
+      if (matches(hmacOf(normalized), signatureHeader)) return true;
+
+      // Second attempt — form-urlencoded transport (verified against a REAL
+      // sandbox callback + its real signature): iPaymu signs the JSON
+      // representation where additional_info is an ARRAY and payment_no is a
+      // present empty string, but the form body delivers additional_info as
+      // the JSON string "[]" (or omits it) and may omit payment_no. Restore
+      // those to the signed form (mirrors the official WooCommerce plugin's
+      // normalize_webhook_data).
+      const formNormalized: Record<string, unknown> = { ...normalized };
+      if (typeof formNormalized.additional_info === "string") {
+        try {
+          formNormalized.additional_info = JSON.parse(
+            formNormalized.additional_info as string
+          );
+        } catch {
+          formNormalized.additional_info = [];
+        }
       }
-      return crypto.timingSafeEqual(
-        Buffer.from(expectedSignature, "utf-8"),
-        Buffer.from(signatureHeader, "utf-8")
-      );
+      if (formNormalized.additional_info === undefined) {
+        formNormalized.additional_info = [];
+      }
+      if (formNormalized.payment_no === undefined) {
+        formNormalized.payment_no = "";
+      }
+      if (matches(hmacOf(formNormalized), signatureHeader)) return true;
+
+      // Third attempt (mirrors the official WooCommerce plugin): iPaymu can
+      // omit empty/null fields from the signed JSON even when the transport
+      // includes them (e.g. payment_no=""), so retry without those fields.
+      const clean: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(formNormalized)) {
+        if (value !== "" && value !== null) clean[key] = value;
+      }
+      return matches(hmacOf(clean), signatureHeader);
     } catch {
       return false;
     }

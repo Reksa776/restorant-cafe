@@ -55,6 +55,7 @@ services:
       - IPAYMU_VA=${IPAYMU_VA}
       - IPAYMU_API_KEY=${IPAYMU_API_KEY}
       - IPAYMU_ENVIRONMENT=${IPAYMU_ENVIRONMENT:-sandbox}
+      - IPAYMU_ENV=${IPAYMU_ENV:-${IPAYMU_ENVIRONMENT:-sandbox}}
       - WHATSAPP_SESSION_DIR=/app/whatsapp-session
     volumes:
       - whatsapp_data:/app/whatsapp-session
@@ -80,6 +81,7 @@ services:
       - IPAYMU_VA=${IPAYMU_VA}
       - IPAYMU_API_KEY=${IPAYMU_API_KEY}
       - IPAYMU_ENVIRONMENT=${IPAYMU_ENVIRONMENT:-sandbox}
+      - IPAYMU_ENV=${IPAYMU_ENV:-${IPAYMU_ENVIRONMENT:-sandbox}}
       - WHATSAPP_SESSION_DIR=/app/whatsapp-session
     volumes:
       - whatsapp_data:/app/whatsapp-session

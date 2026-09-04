@@ -553,7 +553,7 @@ export default function CheckoutPage() {
         </div>
       ) : (
         <div className="bg-gray-50 rounded-lg p-3 text-xs text-gray-500 text-center">
-          Pembayaran diproses oleh iPaymu Sandbox. Anda akan dialihkan ke halaman pembayaran setelah pesanan dibuat.
+          Pembayaran diproses oleh iPaymu. Anda akan dialihkan ke halaman pembayaran setelah pesanan dibuat.
         </div>
       )}
 
