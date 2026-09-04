@@ -27,6 +27,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^17.4.2",
+    "html5-qrcode": "^2.3.8",
     "ioredis": "^6.0.0",
     "jimp": "^1.6.1",
     "lucide-react": "^1.37.0",

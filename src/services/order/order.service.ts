@@ -674,6 +674,7 @@ export class OrderService {
               amount: true,
               paymentUrl: true,
               paidAt: true,
+              createdAt: true,
             },
             orderBy: { createdAt: "desc" },
             take: 3,
@@ -697,6 +698,8 @@ export class OrderService {
 
   /**
    * Get single order by ID with restaurant ownership verification.
+   * Payment rows carry their transactions so cashier audit entries
+   * (amountDue/amountReceived/changeAmount/processedBy) can be shown.
    */
   async getOrder(id: string, restaurantId: string) {
     const order = await prisma.order.findFirst({
@@ -715,7 +718,52 @@ export class OrderService {
         statusHistory: {
           orderBy: { createdAt: "desc" },
         },
-        payments: true,
+        payments: {
+          include: {
+            transactions: {
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundError("Order not found");
+    }
+
+    return order;
+  }
+
+  /**
+   * Get a single order by its PUBLIC order number (admin, restaurant-scoped).
+   * Used by the /admin/orders/[orderNumber] page after a QR scan — the order
+   * number alone is not enough to cross the restaurant boundary.
+   */
+  async getOrderByNumberScoped(orderNumber: string, restaurantId: string) {
+    const order = await prisma.order.findFirst({
+      where: {
+        orderNumber,
+        restaurantId,
+      },
+      include: {
+        customer: true,
+        table: true,
+        items: {
+          include: {
+            product: true,
+          },
+        },
+        statusHistory: {
+          orderBy: { createdAt: "asc" },
+        },
+        payments: {
+          include: {
+            transactions: {
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        },
       },
     });
 

@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
+  Banknote,
   CheckCircle2,
   Clock,
   CreditCard,
@@ -12,7 +14,9 @@ import {
   ShieldCheck,
   XCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 import api from "@/lib/axios";
+import { QrCodeDisplay } from "@/components/qr-code-display";
 
 // ============================================================
 // Types
@@ -60,7 +64,11 @@ export default function PaymentPage({
   const [qrSrc, setQrSrc] = useState<string | null>(null);
   const [qrFailed, setQrFailed] = useState(false);
   const [countdown, setCountdown] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<
+    "idle" | "regenerate" | "cashier"
+  >("idle");
   const mountedRef = useRef(true);
+  const router = useRouter();
 
   // Resolve params once (Next 16 params is a Promise).
   useEffect(() => {
@@ -91,7 +99,9 @@ export default function PaymentPage({
   }, [orderNumber]);
 
   // Initial load + poll every 4s. Polling stops on terminal states
-  // (PAID/EXPIRED/FAILED); interval is always cleaned up on unmount.
+  // (PAID/EXPIRED/FAILED) and for cashier (KASIR) intents — a cashier row
+  // flips only when the admin marks it paid, which the order page tracks.
+  // Interval is always cleaned up on unmount.
   useEffect(() => {
     mountedRef.current = true;
     if (!orderNumber) return;
@@ -99,7 +109,13 @@ export default function PaymentPage({
     const interval = setInterval(() => {
       if (!mountedRef.current) return;
       const status = data?.payment?.status;
-      if (status === "PAID" || status === "EXPIRED" || status === "FAILED") {
+      const method = data?.payment?.method;
+      if (
+        status === "PAID" ||
+        status === "EXPIRED" ||
+        status === "FAILED" ||
+        (method === "KASIR" && status === "UNPAID")
+      ) {
         clearInterval(interval);
         return;
       }
@@ -109,7 +125,7 @@ export default function PaymentPage({
       mountedRef.current = false;
       clearInterval(interval);
     };
-  }, [orderNumber, loadPayment, data?.payment?.status]);
+  }, [orderNumber, loadPayment, data?.payment?.status, data?.payment?.method]);
 
   // QR source: prefer the gateway's QrImage; fall back to rendering QrString
   // with the project's existing qrcode library (never a fake/custom QR when
@@ -179,6 +195,55 @@ export default function PaymentPage({
   })();
 
   const isTerminal = ["PAID", "EXPIRED", "FAILED"].includes(effectiveStatus);
+
+  /**
+   * "Generate QR Baru" — create a fresh QRIS payment on the same order. The
+   * server expires any stale PENDING row first, so this works even when the
+   * gateway never sent an EXPIRED webhook.
+   */
+  const regenerateQr = async () => {
+    if (!orderNumber) return;
+    setActionBusy("regenerate");
+    try {
+      await api.post("/public/payments", {
+        orderNumber,
+        method: "QRIS",
+      });
+      toast.success("QRIS baru berhasil dibuat.");
+      await loadPayment();
+    } catch (error) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const msg = (error as any)?.response?.data?.message;
+      toast.error(msg || "Gagal membuat QRIS baru");
+      // Refresh from the server so a stale view cannot linger.
+      loadPayment();
+    } finally {
+      if (mountedRef.current) setActionBusy("idle");
+    }
+  };
+
+  /**
+   * "Bayar ke Kasir" — switch the failed/expired QRIS to a KASIR payment on
+   * the same order, then hand the customer to the order page banner.
+   */
+  const switchToCashier = async () => {
+    if (!orderNumber) return;
+    setActionBusy("cashier");
+    try {
+      await api.post(
+        `/public/payments/${orderNumber}/switch-to-cashier`
+      );
+      toast.success("Pembayaran dialihkan ke kasir.");
+      router.push(`/order/${orderNumber}`);
+    } catch (error) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const msg = (error as any)?.response?.data?.message;
+      toast.error(msg || "Gagal mengalihkan pembayaran ke kasir");
+      loadPayment();
+    } finally {
+      if (mountedRef.current) setActionBusy("idle");
+    }
+  };
 
   // ============================================================
   // Loading / not-found / error states
@@ -260,47 +325,32 @@ export default function PaymentPage({
 
   const isQris = payment.method === "QRIS";
   const hasQr = !!(qrSrc && !qrFailed);
+  const isQrisFallback =
+    isQris && (effectiveStatus === "EXPIRED" || effectiveStatus === "FAILED");
 
   // ============================================================
   // PAID / EXPIRED / FAILED terminal views
   // ============================================================
 
   if (isTerminal) {
-    return (
-      <div className="max-w-md mx-auto py-6">
-        <div className="bg-white rounded-2xl border border-gray-200 p-6 text-center space-y-4">
-          <div
-            className={`w-20 h-20 rounded-full mx-auto flex items-center justify-center ${
-              effectiveStatus === "PAID"
-                ? "bg-green-50"
-                : "bg-red-50"
-            }`}
-          >
-            {effectiveStatus === "PAID" ? (
+    // PAID — success view (never offers a switch).
+    if (effectiveStatus === "PAID") {
+      return (
+        <div className="max-w-md mx-auto py-6">
+          <div className="bg-white rounded-2xl border border-gray-200 p-6 text-center space-y-4">
+            <div className="w-20 h-20 rounded-full mx-auto flex items-center justify-center bg-green-50">
               <CheckCircle2 className="h-10 w-10 text-green-500" />
-            ) : (
-              <XCircle className="h-10 w-10 text-red-500" />
-            )}
-          </div>
+            </div>
 
-          <div>
-            <h1
-              className={`text-2xl font-bold ${
-                effectiveStatus === "PAID" ? "text-green-700" : "text-red-700"
-              }`}
-            >
-              {effectiveStatus === "PAID"
-                ? "Pembayaran Berhasil"
-                : effectiveStatus === "EXPIRED"
-                  ? "Pembayaran Kedaluwarsa"
-                  : "Pembayaran Gagal"}
-            </h1>
-            <p className="text-gray-500 text-sm mt-1">
-              Pesanan #{displayOrderNumber}
-            </p>
-          </div>
+            <div>
+              <h1 className="text-2xl font-bold text-green-700">
+                Pembayaran Berhasil
+              </h1>
+              <p className="text-gray-500 text-sm mt-1">
+                Pesanan #{displayOrderNumber}
+              </p>
+            </div>
 
-          {effectiveStatus === "PAID" ? (
             <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3">
               <p className="text-sm font-medium text-green-800">
                 {formatRupiah(payment.amount)} telah dibayar
@@ -312,13 +362,125 @@ export default function PaymentPage({
                 </p>
               )}
             </div>
-          ) : (
-            <p className="text-sm text-gray-500">
+
+            <div className="flex flex-col gap-2.5 pt-1">
+              <Link
+                href={`/order/${displayOrderNumber}`}
+                className="flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors"
+              >
+                Lihat Status Pesanan
+              </Link>
+              <Link
+                href="/menu"
+                className="text-sm text-gray-400 hover:text-gray-600 transition-colors py-1"
+              >
+                Kembali ke Menu
+              </Link>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // EXPIRED / FAILED on a QRIS payment — offer regenerate + cashier switch
+    // (keeps the same order; the old QRIS row stays as history).
+    if (isQrisFallback) {
+      return (
+        <div className="max-w-md mx-auto py-6">
+          <div className="bg-white rounded-2xl border border-gray-200 p-6 text-center space-y-4">
+            <div className="w-20 h-20 rounded-full mx-auto flex items-center justify-center bg-red-50">
+              <XCircle className="h-10 w-10 text-red-500" />
+            </div>
+
+            <div>
+              <h1 className="text-2xl font-bold text-red-700">
+                {effectiveStatus === "EXPIRED"
+                  ? "Pembayaran Kedaluwarsa"
+                  : "Pembayaran Gagal"}
+              </h1>
+              <p className="text-gray-500 text-sm mt-1">
+                Pesanan #{displayOrderNumber}
+              </p>
+            </div>
+
+            <div className="bg-gray-50 border border-gray-200 rounded-xl px-4 py-3">
+              <p className="text-sm font-semibold text-gray-800">
+                Pembayaran QRIS tidak dapat digunakan.
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                {effectiveStatus === "EXPIRED"
+                  ? "Waktu pembayaran QRIS telah habis. Buat QRIS baru atau bayar langsung di kasir."
+                  : "Pembayaran QRIS tidak berhasil diproses. Buat QRIS baru atau bayar langsung di kasir."}
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2.5 pt-1">
+              <button
+                onClick={regenerateQr}
+                disabled={actionBusy !== "idle"}
+                className="flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors disabled:opacity-50"
+              >
+                {actionBusy === "regenerate" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+                Generate QR Baru
+              </button>
+              <button
+                onClick={switchToCashier}
+                disabled={actionBusy !== "idle"}
+                className="flex items-center justify-center gap-2 bg-green-600 text-white py-3 rounded-xl font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
+              >
+                {actionBusy === "cashier" ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Banknote className="h-4 w-4" />
+                )}
+                Bayar ke Kasir
+              </button>
+              <Link
+                href={`/order/${displayOrderNumber}`}
+                className="text-sm text-gray-400 hover:text-gray-600 transition-colors py-1"
+              >
+                Lihat Status Pesanan
+              </Link>
+              <Link
+                href="/menu"
+                className="text-sm text-gray-400 hover:text-gray-600 transition-colors py-1"
+              >
+                Kembali ke Menu
+              </Link>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // EXPIRED / FAILED on a non-QRIS payment (legacy VA etc.) — existing view.
+    return (
+      <div className="max-w-md mx-auto py-6">
+        <div className="bg-white rounded-2xl border border-gray-200 p-6 text-center space-y-4">
+          <div className="w-20 h-20 rounded-full mx-auto flex items-center justify-center bg-red-50">
+            <XCircle className="h-10 w-10 text-red-500" />
+          </div>
+
+          <div>
+            <h1 className="text-2xl font-bold text-red-700">
               {effectiveStatus === "EXPIRED"
-                ? "Waktu pembayaran telah habis. Silakan buat pembayaran baru dari halaman pesanan."
-                : "Pembayaran tidak berhasil diproses. Silakan coba lagi dari halaman pesanan."}
+                ? "Pembayaran Kedaluwarsa"
+                : "Pembayaran Gagal"}
+            </h1>
+            <p className="text-gray-500 text-sm mt-1">
+              Pesanan #{displayOrderNumber}
             </p>
-          )}
+          </div>
+
+          <p className="text-sm text-gray-500">
+            {effectiveStatus === "EXPIRED"
+              ? "Waktu pembayaran telah habis. Silakan buat pembayaran baru dari halaman pesanan."
+              : "Pembayaran tidak berhasil diproses. Silakan coba lagi dari halaman pesanan."}
+          </p>
 
           <div className="flex flex-col gap-2.5 pt-1">
             <Link
@@ -334,6 +496,77 @@ export default function PaymentPage({
               Kembali ke Menu
             </Link>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================
+  // KASIR UNPAID — switched from QRIS (or chosen at checkout). Payment is
+  // collected at the cashier; the banner with the order number is shown.
+  // ============================================================
+
+  if (payment.method === "KASIR" && payment.status === "UNPAID") {
+    return (
+      <div className="max-w-md mx-auto py-6 space-y-4">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold">Pembayaran Pesanan</h1>
+          <p className="text-gray-500 text-sm mt-1">
+            Pesanan #{displayOrderNumber}
+          </p>
+        </div>
+
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 text-center space-y-4">
+          <div className="w-20 h-20 rounded-full mx-auto flex items-center justify-center bg-white">
+            <Banknote className="h-10 w-10 text-amber-500" />
+          </div>
+          <div className="space-y-1">
+            <h2 className="text-xl font-bold text-amber-900">
+              Silakan lakukan pembayaran di kasir.
+            </h2>
+            <p className="text-sm text-amber-800">
+              Pembayaran QRIS dialihkan ke kasir — pesanan tetap sama, tanpa
+              membuat pesanan baru.
+            </p>
+          </div>
+          <div className="bg-white rounded-xl border border-amber-200 px-4 py-3">
+            <p className="text-xs text-gray-500">Nomor Pesanan</p>
+            <p className="text-lg font-bold font-mono">{displayOrderNumber}</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Tunjukkan nomor pesanan ini kepada kasir.
+            </p>
+          </div>
+          <div className="bg-white rounded-xl px-4 py-3 flex items-center justify-between">
+            <span className="text-sm text-gray-500">Total Pembayaran</span>
+            <span className="text-xl font-bold">
+              {formatRupiah(payment.amount)}
+            </span>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-100 px-4 py-3 flex flex-col items-center gap-2">
+            <QrCodeDisplay
+              value={displayOrderNumber}
+              size={168}
+              ariaLabel={`QR pesanan ${displayOrderNumber}`}
+            />
+            <p className="text-xs text-gray-500">
+              Tunjukkan QR ini ke kasir saat membayar.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2.5">
+          <Link
+            href={`/order/${displayOrderNumber}`}
+            className="flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors"
+          >
+            Lihat Status Pesanan
+          </Link>
+          <Link
+            href="/menu"
+            className="text-sm text-gray-400 hover:text-gray-600 transition-colors text-center py-1"
+          >
+            Kembali ke Menu
+          </Link>
         </div>
       </div>
     );

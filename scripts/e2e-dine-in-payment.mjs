@@ -484,7 +484,7 @@ const paymentRowPaid = await waitOn(
 );
 check("TEST13 admin payments page shows PAID/Lunas (no refresh)", !!paymentRowPaid, "");
 
-// ---- TEST14: no double payment ----
+// ---- TEST14: no double payment (second attempt → 409, single audit) ----
 const again = await A.evaluate(
   async (pid) => {
     const res = await fetch(`/api/payments/${pid}/mark-paid`, { method: "POST" });
@@ -492,13 +492,18 @@ const again = await A.evaluate(
     try {
       j = await res.json();
     } catch {}
-    return { status: res.status, alreadyPaid: j?.data?.alreadyPaid ?? null };
+    return { status: res.status, message: j?.message ?? null };
   },
   kPayments[0].id
 );
 const afterAgain = await q("SELECT status FROM Payment WHERE orderId = ?", [kOrder.id]);
-check("TEST14 second mark-paid is a safe no-op (single PAID row)",
-  (again.status === 200 && again.alreadyPaid === true) && afterAgain.length === 1 && afterAgain[0].status === "PAID",
+const kAuditCount = await q("SELECT COUNT(*) n FROM PaymentTransaction WHERE paymentId = ?", [kPayments[0].id]);
+check("TEST14 second mark-paid blocked (409 'Payment already completed', single PAID row + single audit)",
+  again.status === 409 &&
+    again.message === "Payment already completed" &&
+    afterAgain.length === 1 &&
+    afterAgain[0].status === "PAID" &&
+    kAuditCount[0].n === 1,
   JSON.stringify(again));
 const dupKasirAttempt = await K.evaluate(
   async (num) => {
@@ -1085,9 +1090,526 @@ let npOrderNumber = null;
 }
 
 // ============================================================
+// FLOW F — QRIS (EXPIRED/FAILED) → KASIR switch fallback
+// ============================================================
+// Business rules under test:
+//  - the old QRIS row is NEVER modified/converted — history is preserved
+//  - a NEW KASIR UNPAID row is created on the SAME order (amount=grandTotal)
+//  - switch allowed only when the latest payment is EXPIRED / FAILED (or a
+//    stale PENDING past expiresAt, which becomes EXPIRED atomically)
+//  - QRIS PAID / cancelled orders are rejected (409)
+//  - duplicate requests are idempotent (existing KASIR row reused)
+//  - admin marks the KASIR row paid → payment PAID, order PAID + PROCESSING
+const switchOrderIds = [];
+const postSwitch = async (page, num) =>
+  await page.evaluate(async (n) => {
+    const res = await fetch(`/api/public/payments/${n}/switch-to-cashier`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    let j = null;
+    try {
+      j = await res.json();
+    } catch {}
+    return { status: res.status, data: j?.data || null, message: j?.message || null };
+  }, num);
+
+const createSwitchOrder = async (label) => {
+  const created = await T.evaluate(
+    async ({ tableId, productId, name }) => {
+      const res = await fetch("/api/public/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerName: name,
+          orderType: "DINE_IN",
+          tableId,
+          visitorCount: 1,
+          items: [{ productId, quantity: 1 }],
+        }),
+      });
+      let j = null;
+      try {
+        j = await res.json();
+      } catch {}
+      return { status: res.status, orderNumber: j?.data?.orderNumber || null };
+    },
+    { tableId: t1.id, productId: plain1.id, name: `E2EPAY-SW ${label} ${tag}` }
+  );
+  const rows = await q("SELECT id, grandTotal FROM `Order` WHERE orderNumber = ?", [
+    created.orderNumber,
+  ]);
+  return { number: created.orderNumber, id: rows[0].id, grandTotal: rows[0].grandTotal };
+};
+// Seed a QRIS payment row directly (deterministic terminal states; the real
+// creation flow + webhook pipeline are covered by FLOW B above). Timestamps
+// are JS-computed UTC literals — SQL NOW() would tie with the later KASIR row
+// (same second) and make createdAt ordering ambiguous.
+const dbStamp = (d) => d.toISOString().slice(0, 19).replace("T", " ");
+const seedQrisRow = async (orderId, status, { pastExpiry = false } = {}) => {
+  const [o] = await q("SELECT grandTotal FROM `Order` WHERE id = ?", [orderId]);
+  // 5s in the past so the later switch-created KASIR row always sorts newest.
+  const createdAt = dbStamp(new Date(Date.now() - 5000));
+  const expiresAt = dbStamp(
+    new Date(Date.now() + (pastExpiry ? -3600000 : 3600000))
+  );
+  await q(
+    "INSERT INTO Payment (id, restaurantId, orderId, status, amount, method, provider, providerRef, paymentUrl, expiresAt, createdAt, updatedAt) VALUES (UUID(), ?, ?, ?, ?, 'QRIS', 'ipaymu', ?, ?, ?, ?, ?)",
+    [restaurantId, orderId, status, o.grandTotal, `QRIS-${status}-${tag}`, `${BASE}/payment/callback`, expiresAt, createdAt, createdAt]
+  );
+};
+
+// ---- F1: QRIS EXPIRED → payment page actions → switch → admin marks paid ----
+{
+  const f1 = await createSwitchOrder("EXP");
+  switchOrderIds.push(f1.id);
+  await seedQrisRow(f1.id, "EXPIRED", { pastExpiry: true });
+  await q("UPDATE `Order` SET paymentStatus = 'EXPIRED' WHERE id = ?", [f1.id]);
+
+  // Payment page shows the QRIS fallback actions (not a dead end).
+  await Q.goto(`${BASE}/payment/${f1.number}`, { waitUntil: "networkidle2" });
+  await sleep(1500);
+  const f1TerminalUi = await waitOn(
+    Q,
+    () => {
+      const t = document.body.innerText || "";
+      return (
+        t.includes("Pembayaran Kedaluwarsa") &&
+        t.includes("Pembayaran QRIS tidak dapat digunakan.") &&
+        t.includes("Generate QR Baru") &&
+        t.includes("Bayar ke Kasir")
+      );
+    },
+    15000,
+    "payment page QRIS fallback actions"
+  );
+  check("FLOW F QRIS EXPIRED page: 'tidak dapat digunakan' + Generate QR Baru + Bayar ke Kasir", !!f1TerminalUi, "");
+
+  // Switch → KASIR on the SAME order.
+  const f1Switch = await postSwitch(Q, f1.number);
+  check("FLOW F switch EXPIRED → KASIR (200, UNPAID, amount=grandTotal)",
+    f1Switch.status === 200 &&
+      f1Switch.data?.paymentMethod === "KASIR" &&
+      f1Switch.data?.status === "UNPAID" &&
+      Number(f1Switch.data?.amount) === Number(f1.grandTotal) &&
+      String(f1Switch.data?.reference || "").startsWith("CASH-"),
+    `status=${f1Switch.status} ref=${f1Switch.data?.reference}`);
+
+  const f1PayRows = await q(
+    "SELECT id, method, status, amount, providerRef, provider FROM Payment WHERE orderId = ? ORDER BY createdAt ASC",
+    [f1.id]
+  );
+  const f1Order = (await q("SELECT paymentStatus, status FROM `Order` WHERE id = ?", [f1.id]))[0];
+  check("FLOW F history preserved: QRIS EXPIRED (row 1) + KASIR UNPAID (row 2), same order",
+    f1PayRows.length === 2 &&
+      f1PayRows[0].method === "QRIS" && f1PayRows[0].status === "EXPIRED" &&
+      f1PayRows[1].method === "KASIR" && f1PayRows[1].status === "UNPAID" &&
+      f1PayRows[1].provider === null &&
+      Number(f1PayRows[1].amount) === Number(f1.grandTotal) &&
+      f1Order.paymentStatus === "UNPAID",
+    JSON.stringify(f1PayRows.map((p) => ({ m: p.method, s: p.status, a: p.amount }))));
+  const f1KasirId = f1PayRows[1].id;
+
+  // Customer order page shows the cashier banner with the order number.
+  await Q.goto(`${BASE}/order/${f1.number}`, { waitUntil: "networkidle2" });
+  const f1Banner = await waitText(Q, "Silakan lakukan pembayaran di kasir.", 15000) &&
+    await waitText(Q, "Tunjukkan nomor pesanan ini kepada kasir.", 5000);
+  check("FLOW F order page: cashier banner + 'Tunjukkan nomor pesanan'", !!f1Banner, "");
+
+  // Duplicate request → idempotent (same paymentId, no second row).
+  const f1Dup = await postSwitch(Q, f1.number);
+  const f1RowsAfter = await q("SELECT COUNT(*) n FROM Payment WHERE orderId = ?", [f1.id]);
+  check("FLOW F duplicate switch is idempotent (same paymentId, single KASIR row)",
+    f1Dup.status === 200 &&
+      f1Dup.data?.paymentId === f1KasirId &&
+      f1RowsAfter[0].n === 2 &&
+      f1Dup.data?.alreadyExisted === true,
+    `status=${f1Dup.status} rows=${f1RowsAfter[0].n}`);
+
+  // Admin: card shows the cashier action (realtime) → mark paid.
+  const f1CardVisible = await waitText(A, f1.number, 30000);
+  check("FLOW F admin sees switched order", !!f1CardVisible, f1.number);
+  const f1CardAction = await waitOn(
+    A,
+    (num) => {
+      const cards = [...document.querySelectorAll('[data-slot="card"]')];
+      const card = cards.find((c) => (c.textContent || "").includes(num));
+      if (!card) return false;
+      const t = card.textContent || "";
+      return t.includes("Bayar di Kasir") && t.includes("Tandai Sudah Dibayar");
+    },
+    25000,
+    "admin card cashier action for switched order",
+    f1.number
+  );
+  check("FLOW F admin card: 'Bayar di Kasir' + 'Tandai Sudah Dibayar'", !!f1CardAction, "");
+  const f1Clicked = await A.evaluate((num) => {
+    const cards = [...document.querySelectorAll('[data-slot="card"]')];
+    const card = cards.find((c) => (c.textContent || "").includes(num));
+    if (!card) return false;
+    const btn = [...card.querySelectorAll("button")].find((b) => (b.textContent || "").includes("Tandai Sudah Dibayar"));
+    if (!btn) return false;
+    btn.click();
+    return true;
+  }, f1.number);
+  check("FLOW F admin clicked 'Tandai Sudah Dibayar'", !!f1Clicked);
+
+  // KASIR → PAID + order paymentStatus PAID; switched order advances to
+  // PROCESSING (cash in hand). The QRIS row must remain EXPIRED untouched.
+  const f1Paid = await waitDb(async () => {
+    const p = await q("SELECT status, paidAt FROM Payment WHERE id = ?", [f1KasirId]);
+    return p.length === 1 && p[0].status === "PAID" && p[0].paidAt !== null;
+  }, 15000, "switched KASIR payment PAID");
+  const f1After = await q("SELECT paymentStatus, status FROM `Order` WHERE id = ?", [f1.id]);
+  const f1RowsAfter2 = await q("SELECT method, status FROM Payment WHERE orderId = ? ORDER BY createdAt ASC", [f1.id]);
+  check("FLOW F mark paid: KASIR PAID, order paymentStatus PAID + status PROCESSING, QRIS history EXPIRED",
+    !!f1Paid &&
+      f1After[0].paymentStatus === "PAID" &&
+      f1After[0].status === "PROCESSING" &&
+      f1RowsAfter2[0].method === "QRIS" && f1RowsAfter2[0].status === "EXPIRED" &&
+      f1RowsAfter2[1].method === "KASIR" && f1RowsAfter2[1].status === "PAID",
+    JSON.stringify({ order: f1After[0], pays: f1RowsAfter2.map((p) => p.status) }));
+}
+
+// ---- F2: QRIS FAILED → switch to cashier (same-order, history preserved) ----
+{
+  const f2 = await createSwitchOrder("FAIL");
+  switchOrderIds.push(f2.id);
+  await seedQrisRow(f2.id, "FAILED");
+  await q("UPDATE `Order` SET paymentStatus = 'FAILED' WHERE id = ?", [f2.id]);
+  const f2Switch = await postSwitch(Q, f2.number);
+  const f2Rows = await q("SELECT method, status FROM Payment WHERE orderId = ? ORDER BY createdAt ASC", [f2.id]);
+  check("FLOW F switch FAILED → KASIR (200; rows: QRIS FAILED + KASIR UNPAID)",
+    f2Switch.status === 200 &&
+      f2Rows.length === 2 &&
+      f2Rows[0].method === "QRIS" && f2Rows[0].status === "FAILED" &&
+      f2Rows[1].method === "KASIR" && f2Rows[1].status === "UNPAID",
+    `status=${f2Switch.status}`);
+}
+
+// ---- F3: stale PENDING (expiresAt passed, no webhook) → auto-EXPIRED + switch ----
+{
+  const f3 = await createSwitchOrder("STALE");
+  switchOrderIds.push(f3.id);
+  await seedQrisRow(f3.id, "PENDING", { pastExpiry: true });
+  await q("UPDATE `Order` SET paymentStatus = 'PENDING' WHERE id = ?", [f3.id]);
+  const f3Switch = await postSwitch(Q, f3.number);
+  const f3Rows = await q("SELECT method, status FROM Payment WHERE orderId = ? ORDER BY createdAt ASC", [f3.id]);
+  check("FLOW F stale PENDING auto-EXPIRED before switching to KASIR",
+    f3Switch.status === 200 &&
+      f3Rows.length === 2 &&
+      f3Rows[0].method === "QRIS" && f3Rows[0].status === "EXPIRED" &&
+      f3Rows[1].method === "KASIR" && f3Rows[1].status === "UNPAID",
+    `status=${f3Switch.status} rows=${JSON.stringify(f3Rows.map((p) => [p.method, p.status]))}`);
+}
+
+// ---- F4: QRIS PAID → switch rejected (409), no new row ----
+{
+  const f4 = await createSwitchOrder("PAID");
+  switchOrderIds.push(f4.id);
+  await q(
+    "INSERT INTO Payment (id, restaurantId, orderId, status, amount, method, provider, providerRef, paidAt, createdAt, updatedAt) VALUES (UUID(), ?, ?, 'PAID', (SELECT grandTotal FROM `Order` WHERE id = ?), 'QRIS', 'ipaymu', ?, NOW(), NOW(), NOW())",
+    [restaurantId, f4.id, f4.id, `QRIS-PAID-${tag}`]
+  );
+  await q("UPDATE `Order` SET paymentStatus = 'PAID' WHERE id = ?", [f4.id]);
+  const f4Switch = await postSwitch(Q, f4.number);
+  const f4Rows = await q("SELECT method, status FROM Payment WHERE orderId = ?", [f4.id]);
+  check("FLOW F QRIS PAID → switch rejected (409, no KASIR row)",
+    f4Switch.status === 409 && f4Rows.length === 1 && f4Rows[0].method === "QRIS",
+    `status=${f4Switch.status} message=${f4Switch.message}`);
+}
+
+// ---- F5: cancelled order → switch rejected (409), no new row ----
+{
+  const f5 = await createSwitchOrder("CANCEL");
+  switchOrderIds.push(f5.id);
+  await seedQrisRow(f5.id, "EXPIRED", { pastExpiry: true });
+  await q("UPDATE `Order` SET status = 'CANCELLED', paymentStatus = 'EXPIRED' WHERE id = ?", [f5.id]);
+  const f5Switch = await postSwitch(Q, f5.number);
+  const f5Rows = await q("SELECT COUNT(*) n FROM Payment WHERE orderId = ?", [f5.id]);
+  check("FLOW F cancelled order → switch rejected (409, no KASIR row)",
+    f5Switch.status === 409 && f5Rows[0].n === 1, `status=${f5Switch.status}`);
+}
+
+// ---- F6: non-DINE_IN (TAKEAWAY legacy VA) → switch rejected (400) ----
+{
+  const created = await T.evaluate(
+    async ({ productId, name }) => {
+      const res = await fetch("/api/public/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerName: name,
+          orderType: "TAKEAWAY",
+          items: [{ productId, quantity: 1 }],
+        }),
+      });
+      let j = null;
+      try {
+        j = await res.json();
+      } catch {}
+      return { status: res.status, orderNumber: j?.data?.orderNumber || null };
+    },
+    { productId: plain1.id, name: `E2EPAY-SW TWA ${tag}` }
+  );
+  const f6Rows = await q("SELECT id FROM `Order` WHERE orderNumber = ?", [created.orderNumber]);
+  if (f6Rows[0]) switchOrderIds.push(f6Rows[0].id);
+  const f6Switch = await postSwitch(Q, created.orderNumber);
+  const f6PayRows = await q("SELECT COUNT(*) n FROM Payment WHERE orderId = (SELECT id FROM `Order` WHERE orderNumber = ?)", [created.orderNumber]);
+  check("FLOW F TAKEAWAY (legacy) → switch rejected 400, no payment created",
+    created.status === 201 && f6Switch.status === 400 && f6PayRows[0].n === 0,
+    `switch=${f6Switch.status}`);
+}
+
+// ============================================================
+// FLOW G — CASHIER PAYMENT FORM on /admin/orders/[orderNumber]
+// ============================================================
+// Drives the full cashier workflow end-to-end:
+//  - order detail page reached like a QR scan would (admin/orders/<num>)
+//  - "Proses Pembayaran Kasir" dialog: amountDue shown, amountReceived input,
+//    change auto-calculated, insufficient amount rejected with the exact
+//    message and the confirm button disabled
+//  - exact payment (change Rp0) and payment with change (Rp20.000)
+//  - server audit row (amountDue/amountReceived/changeAmount/processedAt)
+//  - duplicate completion blocked (409 "Payment already completed")
+//  - realtime: admin payments page flips to PAID without a manual refresh
+//  - QR: customer order page carries a scannable QR of the order number and
+//    the admin pages expose the "Scan QR Pesanan" entry points
+const gOrderIds = [];
+const rupiahId = (n) => `Rp${n.toLocaleString("id-ID")}`;
+const createCashierOrder = async (label) => {
+  const created = await T.evaluate(
+    async ({ tableId, productId, name }) => {
+      const res = await fetch("/api/public/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customerName: name,
+          orderType: "DINE_IN",
+          tableId,
+          visitorCount: 1,
+          paymentMethod: "KASIR",
+          items: [{ productId, quantity: 1 }],
+        }),
+      });
+      let j = null;
+      try {
+        j = await res.json();
+      } catch {}
+      return { status: res.status, orderNumber: j?.data?.orderNumber || null };
+    },
+    { tableId: t1.id, productId: plain1.id, name: `E2EPAY-CASH ${label} ${tag}` }
+  );
+  const rows = await q("SELECT id, grandTotal FROM `Order` WHERE orderNumber = ?", [
+    created.orderNumber,
+  ]);
+  return { number: created.orderNumber, id: rows[0].id, grandTotal: rows[0].grandTotal };
+};
+const fillCashierReceived = async (page, value) => {
+  await page.evaluate((v) => {
+    const el = document.querySelector("#cashier-received");
+    if (!el) return;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    ).set;
+    setter.call(el, String(v));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }, value);
+};
+const submitEnabled = (page) =>
+  page.evaluate(() => {
+    const b = [...document.querySelectorAll("button")].find((x) =>
+      (x.textContent || "").includes("Konfirmasi Pembayaran")
+    );
+    return b ? !b.disabled : false;
+  });
+const clickButtonWithText = async (page, text) => {
+  return await page.evaluate((t) => {
+    const b = [...document.querySelectorAll("button")].find((x) =>
+      (x.textContent || "").includes(t)
+    );
+    if (!b) return false;
+    b.click();
+    return true;
+  }, text);
+};
+const readAuditRaw = async (paymentId) => {
+  const rows = await q("SELECT rawData FROM PaymentTransaction WHERE paymentId = ?", [paymentId]);
+  if (!rows.length) return null;
+  let rd = rows[0].rawData;
+  if (typeof rd === "string") {
+    try {
+      rd = JSON.parse(rd);
+    } catch {
+      return null;
+    }
+  }
+  return rd;
+};
+
+// ---- G1: insufficient rejected → exact payment succeeds ----
+{
+  const g1 = await createCashierOrder("EXACT");
+  gOrderIds.push(g1.id);
+  const due = Number(g1.grandTotal);
+
+  // Admin list exposes the scanner entry point.
+  await A.goto(`${BASE}/admin/orders`, { waitUntil: "networkidle2" });
+  await waitText(A, "Scan QR Pesanan", 20000);
+
+  // Navigate exactly like a successful QR scan would.
+  await A.goto(`${BASE}/admin/orders/${g1.number}`, { waitUntil: "networkidle2" });
+  check("FLOW G order page (QR-scan destination) shows order + cashier action",
+    await waitText(A, g1.number, 20000) &&
+      await waitText(A, "Proses Pembayaran Kasir", 10000) &&
+      await waitText(A, "Pindai Pesanan Lain", 10000));
+
+  // Customer order page carries the scannable QR.
+  await Q.goto(`${BASE}/order/${g1.number}`, { waitUntil: "networkidle2" });
+  const customerQr = await waitOn(
+    Q,
+    () => {
+      const img = document.querySelector('img[alt^="QR pesanan"]');
+      return !!img && img.src.startsWith("data:image");
+    },
+    15000,
+    "customer QR pesanan"
+  );
+  check("FLOW G customer order page shows QR pesanan (data URI)", !!customerQr, "");
+
+  await A.goto(`${BASE}/admin/orders/${g1.number}`, { waitUntil: "networkidle2" });
+  await waitText(A, "Proses Pembayaran Kasir", 15000);
+  await clickButtonWithText(A, "Proses Pembayaran Kasir");
+  check("FLOW G payment dialog opens with amount fields",
+    await waitOn(A, () => !!document.querySelector("#cashier-received"), 10000, "dialog") &&
+      (await A.evaluate(() => document.body.innerText || "")).includes("Total Tagihan"));
+
+  // Insufficient amount → exact rejection message + disabled confirm.
+  const low = due > 5000 ? due - 5000 : 1;
+  await fillCashierReceived(A, low);
+  const rejectedMsg = await waitText(A, "Uang yang diterima kurang dari total tagihan", 8000);
+  const disabledLow = await submitEnabled(A);
+  const stillUnpaid = (await q("SELECT status FROM Payment WHERE orderId = ?", [g1.id]))[0];
+  check("FLOW G insufficient amount rejected (message shown, button disabled, payment UNPAID)",
+    rejectedMsg && !disabledLow && stillUnpaid.status === "UNPAID",
+    `due=${due} low=${low}`);
+
+  // Exact amount → enabled, success + receipt (Kembalian Rp0).
+  await fillCashierReceived(A, due);
+  const enabledExact = await waitOn(
+    A,
+    () => {
+      const b = [...document.querySelectorAll("button")].find((x) =>
+        (x.textContent || "").includes("Konfirmasi Pembayaran")
+      );
+      return b ? !b.disabled : false;
+    },
+    8000,
+    "submit enabled"
+  );
+  check("FLOW G exact amount enables confirm", !!enabledExact, "");
+  await clickButtonWithText(A, "Konfirmasi Pembayaran");
+  const g1Receipt = await waitText(A, "Pembayaran Berhasil", 25000);
+  check("FLOW G exact payment → receipt 'Pembayaran Berhasil' + Kembalian Rp0",
+    g1Receipt &&
+      (await waitText(A, rupiahId(due), 15000)) &&
+      (await waitText(A, "Rp0", 15000)));
+  await clickButtonWithText(A, "Selesai");
+  check("FLOW G order page reflects lunas after dialog closes",
+    await waitText(A, "Pesanan sudah lunas", 15000));
+
+  const g1Pay = (await q("SELECT id, status, paidAt FROM Payment WHERE orderId = ?", [g1.id]))[0];
+  const g1Order = (await q("SELECT paymentStatus, status FROM `Order` WHERE id = ?", [g1.id]))[0];
+  const g1Hist = await q("SELECT status, notes FROM OrderStatusHistory WHERE orderId = ?", [g1.id]);
+  const g1Raw = await readAuditRaw(g1Pay.id);
+  check("FLOW G DB: KASIR PAID + audit (exact) + order PAID/PROCESSING + history",
+    g1Pay.status === "PAID" && g1Pay.paidAt !== null &&
+      g1Order.paymentStatus === "PAID" && g1Order.status === "PROCESSING" &&
+      g1Hist.some((h) => h.status === "PROCESSING" && (h.notes || "").includes("diterima")) &&
+      g1Raw &&
+      Number(g1Raw.amountDue) === due &&
+      Number(g1Raw.amountReceived) === due &&
+      Number(g1Raw.changeAmount) === 0 &&
+      !!g1Raw.processedAt,
+    JSON.stringify({ pay: g1Pay.status, order: g1Order, raw: g1Raw }));
+
+  // Duplicate completion → 409, no extra transaction row.
+  const dup = await A.evaluate(async (pid) => {
+    const res = await fetch(`/api/payments/${pid}/mark-paid`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amountReceived: 999999 }),
+    });
+    let j = null;
+    try {
+      j = await res.json();
+    } catch {}
+    return { status: res.status, message: j?.message ?? null };
+  }, g1Pay.id);
+  const g1Audits = await q("SELECT COUNT(*) n FROM PaymentTransaction WHERE paymentId = ?", [g1Pay.id]);
+  check("FLOW G duplicate payment blocked (409 'Payment already completed', single audit)",
+    dup.status === 409 && dup.message === "Payment already completed" && g1Audits[0].n === 1,
+    JSON.stringify(dup));
+}
+
+// ---- G2: payment with change (received = due + 20000) ----
+{
+  const g2 = await createCashierOrder("CHANGE");
+  gOrderIds.push(g2.id);
+  const due = Number(g2.grandTotal);
+  const received = due + 20000;
+
+  await A.goto(`${BASE}/admin/orders/${g2.number}`, { waitUntil: "networkidle2" });
+  await waitText(A, "Proses Pembayaran Kasir", 15000);
+  await clickButtonWithText(A, "Proses Pembayaran Kasir");
+  await waitOn(A, () => !!document.querySelector("#cashier-received"), 10000, "dialog");
+  await fillCashierReceived(A, received);
+  // change preview updates live before submitting
+  const changePreview = await waitText(A, rupiahId(20000), 8000);
+  check("FLOW G change auto-calculated (Kembalian Rp20.000)", changePreview, "");
+  await clickButtonWithText(A, "Konfirmasi Pembayaran");
+  check("FLOW G payment-with-change receipt",
+    await waitText(A, "Pembayaran Berhasil", 25000) &&
+      await waitText(A, rupiahId(received), 15000) &&
+      await waitText(A, rupiahId(20000), 15000));
+  await clickButtonWithText(A, "Selesai");
+
+  const g2Pay = (await q("SELECT id, status FROM Payment WHERE orderId = ?", [g2.id]))[0];
+  const g2Order = (await q("SELECT paymentStatus, status FROM `Order` WHERE id = ?", [g2.id]))[0];
+  const g2Raw = await readAuditRaw(g2Pay.id);
+  check("FLOW G DB: payment-with-change audit (due/received/change) + order PAID/PROCESSING",
+    g2Pay.status === "PAID" &&
+      g2Order.paymentStatus === "PAID" && g2Order.status === "PROCESSING" &&
+      g2Raw &&
+      Number(g2Raw.amountDue) === due &&
+      Number(g2Raw.amountReceived) === received &&
+      Number(g2Raw.changeAmount) === 20000,
+    JSON.stringify(g2Raw));
+
+  // Realtime: admin payments page reflects KASIR PAID without a manual refresh
+  // (driven by PAYMENT_STATUS_CHANGED over SSE).
+  const g2PaidRealtime = await waitOn(
+    G,
+    (num) => {
+      const divs = [...document.querySelectorAll("div")].filter((d) => {
+        const t = d.textContent || "";
+        return t.includes(num) && t.includes("Kasir") && t.length < 900;
+      });
+      return divs.some((d) => (d.textContent || "").includes("PAID"));
+    },
+    25000,
+    "G2 PAID realtime on payments page",
+    g2.number
+  );
+  check("FLOW G realtime: admin payments page shows KASIR PAID (no refresh)", !!g2PaidRealtime, "");
+}
+
+// ============================================================
 // Cleanup: reset tables + remove test-created rows
 // ============================================================
 const cleanupOrderIds = [kOrder.id, qOrder.id];
+cleanupOrderIds.push(...switchOrderIds, ...gOrderIds);
 if (typeof dOrderId !== "undefined" && dOrderId) cleanupOrderIds.push(dOrderId);
 for (const num of [twOrder.orderNumber, dlOrder.orderNumber, npOrderNumber].filter(Boolean)) {
   const rows = await q("SELECT id FROM `Order` WHERE orderNumber = ?", [num]);
@@ -1100,9 +1622,19 @@ if (cleanupOrderIds.length) {
 await conn.query("DELETE FROM Customer WHERE name LIKE 'E2EPAY-%'", []);
 await conn.query("UPDATE `Table` SET status='AVAILABLE' WHERE id IN (?, ?)", [t1.id, t2.id]);
 
-// Console/page-error sweep (ignore HMR noise).
+// Console/page-error sweep (ignore HMR noise + the intentionally-triggered
+// 409/422 fetch failures our own negative tests assert on).
 const pageErrors = [...errorsByPage.entries()]
-  .map(([tagName, list]) => [tagName, list.filter((e) => !e.includes("_next/hmr") && !e.includes("WebSocket connection"))])
+  .map(([tagName, list]) => [
+    tagName,
+    list.filter(
+      (e) =>
+        !e.includes("_next/hmr") &&
+        !e.includes("WebSocket connection") &&
+        !e.includes("status of 409") &&
+        !e.includes("status of 422")
+    ),
+  ])
   .filter(([, list]) => list.length > 0);
 check("No console/page errors on admin pages", pageErrors.length === 0, pageErrors.length ? JSON.stringify(pageErrors) : "");
 

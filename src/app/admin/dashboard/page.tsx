@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { orderService, type Order } from "@/services/order.service";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
+import { OrderScanner } from "@/components/admin/order-scanner";
 import {
   ShoppingCart,
   Clock,
@@ -27,6 +29,7 @@ interface DashboardStats {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentOrders, setRecentOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -77,9 +80,15 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold">Dashboard</h1>
-        <p className="text-gray-500">Selamat datang di admin dashboard</p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold">Dashboard</h1>
+          <p className="text-gray-500">Selamat datang di admin dashboard</p>
+        </div>
+        <OrderScanner
+          onScan={(num) => router.push(`/admin/orders/${num}`)}
+          triggerLabel="Scan QR Pesanan"
+        />
       </div>
 
       {/* Stats Grid */}

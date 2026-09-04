@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { orderService, type Order } from "@/services/order.service";
 import { paymentService } from "@/services/payment.service";
+import { OrderScanner } from "@/components/admin/order-scanner";
 import { toast } from "sonner";
 import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
@@ -18,6 +20,8 @@ import {
 } from "@/components/admin/orders/order-skeleton";
 
 export default function OrdersPage() {
+  const router = useRouter();
+
   // Data state
   const [orders, setOrders] = useState<Order[]>([]);
   const [stats, setStats] = useState<{
@@ -165,7 +169,7 @@ export default function OrdersPage() {
     }
   };
 
-  /** Cashier collects the KASIR payment → server marks it PAID (never twice). */
+  /** Quick card action — cashier collects exact KASIR payment (never twice). */
   const handleMarkPaid = async (paymentId: string, orderId: string) => {
     setIsUpdating(true);
     try {
@@ -178,6 +182,21 @@ export default function OrdersPage() {
     } catch (err) {
       console.error("Failed to mark cashier payment paid:", err);
       toast.error("Gagal menandai pembayaran kasir");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  /** Cashier payment form completed in the detail sheet → refresh data. */
+  const handleCashierCompleted = async (paymentId: string, orderId: string) => {
+    setIsUpdating(true);
+    try {
+      toast.success("Pembayaran kasir berhasil");
+      await loadOrders();
+      const fresh = await orderService.getOrder(orderId);
+      setSelectedOrder(fresh);
+    } catch (err) {
+      console.error("Failed to refresh after cashier payment:", err);
     } finally {
       setIsUpdating(false);
     }
@@ -247,18 +266,23 @@ export default function OrdersPage() {
           <h1 className="text-3xl font-bold">Pesanan</h1>
           <p className="text-muted-foreground">Kelola pesanan restoran</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => loadOrders(true)}
-          disabled={isRefreshing}
-          className="w-full sm:w-auto"
-        >
-          <RefreshCw
-            className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
+        <div className="flex gap-2 w-full sm:w-auto">
+          <OrderScanner
+            onScan={(num) => router.push(`/admin/orders/${num}`)}
+            triggerLabel="Scan QR Pesanan"
           />
-          Refresh
-        </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => loadOrders(true)}
+            disabled={isRefreshing}
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${isRefreshing ? "animate-spin" : ""}`}
+            />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -330,7 +354,7 @@ export default function OrdersPage() {
         order={selectedOrder}
         open={isDetailOpen}
         onOpenChange={setIsDetailOpen}
-        onMarkPaid={handleMarkPaid}
+        onCashierCompleted={handleCashierCompleted}
       />
     </div>
   );

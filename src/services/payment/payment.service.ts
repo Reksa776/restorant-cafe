@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, PaymentError, ConflictError } from "@/lib/errors";
+import {
+  NotFoundError,
+  PaymentError,
+  ConflictError,
+  ValidationError,
+} from "@/lib/errors";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { IpaymuProvider } from "./providers/ipaymu/ipaymu.provider";
@@ -218,19 +223,200 @@ export class PaymentService {
   }
 
   /**
-   * Cashier action — mark a KASIR payment as paid.
+   * Switch a failed/expired online payment (QRIS) to a KASIR payment on the
+   * SAME order. Business rules:
+   * - No new order, no modification of the historical QRIS row — the old
+   *   payment stays as history and a NEW KASIR UNPAID row is created.
+   * - Allowed only for DINE_IN orders that are not cancelled/paid and whose
+   *   latest payment is EXPIRED or FAILED — or a stale PENDING payment whose
+   *   expiresAt has passed (that row is atomically marked EXPIRED first).
+   * - Idempotent: an existing UNPAID KASIR row is returned as-is, never a
+   *   duplicate.
+   * - Amount is always order.grandTotal read from the database.
+   */
+  async switchToCashier(orderNumber: string) {
+    const order = await prisma.order.findFirst({
+      where: { orderNumber },
+      include: {
+        payments: {
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundError("Order not found");
+    }
+
+    // KASIR is a DINE_IN-only intent (same rule as createPayment/order create).
+    if (order.orderType !== "DINE_IN") {
+      throw new ValidationError(
+        "Metode pembayaran hanya tersedia untuk dine-in"
+      );
+    }
+    if (order.status === "CANCELLED") {
+      throw new ConflictError(
+        "Pesanan dibatalkan — tidak dapat dialihkan ke pembayaran kasir"
+      );
+    }
+    // QRIS PAID (or any paid payment) can never switch to cashier.
+    if (
+      order.paymentStatus === "PAID" ||
+      order.payments.some((p) => p.status === "PAID")
+    ) {
+      throw new ConflictError("Order already paid");
+    }
+
+    // Idempotent reuse: an active UNPAID KASIR row is already the intent.
+    const activeCashier = order.payments.find(
+      (p) => p.method === "KASIR" && p.status === "UNPAID"
+    );
+    if (activeCashier) {
+      return { payment: activeCashier, alreadyExisted: true, staleExpired: false };
+    }
+
+    const latest = order.payments[0] || null;
+    if (!latest) {
+      throw new ValidationError(
+        "Pembayaran belum dibuat untuk pesanan ini"
+      );
+    }
+
+    const now = new Date();
+    const stalePending =
+      latest.status === "PENDING" &&
+      latest.expiresAt !== null &&
+      new Date(latest.expiresAt).getTime() <= now.getTime();
+
+    // A PENDING payment that has not expired yet is still live — no switch.
+    if (latest.status === "PENDING" && !stalePending) {
+      throw new ConflictError(
+        "Pembayaran QRIS masih aktif — tunggu hingga kedaluwarsa"
+      );
+    }
+    // Only EXPIRED/FAILED (or stale PENDING) online payments may switch.
+    if (
+      latest.status !== "EXPIRED" &&
+      latest.status !== "FAILED" &&
+      !stalePending
+    ) {
+      throw new ConflictError(
+        "Pembayaran saat ini tidak dapat dialihkan ke kasir"
+      );
+    }
+    if (latest.method === "KASIR") {
+      throw new ConflictError(
+        "Pembayaran kasir sudah tercatat untuk pesanan ini"
+      );
+    }
+
+    const reference = `CASH-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // A stale PENDING payment becomes EXPIRED atomically (guarded update so
+      // a racing webhook cannot overwrite a newer state).
+      let staleExpired = false;
+      if (stalePending) {
+        const updated = await tx.payment.updateMany({
+          where: { id: latest.id, status: "PENDING" },
+          data: { status: "EXPIRED" },
+        });
+        staleExpired = updated.count > 0;
+      }
+
+      // Re-check inside the transaction: a concurrent request may have just
+      // recorded the cashier row between our initial read and this write.
+      const existing = await tx.payment.findFirst({
+        where: {
+          orderId: order.id,
+          restaurantId: order.restaurantId,
+          method: "KASIR",
+          status: "UNPAID",
+        },
+        orderBy: { createdAt: "desc" },
+      });
+      if (existing) {
+        return { payment: existing, alreadyExisted: true, staleExpired };
+      }
+
+      const payment = await tx.payment.create({
+        data: {
+          restaurantId: order.restaurantId,
+          orderId: order.id,
+          status: "UNPAID",
+          amount: order.grandTotal,
+          method: "KASIR",
+          provider: null,
+          providerRef: reference,
+        },
+      });
+
+      // A new live payment intent exists again → mirror it on the order row
+      // (same convention as createPayment with an explicit method).
+      await tx.order.update({
+        where: { id: order.id },
+        data: { paymentStatus: "UNPAID" },
+      });
+
+      return { payment, alreadyExisted: false, staleExpired };
+    });
+
+    // Realtime: only when a NEW cashier intent was actually recorded.
+    if (!result.alreadyExisted) {
+      emitRealtime(
+        order.restaurantId,
+        REALTIME_EVENT_TYPES.PAYMENT_CREATED,
+        result.payment.id,
+        {
+          paymentId: result.payment.id,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          amount: Number(result.payment.amount),
+          status: result.payment.status,
+          method: result.payment.method,
+          provider: null,
+        }
+      );
+      emitRealtime(order.restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
+    }
+
+    return {
+      payment: result.payment,
+      alreadyExisted: result.alreadyExisted,
+      staleExpired: result.staleExpired,
+    };
+  }
+
+  /**
+   * Cashier action — collect a KASIR payment.
    *
-   * Security: the payment must belong to the admin's own restaurant
-   * (restaurantId comes from the authenticated session) and must still be
-   * UNPAID. A concurrent or repeated click is safe: the status update is a
-   * guarded conditional update, so the payment can only ever be paid once.
-   * Order STATUS is left untouched — only the payment state (and the order's
-   * payment-status mirror) changes.
+   * `options.amountReceived` is the cash handed by the customer (cashier
+   * payment form). When omitted (legacy quick "Tandai" button) it defaults to
+   * the exact amount due (change = 0). Validation: amountReceived must be
+   * >= amountDue, otherwise the completion is rejected BEFORE any write.
+   *
+   * Security (all server-authoritative): the payment must belong to the
+   * admin's own restaurant (restaurantId from the session) and must still be
+   * UNPAID. The flip uses a guarded conditional update inside a transaction,
+   * so a double / concurrent click can never pay twice — the caller decides
+   * how to surface an already-paid attempt (route returns 409).
+   *
+   * Audit trail: every completed collection writes a PaymentTransaction row
+   * (provider "cashier") with amountDue / amountReceived / changeAmount /
+   * processedBy / processedAt.
+   *
+   * Order STATUS advance to PROCESSING happens when cash is actually
+   * received at the counter: (a) the cashier completed the full payment form
+   * (amountReceived provided), or (b) the KASIR row is the fallback after a
+   * QRIS attempt on the same order. In both cases only while the order is
+   * still PENDING/CONFIRMED. The legacy quick-mark on a direct cashier order
+   * (no amountReceived, no QRIS history) keeps the manual status flow.
    */
   async markCashierPaymentPaid(
     paymentId: string,
     restaurantId: string,
-    changedBy?: string
+    changedBy?: string,
+    options?: { amountReceived?: number }
   ) {
     const payment = await prisma.payment.findFirst({
       where: {
@@ -255,10 +441,37 @@ export class PaymentService {
       throw new NotFoundError("Pembayaran kasir tidak ditemukan");
     }
 
-    // Already paid — idempotent no-op, never a double charge.
-    if (payment.status === "PAID") {
-      return { payment, alreadyPaid: true };
+    const amountDue = Math.round(Number(payment.amount) * 100) / 100;
+    const isFormPayment = options?.amountReceived !== undefined;
+    const amountReceived =
+      isFormPayment
+        ? Math.round(Number(options.amountReceived) * 100) / 100
+        : amountDue;
+    if (Number.isNaN(amountDue) || Number.isNaN(amountReceived)) {
+      throw new ValidationError("Jumlah uang tidak valid");
     }
+    if (amountReceived < amountDue) {
+      throw new ValidationError("Uang yang diterima kurang dari total tagihan");
+    }
+    const changeAmount = Math.round((amountReceived - amountDue) * 100) / 100;
+
+    // Already paid — never a double charge. (The route returns 409 so a
+    // second completion attempt is visibly blocked.)
+    if (payment.status === "PAID") {
+      return {
+        payment,
+        alreadyPaid: true,
+        orderAdvanced: false,
+        audit: { amountDue, amountReceived, changeAmount },
+      };
+    }
+
+    // Was this KASIR row the fallback after a QRIS attempt on the same order?
+    // (history check — the QRIS row itself is never modified)
+    const priorQrisCount = await prisma.payment.count({
+      where: { orderId: payment.orderId, method: "QRIS" },
+    });
+    const fromStatus = payment.order?.status || null;
 
     // Guarded update: only an UNPAID row can flip to PAID, so two cashiers
     // clicking at the same time can never double-pay.
@@ -275,17 +488,59 @@ export class PaymentService {
       });
 
       if (updated.count === 0) {
-        // Lost the race — someone else already marked it paid.
-        return { alreadyPaid: true };
+        // Lost the race — someone else already collected it.
+        return { alreadyPaid: true, orderAdvanced: false };
       }
 
-      // Mirror payment status on the order row ONLY (order.status untouched).
+      // Mirror payment status on the order row.
       await tx.order.update({
         where: { id: payment.orderId },
         data: { paymentStatus: "PAID" },
       });
 
-      return { alreadyPaid: false };
+      // Cash in hand → kitchen may start (form completion or QRIS fallback).
+      let orderAdvanced = false;
+      if (
+        (priorQrisCount > 0 || isFormPayment) &&
+        (fromStatus === "PENDING" || fromStatus === "CONFIRMED")
+      ) {
+        await tx.order.update({
+          where: { id: payment.orderId },
+          data: { status: "PROCESSING" },
+        });
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId: payment.orderId,
+            status: "PROCESSING",
+            notes:
+              isFormPayment
+                ? `Pembayaran kasir diterima — total Rp${amountDue.toLocaleString("id-ID")}, diterima Rp${amountReceived.toLocaleString("id-ID")}, kembalian Rp${changeAmount.toLocaleString("id-ID")}`
+                : "Pembayaran kasir diterima (pengalihan dari QRIS)",
+            changedBy: changedBy || null,
+          },
+        });
+        orderAdvanced = true;
+      }
+
+      // Audit log: exact money math + who/when, on the payment row.
+      await tx.paymentTransaction.create({
+        data: {
+          paymentId: payment.id,
+          provider: "cashier",
+          type: "cashier_payment",
+          status: "PAID",
+          amount: payment.amount,
+          rawData: {
+            amountDue,
+            amountReceived,
+            changeAmount,
+            processedBy: changedBy || null,
+            processedAt: new Date().toISOString(),
+          },
+        },
+      });
+
+      return { alreadyPaid: false, orderAdvanced };
     });
 
     const paidPayment = await prisma.payment.findUnique({
@@ -334,12 +589,38 @@ export class PaymentService {
         REALTIME_EVENT_TYPES.DASHBOARD_UPDATED,
         payment.orderId
       );
+
+      // The order advanced to PROCESSING (switched-QRIS fallback collected).
+      if (result.orderAdvanced) {
+        emitRealtime(
+          restaurantId,
+          REALTIME_EVENT_TYPES.ORDER_STATUS_CHANGED,
+          `${payment.orderId}-PROCESSING`,
+          {
+            orderId: payment.orderId,
+            orderNumber: payment.order?.orderNumber,
+            fromStatus: fromStatus || payment.order?.status,
+            toStatus: "PROCESSING",
+          }
+        );
+        emitRealtime(
+          restaurantId,
+          REALTIME_EVENT_TYPES.ORDER_UPDATED,
+          payment.orderId,
+          {
+            orderId: payment.orderId,
+            status: "PROCESSING",
+          }
+        );
+      }
     }
 
     return {
       payment: paidPayment || payment,
       alreadyPaid: result.alreadyPaid,
+      orderAdvanced: result.orderAdvanced,
       changedBy: changedBy || null,
+      audit: { amountDue, amountReceived, changeAmount },
     };
   }
 

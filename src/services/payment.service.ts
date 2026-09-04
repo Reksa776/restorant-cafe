@@ -53,13 +53,26 @@ export const paymentService = {
   },
 
   /**
-   * Cashier action — mark a KASIR payment as paid (admin only).
-   * Returns { payment, alreadyPaid }.
+   * Cashier action — complete a KASIR payment (admin only).
+   *
+   * `amountReceived` is the cash handed by the customer (payment form); when
+   * omitted the server treats it as exact payment (change = 0). A second
+   * attempt on an already-PAID payment is rejected with HTTP 409.
    */
   async markCashierPaymentPaid(
-    paymentId: string
-  ): Promise<{ payment: Payment; alreadyPaid: boolean }> {
-    const response = await api.post(`/payments/${paymentId}/mark-paid`);
+    paymentId: string,
+    amountReceived?: number
+  ): Promise<{
+    payment: Payment;
+    alreadyPaid: boolean;
+    orderAdvanced: boolean;
+    changedBy: string | null;
+    audit: { amountDue: number; amountReceived: number; changeAmount: number };
+  }> {
+    const response = await api.post(
+      `/payments/${paymentId}/mark-paid`,
+      amountReceived !== undefined ? { amountReceived } : {}
+    );
     return response.data.data;
   },
 };

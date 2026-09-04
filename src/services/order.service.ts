@@ -57,6 +57,21 @@ export interface Order {
     amount: string;
     paymentUrl?: string | null;
     paidAt?: string | null;
+    createdAt?: string;
+    transactions?: Array<{
+      id: string;
+      type: string;
+      status: string;
+      amount: string;
+      createdAt: string;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rawData?: any;
+    }>;
+  }>;
+  statusHistory?: Array<{
+    status: string;
+    notes?: string | null;
+    createdAt: string;
   }>;
 }
 
@@ -81,6 +96,12 @@ export const orderService = {
 
   async getOrder(id: string): Promise<Order> {
     const response = await api.get(`/orders/${id}`);
+    return response.data.data;
+  },
+
+  /** Get an order by its public order number (admin /admin/orders/[orderNumber]). */
+  async getOrderByNumber(orderNumber: string): Promise<Order> {
+    const response = await api.get(`/orders/by-number/${orderNumber}`);
     return response.data.data;
   },
 

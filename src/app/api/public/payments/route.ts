@@ -52,6 +52,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Regenerating a QR after the gateway never delivered an EXPIRED webhook:
+    // a PENDING payment whose expiresAt has passed is terminal before a new QR
+    // can be created — otherwise the old PENDING row would block the new one
+    // forever and the customer could never pay. Guarded update (PENDING-only)
+    // keeps this race-safe against a late webhook. Legacy/KASIR flows are
+    // untouched — this only ever fires for a QRIS regeneration request.
+    if (method === "QRIS") {
+      const stale = await prisma.payment.findFirst({
+        where: { orderId: order.id, status: "PENDING" },
+        select: { id: true, expiresAt: true },
+        orderBy: { createdAt: "desc" },
+      });
+      if (
+        stale &&
+        stale.expiresAt !== null &&
+        stale.expiresAt.getTime() <= Date.now()
+      ) {
+        await prisma.payment.updateMany({
+          where: { id: stale.id, status: "PENDING" },
+          data: { status: "EXPIRED" },
+        });
+        await prisma.order.update({
+          where: { id: order.id },
+          data: { paymentStatus: "EXPIRED" },
+        });
+      }
+    }
+
     // Create payment (amount recomputed server-side from the order row)
     const payment = await paymentService.createPayment(
       order.id,

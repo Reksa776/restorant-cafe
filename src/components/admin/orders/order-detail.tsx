@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   Sheet,
   SheetContent,
@@ -7,6 +8,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import { CashierPayDialog } from "@/components/admin/orders/cashier-pay-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -89,7 +91,12 @@ interface OrderDetailProps {
   order: Order | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onMarkPaid?: (paymentId: string, orderId: string) => void;
+  /** Cashier form completed — parent refreshes its order data. */
+  onCashierCompleted?: (
+    paymentId: string,
+    orderId: string,
+    audit: { amountDue: number; amountReceived: number; changeAmount: number }
+  ) => void;
 }
 
 // ============================================================
@@ -100,12 +107,21 @@ export function OrderDetail({
   order,
   open,
   onOpenChange,
-  onMarkPaid,
+  onCashierCompleted,
 }: OrderDetailProps) {
+  const [cashierOpen, setCashierOpen] = useState(false);
+
   if (!order) return null;
 
-  // KASIR payment intent (latest unpaid wins; fall back to any row).
-  const payments = order.payments || [];
+  // KASIR payment intent (latest unpaid wins; fall back to any row). Order
+  // newest-first so the active intent is found first.
+  const payments = (order.payments || [])
+    .slice()
+    .sort(
+      (a, b) =>
+        new Date(b.createdAt || 0).getTime() -
+        new Date(a.createdAt || 0).getTime()
+    );
   const cashierPayment =
     payments.find((p) => p.method === "KASIR" && p.status !== "PAID") ||
     payments.find((p) => p.method === "KASIR");
@@ -341,7 +357,133 @@ export function OrderDetail({
             </div>
           </div>
 
-          {/* Cashier payment action (KASIR UNPAID only) */}
+          {/* Payment history — every attempt on this order stays visible
+              (e.g. 1. QRIS EXPIRED → 2. KASIR UNPAID after a fallback). */}
+          {payments.length > 0 && (
+            <>
+              <Separator />
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium text-muted-foreground">
+                  Riwayat Pembayaran
+                </h3>
+                <div className="space-y-1.5">
+                  {payments
+                    .slice()
+                    .reverse()
+                    .map((p, idx) => {
+                      const methodLabel =
+                        p.method === "KASIR"
+                          ? "Kasir"
+                          : p.method === "QRIS"
+                            ? "QRIS"
+                            : p.provider === "ipaymu" && !p.method
+                              ? "VA iPaymu"
+                              : p.method || "Pembayaran";
+                      const label = PAYMENT_STATUS_LABELS[p.status];
+                      const time = p.createdAt
+                        ? new Date(p.createdAt).toLocaleTimeString("id-ID", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : "";
+                      // Cashier audit trail (amountDue/amountReceived/change/
+                      // processedBy/processedAt) from the payment transactions.
+                      const cashierTxn = (p.transactions || []).find(
+                        (t) =>
+                          t.type === "cashier_payment" &&
+                          t.status === "PAID"
+                      );
+                      let audit: {
+                        amountReceived: number;
+                        changeAmount: number;
+                        processedAt?: string;
+                        processedBy?: string | null;
+                      } | null = null;
+                      if (cashierTxn) {
+                        let rd = cashierTxn.rawData;
+                        if (typeof rd === "string") {
+                          try {
+                            rd = JSON.parse(rd);
+                          } catch {
+                            rd = null;
+                          }
+                        }
+                        if (rd && rd.amountReceived !== undefined) {
+                          audit = {
+                            amountReceived: Number(rd.amountReceived),
+                            changeAmount: Number(rd.changeAmount || 0),
+                            processedAt: rd.processedAt || cashierTxn.createdAt,
+                            processedBy: rd.processedBy || null,
+                          };
+                        }
+                      }
+                      return (
+                        <div
+                          key={p.id}
+                          className="rounded-lg bg-muted/40 border border-border px-3 py-2"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-xs text-muted-foreground">
+                                {idx + 1}. {methodLabel}
+                                {time ? ` · ${time}` : ""}
+                              </p>
+                              <p className="text-sm font-semibold tabular-nums">
+                                Rp{Number(p.amount).toLocaleString("id-ID")}
+                              </p>
+                            </div>
+                            {label && (
+                              <span
+                                className={`shrink-0 text-[10px] font-medium px-2 py-0.5 rounded-full ${label.color}`}
+                              >
+                                {label.label}
+                              </span>
+                            )}
+                          </div>
+                          {audit && (
+                            <div className="mt-1.5 pt-1.5 border-t border-border/70 text-[11px] text-muted-foreground space-y-0.5">
+                              <p>
+                                Diterima{" "}
+                                <span className="font-medium text-foreground">
+                                  Rp
+                                  {audit.amountReceived.toLocaleString("id-ID")}
+                                </span>{" "}
+                                · Kembalian{" "}
+                                <span
+                                  className={`font-medium ${
+                                    audit.changeAmount > 0
+                                      ? "text-green-700"
+                                      : "text-foreground"
+                                  }`}
+                                >
+                                  Rp{audit.changeAmount.toLocaleString("id-ID")}
+                                </span>
+                              </p>
+                              <p>
+                                Diproses{" "}
+                                {audit.processedAt
+                                  ? new Date(
+                                      audit.processedAt
+                                    ).toLocaleString("id-ID")
+                                  : ""}
+                                {audit.processedBy
+                                  ? ` · oleh admin #${String(
+                                      audit.processedBy
+                                    ).slice(0, 8)}`
+                                  : ""}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Cashier payment action (KASIR UNPAID only) — opens the payment
+              form (amount received → change) instead of a blind quick-mark. */}
           {isCashierUnpaid && cashierPayment && (
             <>
               <Separator />
@@ -358,16 +500,24 @@ export function OrderDetail({
                 <Button
                   size="sm"
                   className="bg-green-600 hover:bg-green-700 flex-shrink-0"
-                  onClick={() =>
-                    onMarkPaid?.(cashierPayment.id, order.id)
-                  }
+                  onClick={() => setCashierOpen(true)}
                 >
                   <Banknote className="h-3.5 w-3.5 mr-1" />
-                  Tandai Sudah Dibayar
+                  Proses Pembayaran Kasir
                 </Button>
               </div>
             </>
           )}
+
+          {/* Cashier payment form / receipt dialog */}
+          <CashierPayDialog
+            order={order}
+            open={cashierOpen}
+            onOpenChange={setCashierOpen}
+            onCompleted={(paymentId, orderId, audit) =>
+              onCashierCompleted?.(paymentId, orderId, audit)
+            }
+          />
 
           {/* Notes */}
           {order.notes && (

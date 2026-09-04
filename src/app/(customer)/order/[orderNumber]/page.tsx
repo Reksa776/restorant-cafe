@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
+import { QrCodeDisplay } from "@/components/qr-code-display";
 
 // ============================================================
 // Types
@@ -228,6 +229,10 @@ export default function OrderTrackingPage({
     order.payments && order.payments.length > 0 ? order.payments[0] : null;
   const paymentMethod = latestPayment?.method || null;
   const isCashierPayment = paymentMethod === "KASIR";
+  // Cashier intent pending collection (either chosen at checkout or switched
+  // from an expired/failed QRIS on the same order).
+  const isCashierPending =
+    isCashierPayment && latestPayment?.status === "UNPAID";
   const paymentMethodLabel =
     paymentMethod === "KASIR"
       ? "Kasir"
@@ -328,6 +333,41 @@ export default function OrderTrackingPage({
             </button>
           )}
         </div>
+
+        {/* Cashier pending — show the order number the customer must give to
+            the cashier (covers both direct KASIR and QRIS→KASIR fallback). */}
+        {isCashierPending && (
+          <div className="bg-white/70 border border-amber-200 rounded-lg px-4 py-3 space-y-0.5">
+            <p className="text-xs text-gray-500">Nomor Pesanan</p>
+            <p className="text-base font-bold font-mono">
+              {order.orderNumber}
+            </p>
+            <p className="text-xs text-gray-500">
+              Tunjukkan nomor pesanan ini kepada kasir.
+            </p>
+          </div>
+        )}
+
+        {/* Order QR — every order carries its order number as a scannable QR
+            so the cashier can open the payment page instantly. */}
+        {!isCancelled && (
+          <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center gap-4">
+            <QrCodeDisplay
+              value={order.orderNumber}
+              size={132}
+              ariaLabel={`QR pesanan ${order.orderNumber}`}
+            />
+            <div className="space-y-0.5 min-w-0">
+              <p className="text-sm font-semibold">QR Pesanan</p>
+              <p className="text-xs text-gray-500">
+                Tunjukkan QR ini ke kasir saat melakukan pembayaran di tempat.
+              </p>
+              <p className="text-sm font-mono font-semibold">
+                {order.orderNumber}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* DINE-IN with no live payment yet → QRIS or Kasir */}
         {showPaymentChoices && (
