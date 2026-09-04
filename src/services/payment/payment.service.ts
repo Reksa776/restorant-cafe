@@ -7,6 +7,7 @@ import {
 } from "@/lib/errors";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
+import { auditService } from "@/services/audit/audit.service";
 import { IpaymuProvider } from "./providers/ipaymu/ipaymu.provider";
 import type { PaymentProvider } from "./payment.types";
 
@@ -473,6 +474,42 @@ export class PaymentService {
     });
     const fromStatus = payment.order?.status || null;
 
+    // ============================================================
+    // Cash drawer linking (RBAC): when the acting user is a CASHIER the
+    // payment must be collected under THEIR open shift — it is never allowed
+    // to collect into someone else's drawer. Admins (no shift workflow)
+    // keep the legacy unlinked quick-mark behaviour.
+    // ============================================================
+    let shiftId: string | null = null;
+    if (changedBy) {
+      const actor = await prisma.user.findUnique({
+        where: { id: changedBy },
+        select: { role: true, restaurantId: true },
+      });
+      if (actor?.restaurantId === restaurantId && actor.role === "CASHIER") {
+        const openShift = await prisma.cashierShift.findFirst({
+          where: {
+            restaurantId,
+            userId: changedBy,
+            status: "OPEN",
+          },
+        });
+        if (!openShift) {
+          throw new ConflictError(
+            "Kasir harus membuka shift terlebih dahulu sebelum menerima pembayaran"
+          );
+        }
+        // Cross-drawer safety: a payment already linked to another shift
+        // cannot be collected by a different cashier.
+        if (payment.shiftId && payment.shiftId !== openShift.id) {
+          throw new ConflictError(
+            "Pembayaran ini tercatat pada shift kasir lain"
+          );
+        }
+        shiftId = openShift.id;
+      }
+    }
+
     // Guarded update: only an UNPAID row can flip to PAID, so two cashiers
     // clicking at the same time can never double-pay.
     const result = await prisma.$transaction(async (tx) => {
@@ -484,6 +521,7 @@ export class PaymentService {
         data: {
           status: "PAID",
           paidAt: new Date(),
+          ...(shiftId ? { shiftId } : {}),
         },
       });
 
@@ -536,12 +574,33 @@ export class PaymentService {
             changeAmount,
             processedBy: changedBy || null,
             processedAt: new Date().toISOString(),
+            ...(shiftId ? { shiftId } : {}),
           },
         },
       });
 
-      return { alreadyPaid: false, orderAdvanced };
+      return { alreadyPaid: false, orderAdvanced, shiftId };
     });
+
+    // Centralized audit trail (best-effort, after the write commits).
+    if (!result.alreadyPaid) {
+      await auditService.log({
+        restaurantId,
+        userId: changedBy || null,
+        action: "PAYMENT_RECEIVED",
+        entityType: "Payment",
+        entityId: payment.id,
+        details: {
+          orderNumber: payment.order?.orderNumber || null,
+          amount: amountDue,
+          amountReceived,
+          changeAmount,
+          method: "KASIR",
+          shiftId: result.shiftId || null,
+          processedBy: changedBy || null,
+        },
+      });
+    }
 
     const paidPayment = await prisma.payment.findUnique({
       where: { id: payment.id },

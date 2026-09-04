@@ -2,11 +2,11 @@ import { NextRequest } from "next/server";
 import { paymentService } from "@/services/payment/payment.service";
 import { successResponse, createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireRoles } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "20");
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
     const body = await request.json();
 
     if (!body.orderId) {

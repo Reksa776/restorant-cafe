@@ -10,7 +10,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BASE = "http://localhost:3000";
-const CHROME = "C:/Program Files/Google/Chrome/Application/chrome.exe";
+const chromeCandidates = [
+  process.env.CHROME_PATH,
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "C:/Program Files/Google/Chrome/Application/chrome.exe",
+  "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
+].filter(Boolean);
+const CHROME = chromeCandidates.find((p) => fs.existsSync(p)) || chromeCandidates[0];
 const PROJECT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
@@ -19,7 +25,20 @@ const check = (name, ok, detail = "") => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? " — " + detail : ""}`);
 };
 
-const conn = await createConnection({ host: "localhost", port: 3306, user: "root", password: "", database: "restaurant_app" });
+const conn = await createConnection(dbConfig());
+function dbConfig() {
+  // DB config follows .env when present (fallback: legacy local MySQL :3306).
+  const raw = fs.readFileSync(path.join(PROJECT, ".env"), "utf8");
+  let url = "";
+  for (const line of raw.split(/\r?\n/)) {
+    const m = line.match(/^DATABASE_URL=(.*)$/);
+    if (m) url = m[1].trim().replace(/^"|"$/g, "");
+  }
+  const m = url.match(/^mysql:\/\/([^:]+):([^@]+)@([^:/]+):(\d+)\/(.+)$/);
+  return m
+    ? { host: m[3], port: Number(m[4]), user: m[1], password: m[2], database: m[5] }
+    : { host: "localhost", port: 3306, user: "root", password: "", database: "restaurant_app" };
+}
 const [[t1]] = await conn.query("SELECT id, number, status FROM `Table` WHERE number = 1");
 const [availTables] = await conn.query(
   "SELECT id, number, status FROM `Table` WHERE status = 'AVAILABLE' AND number != 1 ORDER BY number ASC LIMIT 1"

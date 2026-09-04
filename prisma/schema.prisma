@@ -15,6 +15,18 @@ datasource db {
 
 enum Role {
   ADMIN
+  CASHIER
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 enum OrderStatus {
@@ -75,6 +87,17 @@ model User {
 
   restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
   orderHistory OrderStatusHistory[]
+  cashierShifts CashierShift[]
+  auditLogs    AuditLog[]
+  shiftOverridesRequested ShiftOverride[] @relation("ShiftOverrideRequester")
+  shiftOverridesApproved  ShiftOverride[] @relation("ShiftOverrideApprover")
+  shiftOverridesRejected  ShiftOverride[] @relation("ShiftOverrideRejecter")
+  refundsRequested Refund[] @relation("RefundRequester")
+  refundsApproved  Refund[] @relation("RefundApprover")
+  refundsRejected  Refund[] @relation("RefundRejecter")
+  cancellationsRequested CancellationRequest[] @relation("CancellationRequester")
+  cancellationsApproved  CancellationRequest[] @relation("CancellationApprover")
+  cancellationsRejected  CancellationRequest[] @relation("CancellationRejecter")
 
   @@map("user")
 }
@@ -89,16 +112,168 @@ model Restaurant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users      User[]
-  tables     Table[]
-  categories Category[]
-  products   Product[]
-  customers  Customer[]
-  orders     Order[]
-  payments   Payment[]
+  users        User[]
+  tables       Table[]
+  categories   Category[]
+  products     Product[]
+  customers    Customer[]
+  orders       Order[]
+  payments     Payment[]
+  cashierShifts CashierShift[]
+  shiftOverrides ShiftOverride[]
+  refunds      Refund[]
+  cancellations CancellationRequest[]
+  auditLogs    AuditLog[]
 
   @@map("restaurant")
 }
+
+model CashierShift {
+  id           String      @id @default(cuid())
+  restaurantId String
+  userId       String
+  shiftNumber  String
+  openingCash  Decimal     @db.Decimal(12, 2)
+  closingCash  Decimal?    @db.Decimal(12, 2)
+  expectedCash Decimal?    @db.Decimal(12, 2)
+  difference   Decimal?    @db.Decimal(12, 2)
+  notes        String?     @db.Text
+  openedAt     DateTime    @default(now())
+  closedAt     DateTime?
+  status       ShiftStatus @default(OPEN)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  user       User       @relation(fields: [userId], references: [id])
+  payments   Payment[]
+  refunds    Refund[]
+  overrides  ShiftOverride[]
+
+  @@unique([restaurantId, shiftNumber])
+  @@index([restaurantId])
+  @@index([userId])
+  @@index([status])
+
+  @@map("cashiershift")
+}
+
+model ShiftOverride {
+  id                    String        @id @default(cuid())
+  restaurantId          String
+  shiftId               String
+  requestedByCashierId  String
+  reason                String        @db.Text
+  proposedClosingCash   Decimal?      @db.Decimal(12, 2)
+  status                RequestStatus @default(PENDING)
+  approvedByAdminId     String?
+  rejectedByAdminId     String?
+  decisionNote          String?       @db.Text
+  requestedAt           DateTime      @default(now())
+  decidedAt             DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  restaurant Restaurant   @relation(fields: [restaurantId], references: [id])
+  shift      CashierShift @relation(fields: [shiftId], references: [id])
+  requester  User         @relation("ShiftOverrideRequester", fields: [requestedByCashierId], references: [id])
+  approver   User?        @relation("ShiftOverrideApprover", fields: [approvedByAdminId], references: [id])
+  rejecter   User?        @relation("ShiftOverrideRejecter", fields: [rejectedByAdminId], references: [id])
+
+  @@index([restaurantId])
+  @@index([shiftId])
+  @@index([status])
+
+  @@map("shiftoverride")
+}
+
+model Refund {
+  id                    String        @id @default(cuid())
+  restaurantId          String
+  orderId               String
+  paymentId             String?
+  shiftId               String?
+  amount                Decimal       @db.Decimal(12, 2)
+  reason                String        @db.Text
+  status                RequestStatus @default(PENDING)
+  requestedByCashierId  String
+  approvedByAdminId     String?
+  rejectedByAdminId     String?
+  decisionNote          String?       @db.Text
+  requestedAt           DateTime      @default(now())
+  decidedAt             DateTime?
+  approvedAt            DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  restaurant Restaurant       @relation(fields: [restaurantId], references: [id])
+  order      Order            @relation(fields: [orderId], references: [id])
+  payment    Payment?         @relation(fields: [paymentId], references: [id])
+  shift      CashierShift?    @relation(fields: [shiftId], references: [id])
+  requester  User             @relation("RefundRequester", fields: [requestedByCashierId], references: [id])
+  approver   User?            @relation("RefundApprover", fields: [approvedByAdminId], references: [id])
+  rejecter   User?            @relation("RefundRejecter", fields: [rejectedByAdminId], references: [id])
+
+  @@index([restaurantId])
+  @@index([orderId])
+  @@index([paymentId])
+  @@index([status])
+  @@index([shiftId])
+
+  @@map("refund")
+}
+
+model CancellationRequest {
+  id                    String        @id @default(cuid())
+  restaurantId          String
+  orderId               String
+  reason                String        @db.Text
+  status                RequestStatus @default(PENDING)
+  requestedByCashierId  String
+  approvedByAdminId     String?
+  rejectedByAdminId     String?
+  decisionNote          String?       @db.Text
+  requestedAt           DateTime      @default(now())
+  decidedAt             DateTime?
+  approvedAt            DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  order      Order      @relation(fields: [orderId], references: [id])
+  requester  User       @relation("CancellationRequester", fields: [requestedByCashierId], references: [id])
+  approver   User?      @relation("CancellationApprover", fields: [approvedByAdminId], references: [id])
+  rejecter   User?      @relation("CancellationRejecter", fields: [rejectedByAdminId], references: [id])
+
+  @@index([restaurantId])
+  @@index([orderId])
+  @@index([status])
+
+  @@map("cancellationrequest")
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  restaurantId String
+  userId       String?
+  action       String
+  entityType   String?
+  entityId     String?
+  details      Json?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+
+  restaurant Restaurant? @relation(fields: [restaurantId], references: [id])
+  user       User?       @relation(fields: [userId], references: [id])
+
+  @@index([restaurantId])
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+
+  @@map("auditlog")
+}
+
 
 model Table {
   id           String      @id @default(cuid())
@@ -212,6 +387,8 @@ model Order {
   items         OrderItem[]
   statusHistory OrderStatusHistory[]
   payments      Payment[]
+  refunds       Refund[]
+  cancellations CancellationRequest[]
 
   @@unique([restaurantId, orderNumber])
   @@index([restaurantId])
@@ -320,6 +497,9 @@ model Payment {
   id           String        @id @default(cuid())
   restaurantId String
   orderId      String
+  // Cash drawer shift that collected this payment (KASIR only). Null for
+  // online payments (QRIS/VA) and for legacy admin entries without a shift.
+  shiftId      String?
   status       PaymentStatus @default(UNPAID)
   amount       Decimal       @db.Decimal(10, 2)
   method       String?
@@ -338,12 +518,15 @@ model Payment {
 
   restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
   order        Order                @relation(fields: [orderId], references: [id])
+  shift        CashierShift?        @relation(fields: [shiftId], references: [id])
   transactions PaymentTransaction[]
+  refunds      Refund[]
 
   @@index([restaurantId])
   @@index([orderId])
   @@index([status])
   @@index([providerRef])
+  @@index([shiftId])
 
   @@map("payment")
 }

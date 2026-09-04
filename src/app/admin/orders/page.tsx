@@ -266,7 +266,7 @@ export default function OrdersPage() {
           <h1 className="text-3xl font-bold">Pesanan</h1>
           <p className="text-muted-foreground">Kelola pesanan restoran</p>
         </div>
-        <div className="flex gap-2 w-full sm:w-auto">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
           <OrderScanner
             onScan={(num) => router.push(`/admin/orders/${num}`)}
             triggerLabel="Scan QR Pesanan"
@@ -274,6 +274,7 @@ export default function OrdersPage() {
           <Button
             variant="outline"
             size="sm"
+            className="w-full sm:w-auto"
             onClick={() => loadOrders(true)}
             disabled={isRefreshing}
           >
@@ -355,6 +356,17 @@ export default function OrdersPage() {
         open={isDetailOpen}
         onOpenChange={setIsDetailOpen}
         onCashierCompleted={handleCashierCompleted}
+        onActionDone={async () => {
+          await loadOrders();
+          if (selectedOrder) {
+            try {
+              const fresh = await orderService.getOrder(selectedOrder.id);
+              setSelectedOrder(fresh);
+            } catch {
+              // Order may have been cancelled — keep the stale copy.
+            }
+          }
+        }}
       />
     </div>
   );

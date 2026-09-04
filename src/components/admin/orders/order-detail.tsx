@@ -9,6 +9,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { CashierPayDialog } from "@/components/admin/orders/cashier-pay-dialog";
+import { ApprovalActions } from "@/components/admin/orders/approval-actions";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -97,6 +98,8 @@ interface OrderDetailProps {
     orderId: string,
     audit: { amountDue: number; amountReceived: number; changeAmount: number }
   ) => void;
+  /** Any action completed (refund/cancel) — parent refreshes. */
+  onActionDone?: () => void;
 }
 
 // ============================================================
@@ -108,6 +111,7 @@ export function OrderDetail({
   open,
   onOpenChange,
   onCashierCompleted,
+  onActionDone,
 }: OrderDetailProps) {
   const [cashierOpen, setCashierOpen] = useState(false);
 
@@ -478,6 +482,22 @@ export function OrderDetail({
                       );
                     })}
                 </div>
+              </div>
+            </>
+          )}
+
+          {/* Refund / cancel approval actions (admins approve with password,
+              cashiers submit requests) — only while money is in play. */}
+          {!["COMPLETED", "CANCELLED"].includes(order.status) &&
+            (order.paymentStatus === "PAID" || order.status === "PENDING") && (
+            <>
+              <Separator />
+              <div className="flex flex-wrap items-center gap-2">
+                <ApprovalActions
+                  order={order}
+                  compact
+                  onDone={() => onActionDone?.()}
+                />
               </div>
             </>
           )}

@@ -13,27 +13,39 @@ import {
   CreditCard,
   MessageSquare,
   Settings,
+  Wallet,
+  Clock,
   LogOut,
   Menu,
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
+import { useUserRole, type StaffRole } from "@/hooks/use-user-role";
 import {
   AdminRealtimeProvider,
   useAdminRealtime,
   type RealtimeStatus,
 } from "@/components/admin/realtime-provider";
 
-const navigation = [
-  { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard },
-  { name: "Orders", href: "/admin/orders", icon: ShoppingCart },
-  { name: "Menu", href: "/admin/menu", icon: UtensilsCrossed },
-  { name: "Tables", href: "/admin/tables", icon: TableProperties },
-  { name: "Customers", href: "/admin/customers", icon: Users },
-  { name: "Payments", href: "/admin/payments", icon: CreditCard },
-  { name: "WhatsApp", href: "/admin/whatsapp", icon: MessageSquare },
-  { name: "Settings", href: "/admin/settings", icon: Settings },
+interface NavItem {
+  name: string;
+  href: string;
+  icon: typeof LayoutDashboard;
+  roles: StaffRole[];
+}
+
+const navigation: NavItem[] = [
+  { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "CASHIER"] },
+  { name: "Orders", href: "/admin/orders", icon: ShoppingCart, roles: ["ADMIN", "CASHIER"] },
+  { name: "Payments", href: "/admin/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
+  { name: "Shifts", href: "/admin/shifts", icon: Clock, roles: ["ADMIN", "CASHIER"] },
+  { name: "Users", href: "/admin/users", icon: Users, roles: ["ADMIN"] },
+  { name: "Menu", href: "/admin/menu", icon: UtensilsCrossed, roles: ["ADMIN"] },
+  { name: "Tables", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN"] },
+  { name: "Customers", href: "/admin/customers", icon: Users, roles: ["ADMIN"] },
+  { name: "WhatsApp", href: "/admin/whatsapp", icon: MessageSquare, roles: ["ADMIN"] },
+  { name: "Settings", href: "/admin/settings", icon: Settings, roles: ["ADMIN"] },
 ];
 
 /**
@@ -43,6 +55,13 @@ const navigation = [
  */
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const { role } = useUserRole();
+
+  // Role-aware navigation (UI layer). Server-side API guards are the real
+  // enforcement — hiding items here is UX only.
+  const visibleNavigation = navigation.filter(
+    (item) => !role || item.roles.includes(role)
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -53,11 +72,12 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
       {/* Navigation */}
       <nav className="flex-1 space-y-1 p-4">
-        {navigation.map((item) => {
-          const isActive = pathname === item.href;
+        {visibleNavigation.map((item) => {
+          const isActive =
+            pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link
-              key={item.name}
+              key={item.href}
               href={item.href}
               onClick={onNavigate}
               className={cn(
@@ -73,6 +93,16 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           );
         })}
       </nav>
+
+      {/* Role chip (bottom, above logout) */}
+      <div className="px-4 pb-2">
+        {role && (
+          <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium text-gray-600">
+            <Wallet className="h-3 w-3 mr-1" />
+            {role === "ADMIN" ? "Admin" : "Kasir"}
+          </span>
+        )}
+      </div>
 
       {/* Logout */}
       <div className="border-t border-gray-200 p-4">

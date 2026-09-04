@@ -21,6 +21,7 @@ import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { OrderScanner } from "@/components/admin/order-scanner";
 import { CashierPayDialog } from "@/components/admin/orders/cashier-pay-dialog";
+import { ApprovalActions } from "@/components/admin/orders/approval-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -236,9 +237,16 @@ export default function AdminOrderByNumberPage({
           </div>
 
           {isPaid ? (
-            <div className="flex items-center gap-2 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5 text-sm text-green-800">
-              <CheckCircle2 className="h-4 w-4" />
-              Pesanan sudah lunas
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-green-50 border border-green-200 px-3 py-2.5">
+              <div className="flex items-center gap-2 text-sm text-green-800">
+                <CheckCircle2 className="h-4 w-4" />
+                Pesanan sudah lunas
+              </div>
+              {/* Refund / cancel with admin password — also here for direct
+                  actions without opening the orders list. */}
+              {!["COMPLETED", "CANCELLED"].includes(order.status) && (
+                <ApprovalActions order={order} compact onDone={loadOrder} />
+              )}
             </div>
           ) : cashierUnpaid ? (
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-3">

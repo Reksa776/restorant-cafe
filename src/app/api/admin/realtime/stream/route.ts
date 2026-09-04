@@ -1,4 +1,4 @@
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireRoles } from "@/lib/auth-helpers";
 import { subscribeRealtime } from "@/lib/realtime/bus";
 import type { RealtimeEvent } from "@/lib/realtime/types";
 
@@ -14,21 +14,23 @@ function encodeSse(event: RealtimeEvent): Uint8Array {
 /**
  * GET /api/admin/realtime/stream
  *
- * Server-Sent Events channel for the ADMIN dashboard.
+ * Server-Sent Events channel for the restaurant dashboard (ADMIN and
+ * CASHIER roles — the authenticated role decides which modules the sidebar
+ * exposes; the stream itself only carries light references, never payloads).
  *
  * Security:
- * - Requires an authenticated ADMIN session (401 otherwise).
+ * - Requires an authenticated ADMIN/CASHIER session (401 otherwise).
  * - The restaurantId is derived server-side from the session and used to
- *   subscribe to the event bus — this admin only ever receives events for
+ *   subscribe to the event bus — this user only ever receives events for
  *   their own restaurant. Nothing from the client is trusted.
  * - No order/customer/payment data is included in events (only light
  *   references); clients refetch authoritative data from the normal APIs.
  */
 export async function GET(request: Request) {
-  // Auth first — no stream is opened for non-admins.
+  // Auth first — no stream is opened for unauthenticated users.
   let restaurantId: string;
   try {
-    const ctx = await requireAdmin();
+    const ctx = await requireRoles(["ADMIN", "CASHIER"]);
     restaurantId = ctx.restaurantId;
   } catch {
     return new Response("Unauthorized", { status: 401 });

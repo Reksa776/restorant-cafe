@@ -3,11 +3,11 @@ import { orderService } from "@/services/order/order.service";
 import { GetOrdersSchema } from "@/services/order/order.types";
 import { successResponse, createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireRoles } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
     const { searchParams } = new URL(request.url);
     const params = Object.fromEntries(searchParams);
 
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
     const body = await request.json();
     const order = await orderService.createOrder(body, restaurantId);
 

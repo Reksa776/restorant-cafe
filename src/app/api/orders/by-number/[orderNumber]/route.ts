@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { orderService } from "@/services/order/order.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireRoles } from "@/lib/auth-helpers";
 
 /**
  * GET /api/orders/by-number/[orderNumber]
@@ -17,7 +17,7 @@ export async function GET(
   { params }: { params: Promise<{ orderNumber: string }> }
 ) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
     const { orderNumber } = await params;
 
     const order = await orderService.getOrderByNumberScoped(

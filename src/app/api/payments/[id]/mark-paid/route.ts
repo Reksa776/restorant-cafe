@@ -2,12 +2,14 @@ import { NextRequest } from "next/server";
 import { paymentService } from "@/services/payment/payment.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireRoles } from "@/lib/auth-helpers";
 
 /**
  * POST /api/payments/[id]/mark-paid
  *
- * Cashier action — complete a KASIR payment.
+ * Cashier action — complete a KASIR payment. ADMIN and CASHIER roles may
+ * collect; a CASHIER must have an open shift and the payment is linked to
+ * their drawer (see paymentService.markCashierPaymentPaid).
  *
  * Body (optional): { "amountReceived": number } — the cash handed by the
  * customer. When omitted (legacy quick-mark button) the received amount
@@ -15,8 +17,8 @@ import { requireAdmin } from "@/lib/auth-helpers";
  * rejected with a validation error before any write.
  *
  * Security (all server-authoritative):
- * - Requires an authenticated ADMIN session.
- * - The payment must belong to the admin's own restaurant (restaurantId is
+ * - Requires an authenticated session with an allowed role.
+ * - The payment must belong to the user's own restaurant (restaurantId is
  *   derived from the session — never from the client).
  * - The payment must have method = KASIR and must still be UNPAID. The
  *   status flip uses a guarded conditional update inside a transaction, so a
@@ -30,7 +32,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId, restaurantId } = await requireAdmin();
+    const { userId, restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
     const { id } = await params;
 
     // Optional cashier-form field.

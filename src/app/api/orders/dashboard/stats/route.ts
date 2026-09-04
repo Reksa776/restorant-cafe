@@ -1,11 +1,11 @@
 import { orderService } from "@/services/order/order.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireRoles } from "@/lib/auth-helpers";
 
 export async function GET() {
   try {
-    const { restaurantId } = await requireAdmin();
+    const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
     const stats = await orderService.getDashboardStats(restaurantId);
 
     return successResponse(stats);

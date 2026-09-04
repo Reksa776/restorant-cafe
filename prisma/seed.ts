@@ -46,6 +46,19 @@ async function main() {
 
   console.log(`✅ Admin user created: ${admin.email}`);
 
+  // Create cashier user (RBAC) — operational role for the cash drawer flow.
+  const cashierPassword = process.env.SEED_CASHIER_PASSWORD || "kasir123";
+  const cashier = await prisma.user.create({
+    data: {
+      restaurantId: restaurant.id,
+      name: "Kasir",
+      email: "kasir@restobahagia.com",
+      password: await bcrypt.hash(cashierPassword, 12),
+      role: "CASHIER",
+    },
+  });
+  console.log(`✅ Cashier user created: ${cashier.email}`);
+
   // Create categories
   const categories = await Promise.all([
     prisma.category.create({
@@ -167,6 +180,8 @@ async function main() {
   console.log("\n📋 Login credentials:");
   console.log("   Email: admin@restobahagia.com");
   console.log("   Password: admin123");
+  console.log("   Email: kasir@restobahagia.com");
+  console.log("   Password: kasir123");
 }
 
 main()
