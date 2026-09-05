@@ -30,7 +30,8 @@ export interface CreateProductData {
   name: string;
   description?: string;
   price: number;
-  imageUrl?: string;
+  /** null = no image / remove image; string = http(s) URL or uploaded asset */
+  imageUrl?: string | null;
   isAvailable?: boolean;
 }
 
@@ -132,6 +133,27 @@ export const menuService = {
 
   async deleteProduct(id: string): Promise<void> {
     await api.delete(`/menu/products/${id}`);
+  },
+
+  /**
+   * Upload a product image (multipart). Returns the public URL to store in
+   * Product.imageUrl. Only ADMIN sessions are authorized.
+   */
+  async uploadProductImage(file: File): Promise<{
+    url: string;
+    mime: string;
+    size: number;
+  }> {
+    const formData = new FormData();
+    formData.append("file", file);
+    // Important: the shared axios instance defaults to "Content-Type:
+    // application/json". For multipart we must NOT set a Content-Type at all
+    // so the browser adds the correct boundary itself — otherwise the server
+    // rejects the request (500: unsupported content type).
+    const response = await api.post("/admin/uploads/product-image", formData, {
+      headers: { "Content-Type": undefined },
+    });
+    return response.data.data;
   },
 
   async toggleProductAvailability(id: string): Promise<Product> {

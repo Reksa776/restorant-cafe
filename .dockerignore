@@ -1,0 +1,22 @@
+# Dependencies / build output
+node_modules
+.next
+npm-debug.log*
+
+# Git
+.git
+.gitignore
+
+# Secrets — provided at runtime via environment (docker-compose)
+.env
+.env.*
+!.env.example
+
+# Runtime data — product image uploads are LIVE DATA, never baked into an
+# image. They persist via the `product_images` volume mounted at /app/uploads.
+uploads
+public/uploads
+
+# Local artifacts
+shots
+*.tsbuildinfo

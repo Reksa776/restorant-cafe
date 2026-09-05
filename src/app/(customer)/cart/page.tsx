@@ -1,8 +1,24 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { useCart } from "@/hooks/use-cart";
 import { Plus, Minus, Trash2, ArrowLeft, Table2, Pencil } from "lucide-react";
+
+/** Cart item thumbnail with graceful fallback for empty/broken images. */
+function CartItemThumb({ url, name }: { url?: string | null; name: string }) {
+  const [broken, setBroken] = useState(false);
+  if (!url || broken) return <span className="text-xl">🍽️</span>;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={name}
+      className="w-12 h-12 rounded-lg object-cover"
+      onError={() => setBroken(true)}
+    />
+  );
+}
 
 export default function CartPage() {
   const {
@@ -75,15 +91,7 @@ export default function CartPage() {
             <div className="flex items-start gap-4">
               {/* Image */}
               <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                {item.imageUrl ? (
-                  <img
-                    src={item.imageUrl}
-                    alt={item.name}
-                    className="w-12 h-12 rounded-lg object-cover"
-                  />
-                ) : (
-                  <span className="text-xl">🍽️</span>
-                )}
+                <CartItemThumb url={item.imageUrl} name={item.name} />
               </div>
 
               {/* Info */}

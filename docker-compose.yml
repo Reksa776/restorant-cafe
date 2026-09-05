@@ -59,6 +59,9 @@ services:
       - WHATSAPP_SESSION_DIR=/app/whatsapp-session
     volumes:
       - whatsapp_data:/app/whatsapp-session
+      # Runtime product image uploads — persists across recreate/rebuild.
+      # Served by the app route /uploads/products/... (not Next public/).
+      - product_images:/app/uploads
     depends_on:
       mysql:
         condition: service_healthy
@@ -110,3 +113,4 @@ volumes:
   mysql_data:
   redis_data:
   whatsapp_data:
+  product_images:

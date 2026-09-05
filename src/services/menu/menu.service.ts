@@ -2,6 +2,44 @@ import { prisma } from "@/lib/prisma";
 import { NotFoundError, ConflictError, ValidationError } from "@/lib/errors";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
+import { normalizeProductImageUrl } from "@/lib/product-image";
+import { productImageUploadService } from "@/services/upload/product-image-upload.service";
+
+/**
+ * Validate a user-supplied image value before persisting it.
+ * - null  → cleared (image removed)
+ * - valid string → returned trimmed (http/https URL or local /uploads asset
+ *   belonging to THIS restaurant)
+ * - invalid string → ValidationError (400)
+ * Only called when the caller actually wants to SET/CHANGE the image.
+ */
+function validateProductImageValue(
+  imageUrl: string | null | undefined,
+  restaurantId: string,
+  fieldName: string = "imageUrl"
+): string | null {
+  if (imageUrl === null || imageUrl === undefined) return null;
+  const result = normalizeProductImageUrl(imageUrl);
+  if (!result.ok) {
+    throw new ValidationError(result.error.replace(/^/, `${fieldName}: `));
+  }
+
+  // Tenant isolation: an admin may only reference uploaded assets stored
+  // under their own restaurant folder. Accepting another restaurant's path
+  // would let tenant A later trigger deletion of tenant B's file (the old
+  // URL is cleaned up on replace/remove).
+  const value = result.value;
+  if (value.startsWith("/uploads/products/")) {
+    const ownPrefix = `/uploads/products/${restaurantId}/`;
+    if (!value.startsWith(ownPrefix)) {
+      throw new ValidationError(
+        `${fieldName}: uploaded asset does not belong to this restaurant`
+      );
+    }
+  }
+
+  return value;
+}
 
 export class MenuService {
   // ============================================================
@@ -190,7 +228,7 @@ export class MenuService {
       name: string;
       description?: string;
       price: number;
-      imageUrl?: string;
+      imageUrl?: string | null;
       isAvailable?: boolean;
     }
   ) {
@@ -218,11 +256,22 @@ export class MenuService {
       );
     }
 
+    // Validate imageUrl (string → http/https URL or local upload owned by
+    // this restaurant; null/absent → no image)
+    const imageUrl =
+      data.imageUrl === undefined
+        ? null
+        : validateProductImageValue(data.imageUrl, restaurantId);
+
     const product = await prisma.product.create({
       data: {
         restaurantId,
-        ...data,
+        categoryId: data.categoryId,
+        name: data.name,
+        description: data.description,
         price: data.price,
+        imageUrl,
+        isAvailable: data.isAvailable ?? true,
       },
       include: {
         category: true,
@@ -252,7 +301,7 @@ export class MenuService {
       name?: string;
       description?: string;
       price?: number;
-      imageUrl?: string;
+      imageUrl?: string | null;
       isAvailable?: boolean;
     }
   ) {
@@ -293,16 +342,42 @@ export class MenuService {
       }
     }
 
+    // imageUrl semantics:
+    //  - absent        → keep the current image (backward compatible)
+    //  - null          → remove the image
+    //  - valid string  → set/replace the image
+    const { imageUrl, ...restData } = data;
+    let nextImageUrl: string | null | undefined;
+    if (imageUrl !== undefined) {
+      nextImageUrl =
+        imageUrl === null
+          ? null
+          : validateProductImageValue(imageUrl, restaurantId);
+    }
+
     const updated = await prisma.product.update({
       where: { id },
       data: {
-        ...data,
+        ...restData,
+        ...(nextImageUrl !== undefined ? { imageUrl: nextImageUrl } : {}),
         price: data.price,
       },
       include: {
         category: true,
       },
     });
+
+    // Replace or removal → drop the previous locally stored file (best-effort,
+    // only for files under OUR upload root AND this restaurant's folder;
+    // remote URLs and other tenants' assets are never touched).
+    const ownPrefix = `/uploads/products/${restaurantId}/`;
+    if (
+      nextImageUrl !== undefined &&
+      nextImageUrl !== product.imageUrl &&
+      product.imageUrl?.startsWith(ownPrefix)
+    ) {
+      await productImageUploadService.deleteByUrl(product.imageUrl);
+    }
 
     emitRealtime(
       restaurantId,

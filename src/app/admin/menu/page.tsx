@@ -36,6 +36,11 @@ import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp }
 import { toast } from "sonner";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
+import {
+  ProductImageField,
+  productImageValueFromUrl,
+  type ProductImageValue,
+} from "@/components/admin/product-image-field";
 
 // ============================================================
 // Helpers
@@ -63,6 +68,8 @@ export default function MenuPage() {
   const [isProductDialogOpen, setIsProductDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productForm, setProductForm] = useState({ name: "", description: "", price: "", categoryId: "" });
+  // Product image: upload / URL / keep-existing / remove (see ProductImageValue)
+  const [productImage, setProductImage] = useState<ProductImageValue>({ kind: "empty" });
 
   // Customization state
   const [customizingProduct, setCustomizingProduct] = useState<ProductWithCustomization | null>(null);
@@ -176,7 +183,54 @@ export default function MenuPage() {
 
   const handleSaveProduct = async () => {
     try {
-      const data = { ...productForm, price: parseFloat(productForm.price) };
+      const price = parseFloat(productForm.price);
+      if (isNaN(price) || price < 0) {
+        toast.error("Harga produk tidak valid");
+        return;
+      }
+
+      // Resolve the image payload from the current image state:
+      //  - saved → omit imageUrl  (edit: server keeps the existing image)
+      //  - empty → null           (no image / remove existing)
+      //  - url   → trimmed URL    (server re-validates)
+      //  - file  → upload first, store the returned URL
+      const imagePayload: { imageUrl?: string | null } = {};
+      switch (productImage.kind) {
+        case "saved":
+          break;
+        case "empty":
+          imagePayload.imageUrl = null;
+          break;
+        case "url": {
+          const trimmed = productImage.url.trim();
+          if (!trimmed) {
+            toast.error("URL gambar tidak valid");
+            return;
+          }
+          imagePayload.imageUrl = trimmed;
+          break;
+        }
+        case "file": {
+          try {
+            const uploaded = await menuService.uploadProductImage(productImage.file);
+            imagePayload.imageUrl = uploaded.url;
+          } catch (err) {
+            console.error("Image upload failed:", err);
+            toast.error("Gagal mengupload gambar. Periksa tipe dan ukuran file.");
+            return;
+          }
+          break;
+        }
+      }
+
+      const data = {
+        categoryId: productForm.categoryId,
+        name: productForm.name,
+        description: productForm.description || undefined,
+        price,
+        ...imagePayload,
+      };
+
       if (editingProduct) {
         await menuService.updateProduct(editingProduct.id, data);
         toast.success("Produk berhasil diupdate");
@@ -187,6 +241,7 @@ export default function MenuPage() {
       setIsProductDialogOpen(false);
       setEditingProduct(null);
       setProductForm({ name: "", description: "", price: "", categoryId: "" });
+      setProductImage({ kind: "empty" });
       loadData();
     } catch (error) {
       console.error("Failed to save product:", error);
@@ -486,7 +541,7 @@ export default function MenuPage() {
             <Card>
               <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Produk</CardTitle>
-                <Button onClick={() => { setEditingProduct(null); setProductForm({ name: "", description: "", price: "", categoryId: categories[0]?.id || "" }); setIsProductDialogOpen(true); }}>
+                <Button onClick={() => { setEditingProduct(null); setProductForm({ name: "", description: "", price: "", categoryId: categories[0]?.id || "" }); setProductImage({ kind: "empty" }); setIsProductDialogOpen(true); }}>
                   <Plus className="h-4 w-4 mr-2" /> Tambah Produk
                 </Button>
               </CardHeader>
@@ -500,12 +555,17 @@ export default function MenuPage() {
                     {products.map((prod) => (
                       <div key={prod.id} className="flex flex-col gap-2 border-b pb-2 last:border-0 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex-1 min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <p className="font-medium">{prod.name}</p>
-                            <Badge variant="outline">{prod.category.name}</Badge>
-                            {!prod.isAvailable && <Badge variant="destructive">Tidak Tersedia</Badge>}
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <ProductThumb url={prod.imageUrl} name={prod.name} />
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="font-medium">{prod.name}</p>
+                                <Badge variant="outline">{prod.category.name}</Badge>
+                                {!prod.isAvailable && <Badge variant="destructive">Tidak Tersedia</Badge>}
+                              </div>
+                              <p className="text-sm text-gray-500">{formatPrice(Number(prod.price))}</p>
+                            </div>
                           </div>
-                          <p className="text-sm text-gray-500">{formatPrice(Number(prod.price))}</p>
                         </div>
                         <div className="flex flex-wrap shrink-0 gap-1.5 sm:gap-2">
                           <Button variant="outline" size="sm" onClick={() => handleToggleAvailability(prod.id)}>
@@ -514,7 +574,7 @@ export default function MenuPage() {
                           <Button variant="outline" size="sm" onClick={() => handleOpenCustomization(prod)}>
                             Kustomisasi
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => { setEditingProduct(prod); setProductForm({ name: prod.name, description: prod.description || "", price: prod.price.toString(), categoryId: prod.category.id }); setIsProductDialogOpen(true); }}>
+                          <Button variant="outline" size="sm" onClick={() => { setEditingProduct(prod); setProductForm({ name: prod.name, description: prod.description || "", price: prod.price.toString(), categoryId: prod.category.id }); setProductImage(productImageValueFromUrl(prod.imageUrl)); setIsProductDialogOpen(true); }}>
                             <Pencil className="h-4 w-4" />
                           </Button>
                           <Button variant="destructive" size="sm" onClick={() => handleDeleteProduct(prod.id)}>
@@ -557,7 +617,7 @@ export default function MenuPage() {
 
       {/* Product Dialog */}
       <Dialog open={isProductDialogOpen} onOpenChange={setIsProductDialogOpen}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{editingProduct ? "Edit Produk" : "Tambah Produk"}</DialogTitle>
             <DialogDescription>{editingProduct ? "Ubah informasi produk" : "Tambahkan produk baru"}</DialogDescription>
@@ -583,6 +643,10 @@ export default function MenuPage() {
                   {categories.map((cat) => (<SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>))}
                 </SelectContent>
               </Select>
+            </div>
+            {/* Product image — upload from device or external URL */}
+            <div>
+              <ProductImageField value={productImage} onChange={setProductImage} />
             </div>
           </div>
           <DialogFooter>
@@ -713,6 +777,24 @@ export default function MenuPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+// ============================================================
+// Product Thumbnail (admin product list)
+// ============================================================
+
+function ProductThumb({ url, name }: { url?: string; name: string }) {
+  const [broken, setBroken] = useState(false);
+  if (!url || broken) return null;
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={name}
+      className="h-9 w-9 shrink-0 rounded object-cover bg-gray-100"
+      onError={() => setBroken(true)}
+    />
   );
 }
 

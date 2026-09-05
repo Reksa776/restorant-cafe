@@ -41,6 +41,12 @@ COPY --from=builder /app/node_modules/.package-lock.json ./node_modules/.package
 # Create directory for WhatsApp sessions
 RUN mkdir -p /app/whatsapp-session && chown nextjs:nodejs /app/whatsapp-session
 
+# Writable runtime directory for product image uploads (mounted as a volume).
+# Deliberately NOT under public/: Next.js indexes public/ at boot, so runtime
+# files must live here and are served by the /uploads/products/... route from
+# disk on every request.
+RUN mkdir -p /app/uploads/products && chown nextjs:nodejs /app/uploads
+
 USER nextjs
 
 EXPOSE 3000

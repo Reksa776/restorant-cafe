@@ -510,6 +510,37 @@ function ProductCardSkeleton() {
 }
 
 // ============================================================
+// Product Image (with broken-image fallback)
+// ============================================================
+
+/**
+ * Renders the product image inside the card's 4:3 media area. If the URL is
+ * dead or the asset cannot be decoded, it swaps in a quiet placeholder so the
+ * browser's broken-image glyph never appears. Card layout stays identical
+ * whether or not the image loads (fixed aspect container).
+ */
+function SafeMenuImage({ url, alt }: { url: string; alt: string }) {
+  const [broken, setBroken] = useState(false);
+  if (broken) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gray-100">
+        <UtensilsCrossed className="h-6 w-6 text-gray-300" />
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={alt}
+      className="w-full h-full object-cover"
+      loading="lazy"
+      onError={() => setBroken(true)}
+    />
+  );
+}
+
+// ============================================================
 // Product Card
 // ============================================================
 
@@ -540,12 +571,7 @@ function ProductCard({
       {/* Image — only when available; 4:3, object-cover, top corners rounded */}
       {product.imageUrl && (
         <div className="relative w-full aspect-[4/3] bg-gray-100 overflow-hidden flex-shrink-0">
-          <img
-            src={product.imageUrl}
-            alt={product.name}
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
+          <SafeMenuImage url={product.imageUrl} alt={product.name} />
         </div>
       )}
 
@@ -657,6 +683,7 @@ function MenuContent() {
     restaurantId,
     setRestaurantId,
     tableContext,
+    clearTableContext,
   } = useCart();
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -669,19 +696,47 @@ function MenuContent() {
 
   const searchParams = useSearchParams();
 
+  /**
+   * Set true when a stale table context was auto-cleared so the effect below
+   * does not immediately re-run and double-load the menu.
+   */
+  const staleContextSkipRef = useRef(false);
+
   // Load menu AFTER cart hydration so the QR table context is known.
   // When ordering from a table, that table's restaurant is authoritative for
   // the menu (multi-restaurant isolation). Without a table context we fall
   // back to the first active restaurant (valid guest/takeaway mode).
+  //
+  // Recovery: if the persisted table context references a restaurant that no
+  // longer exists (deleted/inactive restaurant, or DB restored under new ids)
+  // the explicit lookup returns 404. Instead of bricking the whole menu we
+  // clear the stale dine-in context and fall back to the active restaurant.
   const loadMenu = useCallback(async (preferredRestaurantId?: string | null) => {
     setIsLoading(true);
     try {
-      const restaurantRes = preferredRestaurantId
-        ? await api.get("/public/restaurant", {
+      let restaurantData: RestaurantInfo;
+
+      if (preferredRestaurantId) {
+        try {
+          const restaurantRes = await api.get("/public/restaurant", {
             params: { id: preferredRestaurantId },
-          })
-        : await api.get("/public/restaurant");
-      const restaurantData = restaurantRes.data.data;
+          });
+          restaurantData = restaurantRes.data.data;
+        } catch (error) {
+          const status = (error as { response?: { status?: number } })?.response
+            ?.status;
+          if (status !== 404) throw error;
+          // Stale QR/table context (restaurant not found / inactive).
+          staleContextSkipRef.current = true;
+          clearTableContext();
+          const fallbackRes = await api.get("/public/restaurant");
+          restaurantData = fallbackRes.data.data;
+        }
+      } else {
+        const restaurantRes = await api.get("/public/restaurant");
+        restaurantData = restaurantRes.data.data;
+      }
+
       setRestaurant(restaurantData);
       setRestaurantId(restaurantData.id);
 
@@ -699,12 +754,18 @@ function MenuContent() {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [clearTableContext]);
 
   useEffect(() => {
     if (!isHydrated) return;
     // Defer so setState (loading flag) is not called synchronously in the effect
     const timer = setTimeout(() => {
+      // Skip the re-run triggered by clearing the stale context (already
+      // loaded via the fallback inside loadMenu).
+      if (staleContextSkipRef.current) {
+        staleContextSkipRef.current = false;
+        return;
+      }
       loadMenu(tableContext?.restaurantId ?? null);
     }, 0);
     return () => clearTimeout(timer);

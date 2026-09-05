@@ -5,3 +5,7 @@ node_modules/
 .env.production
 npm-debug.log*
 *.tsbuildinfo
+
+# Runtime product image uploads (local filesystem storage)
+uploads/
+public/uploads/
