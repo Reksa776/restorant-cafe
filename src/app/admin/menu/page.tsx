@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -50,6 +50,18 @@ function formatPrice(n: number): string {
   return `Rp${n.toLocaleString("id-ID")}`;
 }
 
+/**
+ * Extract the backend's error message from an axios error, falling back to a
+ * generic message when none is available. Keeps the real server response
+ * (e.g. the 409 "Product with this name already exists in this category")
+ * visible instead of hiding it behind a generic toast.
+ */
+function apiErrorMessage(error: unknown, fallback: string): string {
+  const msg = (error as { response?: { data?: { message?: unknown } } })
+    ?.response?.data?.message;
+  return typeof msg === "string" && msg.trim() ? msg : fallback;
+}
+
 // ============================================================
 // Main Page
 // ============================================================
@@ -70,6 +82,13 @@ export default function MenuPage() {
   const [productForm, setProductForm] = useState({ name: "", description: "", price: "", categoryId: "" });
   // Product image: upload / URL / keep-existing / remove (see ProductImageValue)
   const [productImage, setProductImage] = useState<ProductImageValue>({ kind: "empty" });
+  // In-flight guard for the product save. With the async image-upload step the
+  // save is no longer instantaneous, so without a guard a second click on
+  // Simpan fires a duplicate POST (first 201, second 409 — or a race that
+  // persists two identical products). A ref (not just state) is used so even
+  // two clicks in the same render cycle are blocked deterministically.
+  const productSaveInFlight = useRef(false);
+  const [isSavingProduct, setIsSavingProduct] = useState(false);
 
   // Customization state
   const [customizingProduct, setCustomizingProduct] = useState<ProductWithCustomization | null>(null);
@@ -182,6 +201,9 @@ export default function MenuPage() {
   // ============================================================
 
   const handleSaveProduct = async () => {
+    if (productSaveInFlight.current) return;
+    productSaveInFlight.current = true;
+    setIsSavingProduct(true);
     try {
       const price = parseFloat(productForm.price);
       if (isNaN(price) || price < 0) {
@@ -245,7 +267,10 @@ export default function MenuPage() {
       loadData();
     } catch (error) {
       console.error("Failed to save product:", error);
-      toast.error("Gagal menyimpan produk");
+      toast.error(apiErrorMessage(error, "Gagal menyimpan produk"));
+    } finally {
+      productSaveInFlight.current = false;
+      setIsSavingProduct(false);
     }
   };
 
@@ -650,8 +675,8 @@ export default function MenuPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsProductDialogOpen(false)}>Batal</Button>
-            <Button onClick={handleSaveProduct}>Simpan</Button>
+            <Button variant="outline" disabled={isSavingProduct} onClick={() => setIsProductDialogOpen(false)}>Batal</Button>
+            <Button onClick={handleSaveProduct} disabled={isSavingProduct}>Simpan</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
