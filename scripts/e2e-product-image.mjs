@@ -67,6 +67,19 @@ const VALID_PNG = validPngBytes();
 const BASE = process.env.BASE || "http://localhost:3000";
 const PREFIX = "E2E-IMG-";
 
+// Physical root backing /uploads/products/... URLs. The app stores runtime
+// uploads under PRODUCT_UPLOAD_DIR when set (local dev points it OUTSIDE the
+// `next dev` watcher, e.g. .runtime-data/uploads/products) and falls back to
+// <cwd>/uploads/products otherwise. Mirror that resolution here instead of
+// assuming the stale <cwd>/uploads location — disk-existence checks and
+// cleanup must look where the app actually wrote the files.
+const configuredUploadRoot = (process.env.PRODUCT_UPLOAD_DIR || "uploads/products").trim();
+const absUploadRoot = path.isAbsolute(configuredUploadRoot)
+  ? configuredUploadRoot
+  : path.join(process.cwd(), configuredUploadRoot);
+const toPhysicalPath = (url) =>
+  path.join(absUploadRoot, url.replace(/^\/uploads\/products\/?/, ""));
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let failures = 0;
@@ -263,7 +276,7 @@ const c1 = await createProductAs(page, {
 check("Product created with uploaded image", c1.status === 201 && c1.data?.data?.id, `status=${c1.status}`);
 const p1 = c1.data?.data?.id;
 
-const absPath1 = path.join(process.cwd(), "uploads", storedUrl.replace(/^\/uploads\/?/, ""));
+const absPath1 = toPhysicalPath(storedUrl);
 check("Uploaded file exists on disk", fs.existsSync(absPath1), absPath1);
 
 {
@@ -650,16 +663,16 @@ check("M4. Broken image URL falls back gracefully (no <img> left)", brokenAfter 
 const rows = await conn.query("SELECT id, imageUrl FROM product WHERE name LIKE 'E2E-IMG-%'");
 for (const r of rows[0]) {
   if (r.imageUrl && r.imageUrl.startsWith("/uploads/products/")) {
-    try { fs.rmSync(path.join(process.cwd(), "uploads", r.imageUrl.replace(/^\/uploads\/?/, "")), { force: true }); } catch {}
+    try { fs.rmSync(toPhysicalPath(r.imageUrl), { force: true }); } catch {}
   }
   await conn.query("DELETE FROM product WHERE id = ?", [r.id]);
 }
 // Remove any uploaded assets that were never attached to a product row.
 for (const u of createdUploadUrls) {
-  try { fs.rmSync(path.join(process.cwd(), "uploads", u.replace(/^\/uploads\/?/, "")), { force: true }); } catch {}
+  try { fs.rmSync(toPhysicalPath(u), { force: true }); } catch {}
 }
 // Drop the restaurant upload dir when we leave it empty.
-const uploadRoot = path.join(process.cwd(), "uploads", "products", rid);
+const uploadRoot = path.join(absUploadRoot, rid);
 try {
   if (fs.existsSync(uploadRoot) && fs.readdirSync(uploadRoot).length === 0) {
     fs.rmSync(uploadRoot, { recursive: true, force: true });
