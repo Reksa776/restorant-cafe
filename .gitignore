@@ -7,9 +7,6 @@ npm-debug.log*
 *.tsbuildinfo
 
 # Runtime product image uploads (local filesystem storage)
-uploads/
-public/uploads/
 
 # Runtime data kept outside the `next dev` watcher (product image uploads
 # in local development via PRODUCT_UPLOAD_DIR)
-.runtime-data/

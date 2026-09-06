@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
   // data directory — never copied into the build artifact or deleted by
   // `next build`. It must be persisted outside the image (docker volume /
   // host dir) so uploads survive rebuilds and restarts.
-  output: "standalone",
+  // output: "standalone",
 };
 
 export default nextConfig;
