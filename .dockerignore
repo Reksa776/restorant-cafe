@@ -14,8 +14,10 @@ npm-debug.log*
 
 # Runtime data — product image uploads are LIVE DATA, never baked into an
 # image. They persist via the `product_images` volume mounted at /app/uploads.
+# (.runtime-data/ is the local-dev upload root, also never in an image.)
 uploads
 public/uploads
+.runtime-data
 
 # Local artifacts
 shots

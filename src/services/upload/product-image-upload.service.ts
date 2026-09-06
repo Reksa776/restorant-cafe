@@ -13,16 +13,25 @@ import {
 // ============================================================
 // Local filesystem storage for product images.
 //
-// Files live under <cwd>/uploads/products/<restaurantId>/ — a PRIVATE
-// runtime directory, NOT <public>. Next.js production servers index the
-// public/ folder at boot, so files written there at runtime would not be
-// served until a restart. Instead the app serves these assets through the
-// route handler at `src/app/uploads/products/[restaurantId]/[filename]/route.ts`
+// Files live under PRODUCT_UPLOAD_ROOT/<restaurantId>/ — a PRIVATE runtime
+// directory, NOT <public>. Next.js production servers index the public/
+// folder at boot, so files written there at runtime would not be served
+// until a restart. Instead the app serves these assets through the route
+// handler at `src/app/uploads/products/[restaurantId]/[filename]/route.ts`
 // which maps the public URL `/uploads/products/<restaurantId>/<uuid>.<ext>`
 // to the storage file on every request.
 //
 // Runtime data must be persisted OUTSIDE the build/deploy artifact (docker
 // volume / host dir mounted at <app>/uploads), never copied into an image.
+//
+// IMPORTANT (dev mode): the default root resolves INSIDE the project tree,
+// which `next dev` (Turbopack) watches — a runtime upload there triggers a
+// FULL browser reload of every open tab. Local development should point
+// PRODUCT_UPLOAD_DIR at a path outside the watched globs, e.g.
+//   PRODUCT_UPLOAD_DIR=".runtime-data/uploads/products"
+// (gitignored; resolved against the project root). Production/Docker keeps
+// the default (<cwd>/uploads/products — a mounted volume), so behavior and
+// the public URL prefix are unchanged everywhere.
 //
 // Security invariants:
 //  - filenames are server-generated (UUID + extension from detected
@@ -34,11 +43,19 @@ import {
 //    match strict safe patterns under the upload root.
 // ============================================================
 
-export const PRODUCT_UPLOAD_ROOT = path.join(
-  process.cwd(),
-  "uploads",
-  "products"
-);
+// Resolved to an absolute path so the confinement checks below (and in the
+// serving route) can safely prefix-match even when PRODUCT_UPLOAD_DIR is a
+// relative path like ".runtime-data/uploads/products". An empty/blank value
+// falls back to the default (avoids path.resolve("") → cwd).
+function resolveProductUploadRoot(): string {
+  const configured = process.env.PRODUCT_UPLOAD_DIR?.trim();
+  if (!configured) {
+    return path.join(process.cwd(), "uploads", "products");
+  }
+  return path.resolve(configured);
+}
+
+export const PRODUCT_UPLOAD_ROOT = resolveProductUploadRoot();
 
 export const PRODUCT_UPLOAD_URL_PREFIX = "/uploads/products/";
 
