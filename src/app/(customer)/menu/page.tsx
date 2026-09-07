@@ -8,6 +8,7 @@ import { Plus, Minus, ShoppingCart, UtensilsCrossed, X } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useBranding } from "@/hooks/use-branding";
 
 // ============================================================
 // Types
@@ -59,6 +60,13 @@ interface Product {
 interface RestaurantInfo {
   id: string;
   name: string;
+  branding?: {
+    siteName: string;
+    logoUrl: string | null;
+    primaryColor: string;
+    secondaryColor: string;
+    accentColor: string;
+  };
 }
 
 interface CustomizationState {
@@ -280,7 +288,7 @@ function CustomizationModal({
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+            className="w-8 h-8 rounded-full bg-brand-secondary flex items-center justify-center hover:bg-brand-accent transition-colors"
           >
             <X className="h-4 w-4" />
           </button>
@@ -320,8 +328,8 @@ function CustomizationModal({
                       onClick={() => handleGroupSelect(group.id, option.id, isMulti, group.maxSelect)}
                       className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-colors text-sm ${
                         isOptionSelected
-                          ? "border-gray-900 bg-gray-50"
-                          : "border-gray-200 hover:border-gray-300"
+                          ? "border-brand-primary bg-brand-secondary"
+                          : "border-gray-200 hover:border-brand-accent"
                       }`}
                     >
                       <div className="flex items-center gap-2">
@@ -329,7 +337,7 @@ function CustomizationModal({
                           <div
                             className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
                               isOptionSelected
-                                ? "border-gray-900 bg-gray-900"
+                                ? "border-brand-primary bg-brand-primary"
                                 : "border-gray-300"
                             }`}
                           >
@@ -343,12 +351,12 @@ function CustomizationModal({
                           <div
                             className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
                               isOptionSelected
-                                ? "border-gray-900"
+                                ? "border-brand-primary"
                                 : "border-gray-300"
                             }`}
                           >
                             {isOptionSelected && (
-                              <div className="w-2 h-2 rounded-full bg-gray-900" />
+                              <div className="w-2 h-2 rounded-full bg-brand-primary" />
                             )}
                           </div>
                         )}
@@ -389,7 +397,7 @@ function CustomizationModal({
                           onClick={() => handleAddonToggle(addon.id)}
                           className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
                             qty > 0
-                              ? "border-gray-900 bg-gray-900"
+                              ? "border-brand-primary bg-brand-primary"
                               : "border-gray-300"
                           }`}
                         >
@@ -432,7 +440,7 @@ function CustomizationModal({
                     quantity: Math.max(1, prev.quantity - 1),
                   }))
                 }
-                className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+                className="w-10 h-10 rounded-full bg-brand-secondary flex items-center justify-center hover:bg-brand-accent transition-colors"
               >
                 <Minus className="h-4 w-4" />
               </button>
@@ -446,7 +454,7 @@ function CustomizationModal({
                     quantity: prev.quantity + 1,
                   }))
                 }
-                className="w-10 h-10 rounded-full bg-gray-900 text-white flex items-center justify-center hover:bg-black transition-colors"
+                className="w-10 h-10 rounded-full bg-brand-primary text-brand-primary-foreground flex items-center justify-center hover:bg-brand-primary/90 transition-colors"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -466,7 +474,7 @@ function CustomizationModal({
               }
               placeholder="Contoh: Es batu sedikit, tanpa sambal..."
               rows={2}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent resize-none"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent resize-none"
             />
           </div>
         </div>
@@ -476,7 +484,7 @@ function CustomizationModal({
           <button
             onClick={handleAdd}
             disabled={!is_valid}
-            className="w-full bg-gray-900 text-white py-3 rounded-xl font-medium hover:bg-black transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full bg-brand-primary text-brand-primary-foreground py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             <span>Tambah ke Keranjang</span>
             <span className="font-bold">
@@ -598,7 +606,7 @@ function ProductCard({
                 <button
                   onClick={onCustomize}
                   aria-label={`Pilih ${product.name}`}
-                  className={`${cardActionBase} w-full min-h-10 bg-gray-100 text-gray-900 hover:bg-gray-200 text-xs sm:text-sm px-3`}
+                  className={`${cardActionBase} w-full min-h-10 bg-brand-secondary text-brand-secondary-foreground hover:bg-brand-accent text-xs sm:text-sm px-3`}
                 >
                   Pilih Produk
                 </button>
@@ -606,7 +614,7 @@ function ProductCard({
                 <button
                   onClick={onAdd}
                   aria-label={`Tambah ${product.name} ke keranjang`}
-                  className={`${cardActionBase} w-full min-h-10 bg-gray-900 text-white hover:bg-gray-800 text-xs sm:text-sm px-3`}
+                  className={`${cardActionBase} w-full min-h-10 bg-brand-primary text-brand-primary-foreground hover:bg-brand-primary/90 text-xs sm:text-sm px-3`}
                 >
                   + Tambah
                 </button>
@@ -615,14 +623,14 @@ function ProductCard({
               <div className="flex items-center gap-2">
                 <button
                   onClick={onEdit}
-                  className={`${cardActionBase} flex-1 min-w-0 min-h-10 bg-gray-100 text-gray-900 hover:bg-gray-200 text-xs sm:text-sm px-3`}
+                  className={`${cardActionBase} flex-1 min-w-0 min-h-10 bg-brand-secondary text-brand-secondary-foreground hover:bg-brand-accent text-xs sm:text-sm px-3`}
                 >
                   Ubah
                 </button>
-                <div className="flex items-center bg-gray-900 rounded-lg overflow-hidden flex-shrink-0 h-10">
+                <div className="flex items-center bg-brand-primary rounded-lg overflow-hidden flex-shrink-0 h-10">
                   <button
                     onClick={onDecrease}
-                    className="w-9 h-full flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
+                    className="w-9 h-full flex items-center justify-center text-brand-primary-foreground hover:bg-brand-primary/90 transition-colors active:scale-95"
                     aria-label={`Kurangi ${product.name}`}
                   >
                     <Minus className="h-4 w-4" />
@@ -632,7 +640,7 @@ function ProductCard({
                   </span>
                   <button
                     onClick={onIncrease}
-                    className="w-9 h-full flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
+                    className="w-9 h-full flex items-center justify-center text-brand-primary-foreground hover:bg-brand-primary/90 transition-colors active:scale-95"
                     aria-label={`Tambah ${product.name}`}
                   >
                     <Plus className="h-4 w-4" />
@@ -640,10 +648,10 @@ function ProductCard({
                 </div>
               </div>
             ) : (
-              <div className="flex items-center bg-gray-900 rounded-lg overflow-hidden h-10">
+              <div className="flex items-center bg-brand-primary rounded-lg overflow-hidden h-10">
                 <button
                   onClick={onDecrease}
-                  className="flex-1 h-full flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
+                  className="flex-1 h-full flex items-center justify-center text-brand-primary-foreground hover:bg-brand-primary/90 transition-colors active:scale-95"
                   aria-label={`Kurangi ${product.name}`}
                 >
                   <Minus className="h-4 w-4" />
@@ -653,7 +661,7 @@ function ProductCard({
                 </span>
                 <button
                   onClick={onIncrease}
-                  className="flex-1 h-full flex items-center justify-center text-white hover:bg-gray-800 transition-colors active:scale-95"
+                  className="flex-1 h-full flex items-center justify-center text-brand-primary-foreground hover:bg-brand-primary/90 transition-colors active:scale-95"
                   aria-label={`Tambah ${product.name}`}
                 >
                   <Plus className="h-4 w-4" />
@@ -685,6 +693,7 @@ function MenuContent() {
     tableContext,
     clearTableContext,
   } = useCart();
+  const { applyBranding } = useBranding();
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [restaurant, setRestaurant] = useState<RestaurantInfo | null>(null);
@@ -739,6 +748,19 @@ function MenuContent() {
 
       setRestaurant(restaurantData);
       setRestaurantId(restaurantData.id);
+
+      // Apply this restaurant's website branding (theme, logo, site name).
+      // Client-side only — the server already validated all values.
+      const branding = restaurantData.branding;
+      if (branding) {
+        applyBranding({
+          siteName: branding.siteName,
+          logoUrl: branding.logoUrl,
+          primaryColor: branding.primaryColor,
+          secondaryColor: branding.secondaryColor,
+          accentColor: branding.accentColor,
+        });
+      }
 
       const menuRes = await api.get("/public/menu", {
         params: { restaurantId: restaurantData.id },
@@ -1052,11 +1074,23 @@ function MenuContent() {
 
   return (
     <div>
-      {/* Restaurant Header */}
+      {/* Restaurant Header — website branding (logo + site name) */}
       {restaurant && (
         <div className="text-center pt-2 pb-3 sm:pb-4">
-          <h1 className="text-xl sm:text-2xl font-bold text-gray-900">
-            {restaurant.name}
+          {restaurant.branding?.logoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={restaurant.branding.logoUrl}
+              alt={restaurant.branding.siteName || restaurant.name}
+              className="mx-auto h-12 w-12 object-contain mb-2"
+              onError={(e) => {
+                // Hide broken logos instead of showing the broken-image icon.
+                e.currentTarget.style.display = "none";
+              }}
+            />
+          )}
+          <h1 className="text-xl sm:text-2xl font-bold text-brand-primary">
+            {restaurant.branding?.siteName || restaurant.name}
           </h1>
           <p className="text-xs text-gray-400 mt-1">
             Pesan langsung dari website
@@ -1107,7 +1141,7 @@ function MenuContent() {
       {/* Floating Cart Bar */}
       {totalCartItems > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-50 pb-[env(safe-area-inset-bottom)]">
-          <div className="bg-gray-900 text-white px-4 py-3">
+          <div className="bg-brand-primary text-brand-primary-foreground px-4 py-3">
             <div className="max-w-4xl mx-auto flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="relative">

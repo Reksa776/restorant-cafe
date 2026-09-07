@@ -382,7 +382,7 @@ export default function OrderTrackingPage({
         <p className="text-gray-500 text-lg">Pesanan tidak ditemukan</p>
         <Link
           href="/menu"
-          className="bg-black text-white px-6 py-2 rounded-lg font-medium hover:bg-gray-800 transition-colors"
+          className="bg-brand-primary text-brand-primary-foreground px-6 py-2 rounded-lg font-medium hover:bg-brand-primary/90 transition-colors"
         >
           Kembali ke Menu
         </Link>
@@ -493,7 +493,7 @@ export default function OrderTrackingPage({
             <button
               onClick={handlePayNow}
               disabled={isPaying}
-              className="bg-gray-900 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-black transition-colors disabled:opacity-50 flex items-center gap-1"
+              className="bg-brand-primary text-brand-primary-foreground text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-brand-primary/90 transition-colors disabled:opacity-50 flex items-center gap-1"
             >
               {isPaying ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -504,7 +504,7 @@ export default function OrderTrackingPage({
           {isPaymentPending && isDineIn && (
             <button
               onClick={() => router.push(`/payment/${order.orderNumber}`)}
-              className="bg-gray-900 text-white text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-black transition-colors flex items-center gap-1"
+              className="bg-brand-primary text-brand-primary-foreground text-xs font-medium px-3 py-1.5 rounded-lg hover:bg-brand-primary/90 transition-colors flex items-center gap-1"
             >
               Bayar Sekarang
             </button>
@@ -552,7 +552,7 @@ export default function OrderTrackingPage({
             <button
               onClick={() => handleCreatePayment("QRIS")}
               disabled={isPaying}
-              className="flex-1 bg-gray-900 text-white text-xs font-medium px-3 py-2 rounded-lg hover:bg-black transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+              className="flex-1 bg-brand-primary text-brand-primary-foreground text-xs font-medium px-3 py-2 rounded-lg hover:bg-brand-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
             >
               {isPaying ? (
                 <Loader2 className="h-3 w-3 animate-spin" />

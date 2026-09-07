@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { resolveBranding } from "@/services/branding/branding.service";
 
 /**
  * GET /api/public/tables/lookup?number={tableNumber}
@@ -49,6 +50,15 @@ export async function GET(request: NextRequest) {
           select: {
             id: true,
             name: true,
+            settings: {
+              select: {
+                siteName: true,
+                logoUrl: true,
+                primaryColor: true,
+                secondaryColor: true,
+                accentColor: true,
+              },
+            },
           },
         },
       },
@@ -76,6 +86,12 @@ export async function GET(request: NextRequest) {
       restaurant: {
         id: table.restaurant.id,
         name: table.restaurant.name,
+        // Website branding (safe defaults) so the QR landing page can apply
+        // the tenant's theme before navigating to the menu.
+        branding: resolveBranding(
+          table.restaurant.name,
+          table.restaurant.settings
+        ),
       },
     });
   } catch (error) {

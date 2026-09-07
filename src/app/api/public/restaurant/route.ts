@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { resolveBranding } from "@/services/branding/branding.service";
 
 /**
  * GET /api/public/restaurant
@@ -20,30 +21,35 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
+    const baseSelect = {
+      id: true,
+      name: true,
+      address: true,
+      phone: true,
+      email: true,
+      settings: {
+        select: {
+          siteName: true,
+          logoUrl: true,
+          primaryColor: true,
+          secondaryColor: true,
+          accentColor: true,
+        },
+      },
+    } as const;
+
     let restaurant;
 
     if (id) {
       restaurant = await prisma.restaurant.findFirst({
         where: { id, isActive: true },
-        select: {
-          id: true,
-          name: true,
-          address: true,
-          phone: true,
-          email: true,
-        },
+        select: baseSelect,
       });
     } else {
       // Return first active restaurant
       restaurant = await prisma.restaurant.findFirst({
         where: { isActive: true },
-        select: {
-          id: true,
-          name: true,
-          address: true,
-          phone: true,
-          email: true,
-        },
+        select: baseSelect,
       });
     }
 
@@ -51,7 +57,13 @@ export async function GET(request: NextRequest) {
       throw new AppError("Restaurant not found", 404, "NOT_FOUND");
     }
 
-    return successResponse(restaurant);
+    const { settings, ...restaurantInfo } = restaurant;
+    return successResponse({
+      ...restaurantInfo,
+      // Website branding with safe defaults — never exposes internal
+      // settings rows or admin config.
+      branding: resolveBranding(restaurant.name, settings),
+    });
   } catch (error) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.code, error.statusCode);

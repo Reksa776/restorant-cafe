@@ -6,6 +6,7 @@ import { Loader2, Users, ArrowRight, AlertCircle, Table2 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { useCart } from "@/hooks/use-cart";
+import { useBranding } from "@/hooks/use-branding";
 
 // ============================================================
 // Types
@@ -20,6 +21,13 @@ interface TableInfo {
   restaurant: {
     id: string;
     name: string;
+    branding?: {
+      siteName: string;
+      logoUrl: string | null;
+      primaryColor: string;
+      secondaryColor: string;
+      accentColor: string;
+    };
   };
 }
 
@@ -34,6 +42,7 @@ export default function TableLandingPage({
 }) {
   const router = useRouter();
   const { setTableContext } = useCart();
+  const { applyBranding } = useBranding();
   const [tableInfo, setTableInfo] = useState<TableInfo | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +58,19 @@ export default function TableLandingPage({
       const { tableNumber } = await params;
       const res = await api.get(`/public/tables/lookup?number=${tableNumber}`);
       setTableInfo(res.data.data);
+
+      // Apply the tenant's website branding so the landing page (and the
+      // menu we navigate to) already uses the right theme.
+      const branding = res.data.data?.restaurant?.branding;
+      if (branding) {
+        applyBranding({
+          siteName: branding.siteName,
+          logoUrl: branding.logoUrl,
+          primaryColor: branding.primaryColor,
+          secondaryColor: branding.secondaryColor,
+          accentColor: branding.accentColor,
+        });
+      }
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Meja tidak ditemukan";
@@ -117,7 +139,7 @@ export default function TableLandingPage({
         </p>
         <button
           onClick={() => router.push("/menu")}
-          className="bg-gray-900 text-white px-6 py-2 rounded-lg font-medium hover:bg-black transition-colors"
+          className="bg-brand-primary text-brand-primary-foreground px-6 py-2 rounded-lg font-medium hover:bg-brand-primary/90 transition-colors"
         >
           Lihat Menu
         </button>
@@ -131,13 +153,27 @@ export default function TableLandingPage({
 
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6 px-4">
-      {/* Welcome */}
+      {/* Welcome — website branding (logo + site name) */}
       <div className="text-center space-y-2">
-        <p className="text-sm text-gray-400">{tableInfo.restaurant.name}</p>
-        <h1 className="text-3xl font-bold text-gray-900">
+        {tableInfo.restaurant.branding?.logoUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={tableInfo.restaurant.branding.logoUrl}
+            alt={tableInfo.restaurant.branding.siteName || tableInfo.restaurant.name}
+            className="mx-auto h-14 w-14 object-contain"
+            onError={(e) => {
+              // Hide broken logos instead of showing the broken-image icon.
+              e.currentTarget.style.display = "none";
+            }}
+          />
+        )}
+        <p className="text-sm text-gray-400">
+          {tableInfo.restaurant.branding?.siteName || tableInfo.restaurant.name}
+        </p>
+        <h1 className="text-3xl font-bold text-brand-primary">
           Selamat Datang
         </h1>
-        <span className="inline-flex items-center gap-1.5 bg-gray-900 text-white text-sm font-semibold px-3.5 py-1.5 rounded-full">
+        <span className="inline-flex items-center gap-1.5 bg-brand-primary text-brand-primary-foreground text-sm font-semibold px-3.5 py-1.5 rounded-full">
           <Table2 className="h-4 w-4" />
           Meja {tableInfo.tableNumber}
         </span>
@@ -160,7 +196,7 @@ export default function TableLandingPage({
               const current = parseInt(visitorCount, 10) || 1;
               if (current > 1) setVisitorCount(String(current - 1));
             }}
-            className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors text-xl font-bold"
+            className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center hover:bg-brand-accent transition-colors text-xl font-bold"
           >
             -
           </button>
@@ -175,14 +211,14 @@ export default function TableLandingPage({
                 setVisitorCount(val);
               }
             }}
-            className="w-20 text-center text-2xl font-bold border-b-2 border-gray-900 focus:outline-none focus:border-black bg-transparent py-2 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+            className="w-20 text-center text-2xl font-bold border-b-2 border-brand-primary focus:outline-none focus:border-brand-primary bg-transparent py-2 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
           />
           <button
             onClick={() => {
               const current = parseInt(visitorCount, 10) || 1;
               if (current < 100) setVisitorCount(String(current + 1));
             }}
-            className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors text-xl font-bold"
+            className="w-12 h-12 rounded-full bg-brand-secondary flex items-center justify-center hover:bg-brand-accent transition-colors text-xl font-bold"
           >
             +
           </button>
@@ -197,7 +233,7 @@ export default function TableLandingPage({
       <button
         onClick={handleContinue}
         disabled={isContinuing}
-        className="w-full max-w-xs bg-gray-900 text-white py-3 rounded-xl font-medium hover:bg-black transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+        className="w-full max-w-xs bg-brand-primary text-brand-primary-foreground py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
       >
         {isContinuing ? (
           <Loader2 className="h-5 w-5 animate-spin" />

@@ -283,7 +283,7 @@ export default function PaymentPage({
         </p>
         <Link
           href="/menu"
-          className="bg-black text-white px-6 py-2.5 rounded-xl font-medium hover:bg-gray-800 transition-colors"
+          className="bg-brand-primary text-brand-primary-foreground px-6 py-2.5 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors"
         >
           Kembali ke Menu
         </Link>
@@ -299,7 +299,7 @@ export default function PaymentPage({
         </p>
         <button
           onClick={loadPayment}
-          className="flex items-center gap-2 bg-black text-white px-6 py-2.5 rounded-xl font-medium hover:bg-gray-800 transition-colors"
+          className="flex items-center gap-2 bg-brand-primary text-brand-primary-foreground px-6 py-2.5 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors"
         >
           <RefreshCw className="h-4 w-4" />
           Coba Lagi
@@ -328,7 +328,7 @@ export default function PaymentPage({
         </p>
         <Link
           href={`/order/${displayOrderNumber}`}
-          className="bg-black text-white px-6 py-2.5 rounded-xl font-medium hover:bg-gray-800 transition-colors"
+          className="bg-brand-primary text-brand-primary-foreground px-6 py-2.5 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors"
         >
           Lihat Pesanan
         </Link>
@@ -379,7 +379,7 @@ export default function PaymentPage({
             <div className="flex flex-col gap-2.5 pt-1">
               <Link
                 href={`/order/${displayOrderNumber}`}
-                className="flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors"
+                className="flex items-center justify-center gap-2 bg-brand-primary text-brand-primary-foreground py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors"
               >
                 Lihat Status Pesanan
               </Link>
@@ -431,7 +431,7 @@ export default function PaymentPage({
               <button
                 onClick={regenerateQr}
                 disabled={actionBusy !== "idle"}
-                className="flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors disabled:opacity-50"
+                className="flex items-center justify-center gap-2 bg-brand-primary text-brand-primary-foreground py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors disabled:opacity-50"
               >
                 {actionBusy === "regenerate" ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -498,7 +498,7 @@ export default function PaymentPage({
           <div className="flex flex-col gap-2.5 pt-1">
             <Link
               href={`/order/${displayOrderNumber}`}
-              className="flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors"
+              className="flex items-center justify-center gap-2 bg-brand-primary text-brand-primary-foreground py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors"
             >
               Lihat Status Pesanan
             </Link>
@@ -570,7 +570,7 @@ export default function PaymentPage({
         <div className="flex flex-col gap-2.5">
           <Link
             href={`/order/${displayOrderNumber}`}
-            className="flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors"
+            className="flex items-center justify-center gap-2 bg-brand-primary text-brand-primary-foreground py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors"
           >
             Lihat Status Pesanan
           </Link>

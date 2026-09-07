@@ -266,7 +266,7 @@ export default function CheckoutPage() {
         <p className="text-gray-500 text-lg">Keranjang kosong</p>
         <Link
           href="/menu"
-          className="bg-black text-white px-6 py-2 rounded-lg font-medium hover:bg-gray-800 transition-colors"
+          className="bg-brand-primary text-brand-primary-foreground px-6 py-2 rounded-lg font-medium hover:bg-brand-primary/90 transition-colors"
         >
           Lihat Menu
         </Link>
@@ -320,7 +320,7 @@ export default function CheckoutPage() {
               value={customerName}
               onChange={(e) => setCustomerName(e.target.value)}
               placeholder="Masukkan nama Anda"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
               required
             />
           </div>
@@ -337,7 +337,7 @@ export default function CheckoutPage() {
                 value={customerPhone}
                 onChange={(e) => setCustomerPhone(e.target.value)}
                 placeholder="081234567890"
-                className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+                className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
               />
             </div>
             <p className="text-xs text-gray-400 mt-1">
@@ -384,7 +384,7 @@ export default function CheckoutPage() {
                 <select
                   value={tableId}
                   onChange={(e) => setTableId(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
                   required
                 >
                   <option value="">Pilih meja...</option>
@@ -407,7 +407,7 @@ export default function CheckoutPage() {
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Contoh: Tanpa sambal, extra pedas, dll."
             rows={3}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-black focus:border-transparent resize-none"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent resize-none"
           />
         </div>
 
@@ -508,23 +508,23 @@ export default function CheckoutPage() {
                   aria-pressed={isSelected}
                   className={`flex items-center gap-3 p-3.5 rounded-xl border-2 text-left transition-colors ${
                     isSelected
-                      ? "border-gray-900 bg-gray-50"
-                      : "border-gray-200 hover:border-gray-300"
+                      ? "border-brand-primary bg-brand-secondary"
+                      : "border-gray-200 hover:border-brand-accent"
                   }`}
                 >
                   {/* Radio dot */}
                   <span
                     className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                      isSelected ? "border-gray-900" : "border-gray-300"
+                      isSelected ? "border-brand-primary" : "border-gray-300"
                     }`}
                   >
                     {isSelected && (
-                      <span className="w-2 h-2 rounded-full bg-gray-900" />
+                      <span className="w-2 h-2 rounded-full bg-brand-primary" />
                     )}
                   </span>
                   <Icon
                     className={`h-5 w-5 flex-shrink-0 ${
-                      isSelected ? "text-gray-900" : "text-gray-400"
+                      isSelected ? "text-brand-primary" : "text-gray-400"
                     }`}
                   />
                   <span className="min-w-0">
@@ -561,7 +561,7 @@ export default function CheckoutPage() {
       <button
         type="submit"
         disabled={isSubmitting}
-        className="w-full bg-black text-white py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        className="w-full bg-brand-primary text-brand-primary-foreground py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
       >
         {isSubmitting ? (
           <>

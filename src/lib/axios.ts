@@ -4,10 +4,11 @@ import { signOut } from "next-auth/react";
 const api = axios.create({
   baseURL: "/api",
   timeout: 30000,
-  headers: {
-    "Content-Type": "application/json",
-  },
 });
+
+// Remove the default Content-Type header so the browser can set it
+// appropriately for different request types (JSON, FormData, etc.)
+delete api.defaults.headers.common["Content-Type"];
 
 // ============================================================
 // Stale-session recovery (401 redirect-loop guard)
@@ -96,7 +97,14 @@ function recoverFromUnauthorized(): void {
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
-    // Add any auth headers if needed
+    // For FormData requests, let the browser set the Content-Type
+    // (multipart/form-data with boundary). For JSON requests, set
+    // application/json if not already set.
+    if (!(config.data instanceof FormData)) {
+      if (!config.headers.has("Content-Type")) {
+        config.headers.set("Content-Type", "application/json");
+      }
+    }
     return config;
   },
   (error) => {

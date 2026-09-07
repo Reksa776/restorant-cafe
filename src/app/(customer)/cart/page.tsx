@@ -40,7 +40,7 @@ export default function CartPage() {
         <p className="text-gray-500 text-lg">Keranjang kosong</p>
         <Link
           href="/menu"
-          className="bg-black text-white px-6 py-2 rounded-lg font-medium hover:bg-gray-800 transition-colors"
+          className="bg-brand-primary text-brand-primary-foreground px-6 py-2 rounded-lg font-medium hover:bg-brand-primary/90 transition-colors"
         >
           Lihat Menu
         </Link>
@@ -53,7 +53,7 @@ export default function CartPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <Link href="/menu" className="text-gray-500 hover:text-black">
+          <Link href="/menu" className="text-gray-500 hover:text-brand-primary">
             <ArrowLeft className="h-5 w-5" />
           </Link>
           <h1 className="text-2xl font-bold">Keranjang</h1>
@@ -145,7 +145,7 @@ export default function CartPage() {
               <div className="flex items-center gap-1">
                 <button
                   onClick={() => updateQuantity(index, item.quantity - 1)}
-                  className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center hover:bg-gray-200 transition-colors"
+                  className="w-7 h-7 rounded-full bg-brand-secondary flex items-center justify-center hover:bg-brand-accent transition-colors"
                 >
                   <Minus className="h-3.5 w-3.5" />
                 </button>
@@ -154,7 +154,7 @@ export default function CartPage() {
                 </span>
                 <button
                   onClick={() => updateQuantity(index, item.quantity + 1)}
-                  className="w-7 h-7 rounded-full bg-black text-white flex items-center justify-center hover:bg-gray-800 transition-colors"
+                  className="w-7 h-7 rounded-full bg-brand-primary text-brand-primary-foreground flex items-center justify-center hover:bg-brand-primary/90 transition-colors"
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
@@ -218,7 +218,7 @@ export default function CartPage() {
       {/* Checkout Button */}
       <Link
         href="/checkout"
-        className="block w-full bg-black text-white text-center py-3 rounded-xl font-medium hover:bg-gray-800 transition-colors"
+        className="block w-full bg-brand-primary text-brand-primary-foreground text-center py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors"
       >
         Checkout
       </Link>

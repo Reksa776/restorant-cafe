@@ -36,6 +36,9 @@ Copy `.env.example` to `.env` and fill in the values (never commit `.env`):
 - `PRODUCT_UPLOAD_DIR` — physical root for product images; defaults to
   `<project>/uploads/products`. In local dev point it outside the watcher,
   e.g. `.runtime-data/uploads/products`
+- `BRANDING_UPLOAD_DIR` — physical root for restaurant logo uploads;
+  defaults to `<project>/uploads/branding` (same rules as
+  `PRODUCT_UPLOAD_DIR`)
 - `SEED_CASHIER_PASSWORD` — optional seed-only cashier password
 
 ## Development
@@ -76,6 +79,27 @@ environment that is not a throwaway local database.
 - The storage directory (`PRODUCT_UPLOAD_DIR`, default `uploads/products`)
   is LIVE DATA: it must be persisted (volume / host dir) across rebuilds and
   restarts, and is git-ignored.
+
+## Website branding (Admin Settings)
+
+Each restaurant can customize its customer-facing website branding from
+Admin → Settings → **Website Branding**:
+
+- **Website name** — overrides `Restaurant.name` on the customer site
+  (falls back to the restaurant name when empty).
+- **Logo** — PNG/JPEG/WebP, max 2 MB, magic-byte validated, stored under
+  `<BRANDING_UPLOAD_DIR>/<restaurantId>/` and served by
+  `/uploads/branding/[restaurantId]/[filename]`. Replacing/removing a logo
+  deletes the old physical file (path-guarded, tenant-confined).
+- **Colors** — strict `#RRGGBB` hex only (validated client- and server-side;
+  arbitrary CSS is never applied). Foreground contrast is computed
+  automatically so custom themes stay readable.
+- Persisted in the `RestaurantSettings` table (one row per restaurant,
+  additive migration `20260908_add_restaurant_branding`).
+- The customer site (menu header, QR table page, buttons) reads branding
+  from `GET /api/public/restaurant` — no extra requests, no stale caching.
+
+## WhatsApp worker
 
 ## WhatsApp worker
 

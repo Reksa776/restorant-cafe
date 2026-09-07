@@ -67,7 +67,7 @@ function CallbackContent() {
         {ref && (
           <Link
             href={`/order/${ref}`}
-            className="flex items-center justify-center gap-2 bg-gray-900 text-white py-3 rounded-xl font-medium hover:bg-black transition-colors"
+            className="flex items-center justify-center gap-2 bg-brand-primary text-brand-primary-foreground py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors"
           >
             Lihat Status Pesanan
             <ArrowRight className="h-4 w-4" />

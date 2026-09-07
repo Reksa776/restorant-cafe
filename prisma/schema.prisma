@@ -129,8 +129,33 @@ model Restaurant {
   refunds      Refund[]
   cancellations CancellationRequest[]
   auditLogs    AuditLog[]
+  settings     RestaurantSettings?
 
   @@map("restaurant")
+}
+
+// One branding configuration per restaurant (unique restaurantId). All
+// fields nullable: when unset, the app falls back to Restaurant.name and the
+// default theme colors, so existing restaurants keep working untouched.
+model RestaurantSettings {
+  id             String   @id @default(cuid())
+  restaurantId   String   @unique
+  // Website/brand display name; null → Restaurant.name
+  siteName       String?
+  // Locally managed upload: /uploads/branding/<restaurantId>/<uuid>.<ext>
+  logoUrl        String?
+  // Validated #RRGGBB hex values; null → default theme colors
+  primaryColor   String?
+  secondaryColor String?
+  accentColor    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+
+  @@index([restaurantId])
+
+  @@map("restaurantsettings")
 }
 
 model CashierShift {
