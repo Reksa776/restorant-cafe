@@ -153,6 +153,95 @@ The route now validates and forwards the `method` body field on the
 
 ---
 
+# CRITICAL BUG — DESKTOP QR SCANNER
+
+## Symptom
+
+The customer order QR reads fine with a normal phone scanner (shows the
+Order ID), but the in-app Kasir scanner (Mac browser `order-scanner.tsx`, and
+another laptop) never detects it — camera preview runs but the scanner appears
+frozen and never forwards an order number. A phone did not solve-scope: the
+phone reads the SAME QR payload and displays the exact order number.
+
+## Root Cause
+
+**The scanner's validation regex does not match the real order-number format.**
+
+`generateOrderNumber()` (`src/services/order/order.service.ts:36-48`) emits
+`ORD-YYYYMMDD-XXXXXX` where `XXXXXX` is a **base-36** suffix (uppercase
+`A-Z0-9`, e.g. `ORD-20260907-1S6M6J`). The scanner's success check was:
+
+```
+/^ORD-\d{8}-\d{4,}$/
+```
+
+That is, the `6`-char suffix was required to be **digits-only**. Because the
+suffix is base-36, only ~0.046% of order numbers ((10/36)^6) are all-digits;
+the remaining ~99.95% (any letter present) were silently classified as
+"invalid QR — keep scanning", so the scan callback never fired and `onScan`
+was never called.
+
+This exactly explains the symptom: the phone scanner decodes the raw text
+payload (no validation) and shows the order number; the app scanner decodes
+the same valid payload but REJECTS it client-side before the lookup.
+
+Empirically reproduced from the actual generator (20/20 random order numbers
+failed the old regex; the fixed regex accepts 10000/10000 = 100%).
+
+## Fix
+
+`src/components/admin/order-scanner.tsx` — success regex changed from
+`/^ORD-\d{8}-\d{4,}$/` to `/^ORD-\d{8}-[A-Z0-9]{6}$/`, matching the real
+generator output exactly. The decoded payload is the plain order number
+(no URL/JSON wrapper — verified at the two generation sites,
+`order/[orderNumber]/page.tsx:532` and `payment/[orderNumber]/page.tsx:559`),
+so no extractor is needed and the QR generator is unchanged.
+
+While fixing, two pre-existing React 19 lint violations in the same file were
+also corrected (ref write during render; `setStatus("starting")` inside the
+effect body moved into the async continuation).
+
+## Browser Compatibility
+
+Tested via the exact production code path (regex over `html5-qrcode` decoded
+text):
+
+- Deterministic unit check: old regex rejected 20/20 generated order numbers;
+  new regex accepts all 10000 generated samples.
+- Camera path (`getUserMedia` via `html5-qrcode` v2.3.8, `facingMode:
+  "environment"` as an IDEAL constraint) is unchanged. On desktop browsers
+  ideal facingMode is ignored and the default webcam is used; the native
+  `BarcodeDetector` API is NOT used — `html5-qrcode` bundles ZXing-JS as the
+  decoder, so Safari/Chrome/Firefox all share the same PNG-jsQR code path.
+- Runtime browser verification was not possible in this environment (no
+  camera); it MUST be repeated on the physical Mac/laptop per the matrix
+  below. The logic-level bug is fully reproduced and fixed.
+
+## Test Results
+
+| Scenario | Result | Notes |
+|----------|--------|-------|
+| Generator ↔ scanner regex, 20 random orders | ❌→✅ | Old regex FAILED 20/20; new regex accepts all |
+| Generator ↔ scanner regex, 10,000 random orders | ✅ | 100% accepted |
+| `npx tsc --noEmit` | ✅ | Zero type errors |
+| `npx eslint src/components/admin/order-scanner.tsx ...` | ✅ | 0 errors (1 pre-existing img warning elsewhere) |
+| `npm run build` | ✅ | Exit 0 |
+| Phone camera scan of customer QR | ✅ (user) | Same QR read fine by phone scanner |
+| Mac / laptop app scanner (actual camera) | ⚠ **Re-verify** | Fix deployed; needs physical browser test |
+
+## Remaining Issues
+
+1. The physical camera round-trip (Mac Chrome, Mac Safari, laptop Chrome,
+   laptop Firefox) must be re-run against the fix — this environment has no
+   camera to execute it. The logic defect is fixed, but the browser matrix is
+   still pending.
+2. `facingMode: "environment"` remains an ideal (not exact) constraint; if a
+   desktop shows a black/empty preview on some browser the next step is
+   explicit camera enumeration (`EnumerateDevices`) with a selector — not
+   needed for the reported symptom.
+
+---
+
 ## Blockers
 
 None. All build and lint gates pass.
@@ -176,4 +265,13 @@ None. All build and lint gates pass.
 
 ## Final Status
 
-**READY FOR TESTING** — all code changes compile and lint cleanly. The DINE_IN guard removal on the server is verified via code review; the frontend type error, cast, and runtime bug are fixed. Manual runtime testing across the order-type × payment-method matrix is required before production deployment.
+**READY FOR TESTING** — all code changes compile and lint cleanly. The DINE_IN
+guard removal on the server is verified via code review; the frontend type
+error, cast, and runtime bug are fixed. The desktop scanner CRITICAL BUG is
+also fixed (regex now matches the real base-36 order-number format) with clean
+tsc, eslint, and build. Remaining manual runtime verification required:
+
+1. Scanner physical test matrix (Mac Chrome / Mac Safari / laptop Chrome /
+   laptop Firefox) against a real camera.
+2. Order-type × payment-method matrix (DINE_IN / TAKEAWAY / DELIVERY ×
+   KASIR cash / QRIS).

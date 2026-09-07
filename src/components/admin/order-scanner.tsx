@@ -37,8 +37,20 @@ export function OrderScanner({
   const [error, setError] = useState<string | null>(null);
   const scannerRef = useRef<{ stop: () => Promise<void>; clear: () => void } | null>(null);
   const onScanRef = useRef(onScan);
-  onScanRef.current = onScan;
   const cancelledRef = useRef(false);
+
+  // Keep the latest onScan without writing a ref during render.
+  useEffect(() => {
+    onScanRef.current = onScan;
+  }, [onScan]);
+
+  const handleOpenChange = (next: boolean) => {
+    if (!next) {
+      setStatus("idle");
+      setError(null);
+    }
+    setOpen(next);
+  };
 
   const stopCamera = useCallback(async () => {
     const scanner = scannerRef.current;
@@ -59,17 +71,17 @@ export function OrderScanner({
 
   // Start / stop the camera with the dialog lifecycle.
   useEffect(() => {
-    if (!open) {
-      setStatus("idle");
-      setError(null);
-      return;
-    }
+    if (!open) return;
     cancelledRef.current = false;
     let disposed = false;
-    setStatus("starting");
-    setError(null);
 
     (async () => {
+      // Defer past the effect body so the setState calls run in the async
+      // continuation, not synchronously during the effect (React 19 rule).
+      await Promise.resolve();
+      if (disposed) return;
+      setStatus("starting");
+      setError(null);
       try {
         const { Html5Qrcode } = await import("html5-qrcode");
         if (disposed || !document.getElementById("order-qr-reader")) return;
@@ -82,9 +94,14 @@ export function OrderScanner({
           { facingMode: "environment" },
           { fps: 10, qrbox: { width: 220, height: 220 } },
           (decodedText) => {
-            // Valid: an order number. Throttle — one hit and we stop.
+            // Valid: an order number. Order numbers are generated as
+            // `ORD-YYYYMMDD-XXXXXX` with a base-36 (uppercase A-Z + 0-9)
+            // 6-char random suffix (see order.service.ts) — NOT digits-only.
+            // The phone-friendly raw payload is the plain order number; match
+            // the real format so every valid QR hits. Throttle — one hit and
+            // we stop.
             const num = (decodedText || "").trim();
-            if (/^ORD-\d{8}-\d{4,}$/.test(num)) {
+            if (/^ORD-\d{8}-[A-Z0-9]{6}$/.test(num)) {
               setStatus("idle");
               stopCamera();
               setOpen(false);
@@ -123,7 +140,7 @@ export function OrderScanner({
   }, [open, status]);
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <Button
         variant={triggerVariant}
         size="sm"
@@ -161,7 +178,7 @@ export function OrderScanner({
           {status === "scanning" && (
             <p className="text-xs text-muted-foreground flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-              Memindai — pindai QR berisi nomor pesanan
+              QR belum terdeteksi — arahkan QR pesanan ke kamera
             </p>
           )}
           {status === "error" && (
