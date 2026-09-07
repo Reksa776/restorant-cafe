@@ -5,16 +5,39 @@
 // ============================================================
 import api from "@/lib/axios";
 
+export interface PaymentTransaction {
+  id: string;
+  type: string;
+  status: string;
+  amount: string;
+  createdAt: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  rawData?: any;
+}
+
+/**
+ * Single shared Payment domain type (client wrapper). All payment rows the
+ * API returns use this shape, including the QRIS display fields the provider
+ * fills (qrImage / qrString / providerRef) and the audit transactions that
+ * admin order/payment endpoints include. The kasir barcode flow and the
+ * payment dashboard both derive from this — there is no parallel payment
+ * domain type.
+ */
 export interface Payment {
   id: string;
   orderId: string;
   status: string;
   amount: string;
-  method?: string;
-  provider?: string;
-  paymentUrl?: string;
-  paidAt?: string;
-  expiresAt?: string;
+  method?: string | null;
+  provider?: string | null;
+  providerRef?: string | null;
+  paymentUrl?: string | null;
+  /** Gateway QR image — either a direct image URL or an already-resolved data URI. */
+  qrImage?: string | null;
+  /** Raw QR payload string — used only as a fallback to re-render the QR. */
+  qrString?: string | null;
+  paidAt?: string | null;
+  expiresAt?: string | null;
   createdAt: string;
   updatedAt: string;
   order: {
@@ -22,6 +45,7 @@ export interface Payment {
     orderNumber: string;
     grandTotal: string;
   };
+  transactions?: PaymentTransaction[];
 }
 
 export interface PaymentsResponse {
@@ -47,8 +71,14 @@ export const paymentService = {
     return response.data.data;
   },
 
-  async createPayment(orderId: string): Promise<Payment> {
-    const response = await api.post("/payments", { orderId });
+  async createPayment(
+    orderId: string,
+    options?: { method?: "QRIS" | "KASIR" }
+  ): Promise<Payment> {
+    const response = await api.post("/payments", {
+      orderId,
+      ...(options?.method ? { method: options.method } : {}),
+    });
     return response.data.data;
   },
 
@@ -60,9 +90,14 @@ export const paymentService = {
   /**
    * Create QRIS payment from kasir context (barcode scan).
    * Supports retry on FAILED/EXPIRED payments.
+   *
+   * `restaurantId` is optional on the client wrapper because the existing
+   * POST /api/payments route derives restaurantId from the session; it is
+   * accepted here for typing consistency with the server service signature.
    */
   async createKasirQrisPayment(
-    orderNumber: string
+    orderNumber: string,
+    _restaurantId?: string
   ): Promise<{
     payment: Payment;
     kind: string;

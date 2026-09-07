@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +31,7 @@ export default function PaymentsPage() {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [markingId, setMarkingId] = useState<string | null>(null);
 
-  const loadPayments = async (silent = false) => {
+  const loadPayments = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
     try {
       const result = await paymentService.getPayments({
@@ -44,11 +44,17 @@ export default function PaymentsPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [statusFilter]);
 
   useEffect(() => {
-    loadPayments();
-  }, [statusFilter]);
+    let cancelled = false;
+    Promise.resolve().then(() => {
+      if (!cancelled) void loadPayments();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadPayments]);
 
   // Realtime: payment created/status changed → refresh without reload.
   // The currently selected status filter is preserved (closure state).
@@ -79,7 +85,8 @@ export default function PaymentsPage() {
     }
   };
 
-  // Repayment: create new QRIS payment for FAILED/EXPIRED QRIS payments
+  // Repayment: create/reuse QRIS payment for eligible FAILED/EXPIRED
+  // (and stale/expired PENDING) QRIS payments from the Payment Dashboard.
   const handleRepayment = async (payment: Payment) => {
     setMarkingId(payment.id);
     try {
@@ -87,9 +94,10 @@ export default function PaymentsPage() {
         payment.order.orderNumber
       );
       if (result.kind === "kasir_existing") {
-        toast.info("Pembayaran kasir sudah tercatat. Silakan tandai sebagai lunas.");
-        // Switch to mark-paid flow
-        await handleMarkPaid(result.payment as unknown as Payment);
+        toast.info(
+          "Pembayaran kasir sudah tercatat. Silakan tandai sebagai lunas."
+        );
+        await handleMarkPaid(result.payment);
       } else {
         toast.success("QRIS baru berhasil dibuat untuk pembayaran ulang.");
         await loadPayments(true);
@@ -183,7 +191,7 @@ export default function PaymentsPage() {
                           variant="outline"
                           size="sm"
                           onClick={() =>
-                            window.open(payment.paymentUrl, "_blank")
+                            window.open(payment.paymentUrl ?? "", "_blank")
                           }
                         >
                           <ExternalLink className="h-4 w-4 mr-1" />

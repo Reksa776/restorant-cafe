@@ -5,6 +5,7 @@
 // client components. (LOW-1)
 // ============================================================
 import api from "@/lib/axios";
+import type { Payment } from "@/services/payment.service";
 
 export interface OrderItem {
   productId: string;
@@ -55,25 +56,12 @@ export interface Order {
       name: string;
     };
   }>;
-  payments?: Array<{
-    id: string;
-    method: string | null;
-    provider: string | null;
-    status: string;
-    amount: string;
-    paymentUrl?: string | null;
-    paidAt?: string | null;
-    createdAt?: string;
-    transactions?: Array<{
-      id: string;
-      type: string;
-      status: string;
-      amount: string;
-      createdAt: string;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      rawData?: any;
-    }>;
-  }>;
+  /**
+   * Payment rows use the shared Payment domain type (from the payment service)
+   * so the whole app has a single representation of a payment. Admin order
+   * endpoints return the same payment shape (including audit transactions).
+   */
+  payments?: Array<Payment>;
   statusHistory?: Array<{
     status: string;
     notes?: string | null;
@@ -102,6 +90,16 @@ export const orderService = {
 
   async getOrder(id: string): Promise<Order> {
     const response = await api.get(`/orders/${id}`);
+    return response.data.data;
+  },
+
+  /**
+   * Get an order by its order number using the admin restaurant-scoped
+   * endpoint (/admin/orders/[orderNumber]). This is the authoritative
+   * cashier lookup and enforces tenant isolation.
+   */
+  async getOrderByNumberScoped(orderNumber: string): Promise<Order> {
+    const response = await api.get(`/orders/by-number/${orderNumber}`);
     return response.data.data;
   },
 

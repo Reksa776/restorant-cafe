@@ -998,11 +998,13 @@ export class PaymentService {
   /**
    * Kasir-initiated QRIS payment creation.
    *
-   * Mirras createPayment with method QRIS, but scoped to kasir context:
-   * - Must be DINE_IN order
-   * - Must not already be PAID
-   * - Allows retry on FAILED/EXPIRED by expiring stale rows first
-   * - Returns the created/retry payment with QR data
+   * Mirrors createPayment with method QRIS, but scoped to kasir context:
+   * - Available for all order types (DINE_IN, TAKEAWAY, DELIVERY).
+   *   This widens the existing DINE_IN-only kasir QRIS rule without
+   *   changing the customer-facing TAKEAWAY/DELIVERY legacy flow.
+   * - Must not already be PAID.
+   * - Allows retry on FAILED/EXPIRED by expiring stale rows first.
+   * - Returns the created/retry payment with QR data.
    */
   async createKasirQrisPayment(orderNumber: string, restaurantId: string) {
     // Find the order with payments
@@ -1029,12 +1031,6 @@ export class PaymentService {
 
     if (!order) {
       throw new NotFoundError("Order not found");
-    }
-
-    if (order.orderType !== "DINE_IN") {
-      throw new ValidationError(
-        "QRIS payment only available for dine-in orders"
-      );
     }
 
     // Already paid orders cannot create new payments

@@ -29,9 +29,16 @@ export async function POST(request: NextRequest) {
     const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
     const body = await request.json();
 
-    // Support both orderId-based creation and orderNumber-based kasir QRIS
-    if (body.orderNumber && body.method === "QRIS") {
-      // Kasir-initiated QRIS payment
+    // Optional explicit payment intent on this admin route: "QRIS" (kasir
+    // QRIS) or "KASIR" (kasir cash). Absent = legacy gateway flow.
+    const method = body.method;
+    if (method !== undefined && method !== "QRIS" && method !== "KASIR") {
+      throw new ValidationError("Metode pembayaran tidak valid");
+    }
+
+    // Support both orderId-based creation and orderNumber-based kasir QRIS.
+    // This is the kasir-initiated QRIS path (widened to all order types).
+    if (body.orderNumber && method === "QRIS") {
       const result = await paymentService.createKasirQrisPayment(
         body.orderNumber,
         restaurantId
@@ -43,7 +50,11 @@ export async function POST(request: NextRequest) {
       throw new ValidationError("orderId or orderNumber is required");
     }
 
-    const payment = await paymentService.createPayment(body.orderId, restaurantId);
+    const payment = await paymentService.createPayment(
+      body.orderId,
+      restaurantId,
+      method ? { method } : undefined
+    );
 
     return createdResponse(payment, "Payment created successfully");
   } catch (error) {
