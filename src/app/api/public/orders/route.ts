@@ -3,6 +3,7 @@ import { orderService } from "@/services/order/order.service";
 import { CreateCustomerOrderSchema } from "@/services/order/order.types";
 import { successResponse, createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
+import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 
 /**
  * POST /api/public/orders
@@ -12,6 +13,9 @@ import { AppError, ValidationError } from "@/lib/errors";
  */
 export async function POST(request: NextRequest) {
   try {
+    // Anti-abuse: bound order creation per client (M2).
+    assertRateLimit(rateLimitKey("public-order-create", request), 30, 60_000);
+
     const body = await request.json();
 
     // Validate input with Zod

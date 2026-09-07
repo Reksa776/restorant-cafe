@@ -16,6 +16,8 @@ export interface AuthSession {
     name?: string | null;
     email?: string | null;
     role?: string;
+    /** Session version embedded in the JWT — checked against the DB row. */
+    sessionVersion?: number;
   };
 }
 
@@ -59,11 +61,23 @@ export async function requireRestaurantContext(): Promise<AuthenticatedContext> 
       restaurantId: true,
       role: true,
       isActive: true,
+      sessionVersion: true,
     },
   });
 
   if (!user || !user.isActive) {
     throw new UnauthorizedError("User not found or inactive");
+  }
+
+  // Session revocation (M3): a password change or account deactivation bumps
+  // sessionVersion; the JWT carries the version from sign-in time, so any
+  // older token is rejected here. (Middleware cannot check the DB, but every
+  // API call goes through this guard and the axios interceptor turns the 401
+  // into a clean single sign-out — no redirect loop.)
+  if (user.sessionVersion !== session.user.sessionVersion) {
+    throw new UnauthorizedError(
+      "Session expired — please sign in again"
+    );
   }
 
   return {

@@ -473,11 +473,17 @@ export class IpaymuProvider implements PaymentProvider {
     const total = payload.total || payload.Amount || payload.Total || "0";
     const amount = payload.amount || payload.Amount || total;
 
-    let mappedStatus: "PAID" | "FAILED" | "EXPIRED";
+    let mappedStatus: "PAID" | "PENDING" | "FAILED" | "EXPIRED" | "CANCELLED";
     switch (String(status).toLowerCase()) {
       case "berhasil":
       case "success":
         mappedStatus = "PAID";
+        break;
+      case "pending":
+        // A pending callback must NEVER flip the payment to FAILED (M1) —
+        // it is handled as a no-op by the service (the intent was already
+        // created as PENDING server-side).
+        mappedStatus = "PENDING";
         break;
       case "gagal":
       case "failed":
@@ -486,8 +492,12 @@ export class IpaymuProvider implements PaymentProvider {
       case "expired":
         mappedStatus = "EXPIRED";
         break;
+      case "cancelled":
+      case "batal":
+        mappedStatus = "CANCELLED";
+        break;
       default:
-        // "pending" or unknown — treat as pending, not failed
+        // Unknown/legacy status — treat as failed (no false "paid" claims).
         mappedStatus = "FAILED";
     }
 

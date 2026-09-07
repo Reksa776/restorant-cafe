@@ -46,8 +46,29 @@ type LoadState = "loading" | "loaded" | "not_found" | "error";
 
 const POLL_INTERVAL_MS = 4000;
 
+// All statuses that must STOP polling (H5) — PAID/FAILED/EXPIRED are the
+// gateway terminal states; CANCELLED is the order-level terminal state.
+const TERMINAL_PAYMENT_STATUSES = ["PAID", "EXPIRED", "FAILED", "CANCELLED"];
+
 const formatRupiah = (value: string | number) =>
   `Rp${Number(value).toLocaleString("id-ID")}`;
+
+/**
+ * Effective payment status — the raw status, except a PENDING payment whose
+ * expiry has passed counts as EXPIRED (the gateway may never deliver an
+ * EXPIRED webhook, so the client must not rely on it). Polling uses this
+ * value, not the raw status.
+ */
+function effectivePaymentStatus(data: PaymentPageData | null): string {
+  const status = data?.payment?.status || data?.paymentStatus || "UNPAID";
+  if (status === "PENDING" && data?.payment?.expiresAt) {
+    const expiresAt = new Date(data.payment.expiresAt).getTime();
+    if (!Number.isNaN(expiresAt) && Date.now() > expiresAt) {
+      return "EXPIRED";
+    }
+  }
+  return status;
+}
 
 // ============================================================
 // Component
@@ -108,12 +129,13 @@ export default function PaymentPage({
     loadPayment();
     const interval = setInterval(() => {
       if (!mountedRef.current) return;
-      const status = data?.payment?.status;
       const method = data?.payment?.method;
+      // Effective status — stops on ALL terminal states, including the
+      // locally-computed EXPIRED for a PENDING payment past its expiry
+      // (H5). The interval tears itself down so polling never runs forever.
+      const status = effectivePaymentStatus(data);
       if (
-        status === "PAID" ||
-        status === "EXPIRED" ||
-        status === "FAILED" ||
+        TERMINAL_PAYMENT_STATUSES.includes(status) ||
         (method === "KASIR" && status === "UNPAID")
       ) {
         clearInterval(interval);
@@ -183,18 +205,9 @@ export default function PaymentPage({
     return () => clearInterval(interval);
   }, [data?.payment?.expiresAt]);
 
-  const effectiveStatus: string = (() => {
-    const status = data?.payment?.status || data?.paymentStatus || "UNPAID";
-    if (status === "PENDING" && data?.payment?.expiresAt) {
-      const expiresAt = new Date(data.payment.expiresAt).getTime();
-      if (!Number.isNaN(expiresAt) && Date.now() > expiresAt) {
-        return "EXPIRED";
-      }
-    }
-    return status;
-  })();
+  const effectiveStatus = effectivePaymentStatus(data);
 
-  const isTerminal = ["PAID", "EXPIRED", "FAILED"].includes(effectiveStatus);
+  const isTerminal = TERMINAL_PAYMENT_STATUSES.includes(effectiveStatus);
 
   /**
    * "Generate QR Baru" — create a fresh QRIS payment on the same order. The

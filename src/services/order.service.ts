@@ -1,3 +1,9 @@
+// ============================================================
+// CLIENT-SIDE API wrapper (browser bundle) — thin axios calls into /api.
+// The server-side implementation lives in ./order/order.service.ts
+// (Prisma). Keeping the two trees distinct avoids importing Prisma into
+// client components. (LOW-1)
+// ============================================================
 import api from "@/lib/axios";
 
 export interface OrderItem {

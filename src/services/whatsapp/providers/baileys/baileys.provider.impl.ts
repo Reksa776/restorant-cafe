@@ -54,8 +54,13 @@ export class BaileysProviderImpl implements WhatsAppProvider {
 
   constructor(restaurantId: string) {
     this.restaurantId = restaurantId;
+    // Canonical variable is WHATSAPP_SESSION_DIR (M8). WHATSAPP_SESSION_PATH
+    // is honored as a backward-compatible alias for environments that were
+    // configured before the naming was consolidated.
     this.sessionDir =
-      process.env.WHATSAPP_SESSION_DIR || "/app/whatsapp-session";
+      process.env.WHATSAPP_SESSION_DIR ||
+      process.env.WHATSAPP_SESSION_PATH ||
+      "/app/whatsapp-session";
   }
 
   // ============================================================

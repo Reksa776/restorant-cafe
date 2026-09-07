@@ -1,3 +1,8 @@
+// ============================================================
+// CLIENT-SIDE API wrapper (browser bundle) — thin axios calls into /api.
+// The server-side implementation lives in ./table/table.service.ts
+// (Prisma + QR generation). (LOW-1)
+// ============================================================
 import api from "@/lib/axios";
 
 export interface RestaurantTable {

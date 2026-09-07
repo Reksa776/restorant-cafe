@@ -51,6 +51,7 @@ enum PaymentStatus {
   FAILED
   EXPIRED
   REFUNDED
+  CANCELLED
 }
 
 enum TableStatus {
@@ -82,6 +83,10 @@ model User {
   password     String
   role         Role     @default(ADMIN)
   isActive     Boolean  @default(true)
+  // Bumped on password change / deactivation; JWTs carry the version from
+  // sign-in time and are rejected when it no longer matches (session
+  // revocation, M3).
+  sessionVersion Int     @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -396,6 +401,8 @@ model Order {
   @@index([status])
   @@index([paymentStatus])
   @@index([createdAt])
+  // Customer lookup for stats/aggregations (LOW-8).
+  @@index([customerId])
 
   @@map("order")
 }

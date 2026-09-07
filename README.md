@@ -1,36 +1,112 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Restaurant / Cafe Management & Ordering App
 
-## Getting Started
+A Next.js restaurant ordering & management system: customer menu/QR ordering,
+QRIS & virtual-account payments (iPaymu), cashier shift management, approvals
+(refunds / cancellations / overrides), WhatsApp notifications (Baileys via
+BullMQ), product image uploads, and realtime admin dashboards (SSE).
 
-First, run the development server:
+## Stack
+
+| Layer      | Technology |
+|------------|------------|
+| Framework  | Next.js 16 (App Router, TypeScript) |
+| UI         | React 19, Tailwind CSS v4, shadcn-style components |
+| Database   | MySQL 8 / MariaDB via Prisma 7 (`@prisma/adapter-mariadb`) |
+| Auth       | Auth.js / NextAuth v5 (Credentials, JWT strategy) |
+| HTTP       | Axios (client), fetch (server) |
+| Queues     | BullMQ + Redis (WhatsApp worker) |
+| Payments   | iPaymu v2 (VA + QRIS), HMAC-signed webhook |
+| WhatsApp   | Baileys (per-restaurant sessions) |
+| Realtime   | Server-Sent Events (in-memory bus, single instance) |
+| Runtime    | Node >= 20.9 (`next start`, PM2) |
+
+## Environment variables
+
+Copy `.env.example` to `.env` and fill in the values (never commit `.env`):
+
+- `DATABASE_URL` — MySQL connection string
+- `NEXTAUTH_SECRET`, `NEXTAUTH_URL` (or `AUTH_URL`), `AUTH_TRUST_HOST`
+- `NEXT_PUBLIC_APP_URL` — public HTTPS origin (used for the iPaymu webhook /
+  return URLs — MUST be the real domain in production)
+- `IPAYMU_ENV` (`sandbox` | `production`), `IPAYMU_VA`, `IPAYMU_API_KEY`,
+  optional `IPAYMU_BASE_URL`
+- `REDIS_URL` — BullMQ/WhatsApp queue backend
+- `WHATSAPP_SESSION_DIR` — Baileys session storage (legacy
+  `WHATSAPP_SESSION_PATH` is honored as an alias)
+- `PRODUCT_UPLOAD_DIR` — physical root for product images; defaults to
+  `<project>/uploads/products`. In local dev point it outside the watcher,
+  e.g. `.runtime-data/uploads/products`
+- `SEED_CASHIER_PASSWORD` — optional seed-only cashier password
+
+## Development
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install          # runs `prisma generate` via postinstall
+npm run db:migrate   # apply migrations (prisma migrate dev)
+npm run db:seed      # seed restaurant + admin/cashier users
+npm run dev          # Next.js dev server (default :3000)
+npm run worker:dev   # WhatsApp BullMQ worker (tsx)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Note: the seed creates `admin@restobahagia.com` / `admin123` and
+`kasir@restobahagia.com` / `kasir123` — change these immediately in any
+environment that is not a throwaway local database.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Database
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- Schema: `prisma/schema.prisma`; migrations in `prisma/migrations/`
+- Apply to a production DB with `npx prisma migrate deploy`
+- Never edit applied migrations; add new timestamped ones.
 
-## Learn More
+## Payments
 
-To learn more about Next.js, take a look at the following resources:
+- QRIS (dine-in) is paid on the in-app `/payment/[orderNumber]` page;
+  takeaway/delivery use the legacy iPaymu VA redirect.
+- The webhook `POST /api/webhooks/ipaymu` is signature-verified
+  (HMAC-SHA256), amount-checked against the order, and idempotent.
+- `NEXT_PUBLIC_APP_URL` must be the public HTTPS origin so the gateway can
+  reach `https://<domain>/api/webhooks/ipaymu`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Product images
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- Uploads: `POST /api/admin/uploads/product-image` (ADMIN only, magic-byte
+  validated, UUID filenames, max 5 MB).
+- Files are stored OUTSIDE `public/` (runtime directory) and served by the
+  app route `/uploads/products/[restaurantId]/[filename]`.
+- The storage directory (`PRODUCT_UPLOAD_DIR`, default `uploads/products`)
+  is LIVE DATA: it must be persisted (volume / host dir) across rebuilds and
+  restarts, and is git-ignored.
 
-## Deploy on Vercel
+## WhatsApp worker
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The WhatsApp send path uses a BullMQ worker:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run worker:dev
+```
+
+or via PM2. The queue requires a reachable `REDIS_URL`. WhatsApp connection
+lifecycle is managed through the admin UI (`/admin/whatsapp`).
+
+## Realtime
+
+Admin dashboard and customer order pages use SSE. The event bus is
+in-memory — PM2 must run the app as a SINGLE instance (`next start -p 3001`).
+If the app is ever scaled to multiple Node processes, back the bus with Redis
+pub/sub (see `src/lib/realtime/bus.ts`).
+
+## Production (VPS)
+
+- Build: `npm run build`; run with `next start -p 3001` under PM2.
+- Reverse proxy (Apache/Cloudflare) terminates TLS and proxies to `:3001`;
+  `X-Forwarded-*` headers must be set (SSE needs `X-Accel-Buffering: no`).
+- Apply migrations before starting the new build.
+- Port 3000 is reserved for other applications on the same host — do not
+  bind the restaurant app there.
+
+## Tests
+
+TypeScript: `npx tsc --noEmit`
+
+Browser E2E scripts live in `scripts/e2e-*.mjs` (Puppeteer). They run
+against a local dev server and database; see each script's header comments.

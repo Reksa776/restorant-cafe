@@ -1,3 +1,8 @@
+// ============================================================
+// CLIENT-SIDE API wrapper (browser bundle) — thin axios calls into /api.
+// The server-side implementation lives in ./payment/payment.service.ts
+// (Prisma + iPaymu). (LOW-1)
+// ============================================================
 import api from "@/lib/axios";
 
 export interface Payment {

@@ -58,3 +58,10 @@ export class WhatsAppError extends AppError {
     this.name = "WhatsAppError";
   }
 }
+
+export class RateLimitError extends AppError {
+  constructor(message: string = "Too many requests, please try again later") {
+    super(message, 429, "RATE_LIMITED");
+    this.name = "RateLimitError";
+  }
+}

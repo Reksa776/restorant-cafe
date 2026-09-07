@@ -31,12 +31,15 @@ export class CustomerService {
       prisma.customer.findMany({
         where,
         include: {
+          // Bounded (LOW-8): orderCount via _count and only the LATEST order
+          // for lastOrderAt — never the customer's whole order history.
+          _count: {
+            select: { orders: true },
+          },
           orders: {
-            select: {
-              id: true,
-              grandTotal: true,
-              createdAt: true,
-            },
+            select: { id: true, createdAt: true },
+            orderBy: { createdAt: "desc" },
+            take: 1,
           },
         },
         orderBy: { createdAt: "desc" },
@@ -46,12 +49,24 @@ export class CustomerService {
       prisma.customer.count({ where }),
     ]);
 
+    // Total spent per customer via a single grouped aggregation (indexed by
+    // Order.customerId) instead of loading every order row.
+    const ids = customers.map((c) => c.id);
+    const spentRows = ids.length
+      ? await prisma.order.groupBy({
+          by: ["customerId"],
+          where: { restaurantId, customerId: { in: ids } },
+          _sum: { grandTotal: true },
+        })
+      : [];
+    const spentByCustomer = new Map(
+      spentRows.map((r) => [r.customerId, r._sum.grandTotal])
+    );
+
     const customersWithStats = customers.map((customer) => ({
       ...customer,
-      orderCount: customer.orders.length,
-      totalSpent: customer.orders
-        .reduce((sum, order) => sum + Number(order.grandTotal), 0)
-        .toString(),
+      orderCount: customer._count.orders,
+      totalSpent: spentByCustomer.get(customer.id)?.toString() || "0",
       lastOrderAt: customer.orders[0]?.createdAt || null,
     }));
 

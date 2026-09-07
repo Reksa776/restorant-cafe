@@ -13,8 +13,10 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "worker:dev": "tsx src/workers/whatsapp.worker.ts",
-    "worker:dev:all": "concurrently \"tsx src/workers/whatsapp.worker.ts\" \"tsx src/workers/notification.worker.ts\""
+    "worker:dev": "tsx src/workers/whatsapp.worker.ts"
+  },
+  "engines": {
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.3",

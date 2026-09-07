@@ -38,6 +38,11 @@ export class PaymentService {
     restaurantId: string,
     options?: { method?: "QRIS" | "KASIR" }
   ) {
+    const isQris = options?.method === "QRIS";
+
+    // ============================================================
+    // 1. Pre-read the order (for validation + the gateway payload).
+    // ============================================================
     const order = await prisma.order.findFirst({
       where: {
         id: orderId,
@@ -60,167 +65,255 @@ export class PaymentService {
       throw new NotFoundError("Order not found");
     }
 
-    // Check if an online payment (gateway transaction) already exists.
-    // PENDING/PAID online payments are terminal for creating a new one;
-    // an UNPAID KASIR row also blocks a different method for the same order
-    // so an order never ends up with two live payment intents.
-    const existingPayment = await prisma.payment.findFirst({
-      where: {
-        orderId,
-        status: { in: ["PENDING", "PAID"] },
-      },
-    });
-
-    if (existingPayment) {
-      throw new ConflictError(
-        existingPayment.status === "PAID"
-          ? "Order already paid"
-          : "Payment already exists for this order"
-      );
-    }
-
     // ============================================================
-    // KASIR — no gateway call. Record UNPAID and let a cashier collect.
+    // 2. Atomically create the payment INTENT under a per-order row lock.
+    //
+    // Serializes concurrent creations for the same order (M11): two
+    // simultaneous requests both lock the order row, so only the first can
+    // pass the PENDING/PAID existence checks and create the intent; the
+    // second gets a ConflictError. The intent row is created FIRST (before
+    // the gateway call) so the lock window stays tiny — no network I/O is
+    // ever performed inside the transaction.
     // ============================================================
-    if (options?.method === "KASIR") {
-      const existingCashier = await prisma.payment.findFirst({
-        where: {
-          orderId,
-          restaurantId,
-          method: "KASIR",
+    const intent = await prisma.$transaction(async (tx) => {
+      // Lock the order row (MySQL FOR UPDATE) to serialize per-order intents.
+      await tx.$queryRaw`SELECT id FROM \`order\` WHERE id = ${orderId} FOR UPDATE`;
+
+      const lockedOrder = await tx.order.findFirst({
+        where: { id: orderId, restaurantId },
+        select: {
+          id: true,
+          orderNumber: true,
+          restaurantId: true,
+          grandTotal: true,
+          status: true,
+          paymentStatus: true,
         },
-        orderBy: { createdAt: "desc" },
       });
-
-      if (existingCashier) {
-        if (existingCashier.status === "PAID") {
-          throw new ConflictError("Order already paid");
-        }
-        // Idempotent retry: the UNPAID KASIR row is already recorded.
-        return existingCashier;
+      if (!lockedOrder) {
+        throw new NotFoundError("Order not found");
+      }
+      if (lockedOrder.status === "CANCELLED") {
+        throw new ConflictError(
+          "Order dibatalkan — tidak dapat membuat pembayaran"
+        );
       }
 
-      const cashierPayment = await prisma.payment.create({
+      // PENDING/PAID online payments are terminal for creating a new one;
+      // an UNPAID KASIR row also blocks a different method for the same
+      // order so an order never ends up with two live payment intents.
+      const existingPayment = await tx.payment.findFirst({
+        where: {
+          orderId,
+          status: { in: ["PENDING", "PAID"] },
+        },
+      });
+      if (existingPayment) {
+        throw new ConflictError(
+          existingPayment.status === "PAID"
+            ? "Order already paid"
+            : "Payment already exists for this order"
+        );
+      }
+
+      // ------------------------------------------------------------
+      // KASIR — no gateway call. Record UNPAID and let a cashier collect.
+      // ------------------------------------------------------------
+      if (options?.method === "KASIR") {
+        const existingCashier = await tx.payment.findFirst({
+          where: {
+            orderId,
+            restaurantId,
+            method: "KASIR",
+          },
+          orderBy: { createdAt: "desc" },
+        });
+
+        if (existingCashier) {
+          if (existingCashier.status === "PAID") {
+            throw new ConflictError("Order already paid");
+          }
+          // Idempotent retry: the UNPAID KASIR row is already recorded.
+          return { payment: existingCashier, kind: "kasir_existing" } as const;
+        }
+
+        const cashierPayment = await tx.payment.create({
+          data: {
+            restaurantId: lockedOrder.restaurantId,
+            orderId: lockedOrder.id,
+            status: "UNPAID",
+            amount: lockedOrder.grandTotal,
+            method: "KASIR",
+            provider: null,
+          },
+          include: {
+            order: true,
+          },
+        });
+
+        // Order payment status stays UNPAID — no gateway, nothing paid yet.
+        return { payment: cashierPayment, kind: "kasir_new" } as const;
+      }
+
+      // ------------------------------------------------------------
+      // Gateway payment — QRIS (DINE-IN) or VA (legacy TAKEAWAY/DELIVERY)
+      // ------------------------------------------------------------
+      // A DINE-IN order that chose cashier first must not silently create a
+      // different payment intent on top of the UNPAID KASIR row.
+      if (!isQris) {
+        const cashierUnpaid = await tx.payment.findFirst({
+          where: {
+            orderId,
+            restaurantId,
+            method: "KASIR",
+            status: "UNPAID",
+          },
+        });
+        if (cashierUnpaid) {
+          throw new ConflictError(
+            "Pembayaran di kasir sudah dicatat untuk pesanan ini"
+          );
+        }
+      }
+
+      // Create the PENDING intent atomically (providerRef filled after the
+      // gateway call). If the gateway later fails this row is marked FAILED,
+      // keeping the retry semantics (a FAILED/EXPIRED payment may be retried).
+      const pending = await tx.payment.create({
         data: {
-          restaurantId: order.restaurantId,
-          orderId: order.id,
-          status: "UNPAID",
-          amount: order.grandTotal,
-          method: "KASIR",
-          provider: null,
+          restaurantId: lockedOrder.restaurantId,
+          orderId: lockedOrder.id,
+          status: "PENDING",
+          amount: lockedOrder.grandTotal,
+          method: isQris ? "QRIS" : null,
+          provider: "ipaymu",
         },
         include: {
           order: true,
         },
       });
 
-      // Order payment status stays UNPAID — no gateway, nothing paid yet.
+      await tx.order.update({
+        where: { id: lockedOrder.id },
+        data: { paymentStatus: "PENDING" },
+      });
+
+      return { payment: pending, kind: "gateway" } as const;
+    });
+
+    // ------------------------------------------------------------
+    // KASIR outcomes (already fully recorded inside the transaction).
+    // ------------------------------------------------------------
+    if (intent.kind === "kasir_existing") {
+      return intent.payment;
+    }
+    if (intent.kind === "kasir_new") {
       emitRealtime(
         restaurantId,
         REALTIME_EVENT_TYPES.PAYMENT_CREATED,
-        cashierPayment.id,
+        intent.payment.id,
         {
-          paymentId: cashierPayment.id,
+          paymentId: intent.payment.id,
           orderId: order.id,
           orderNumber: order.orderNumber,
-          amount: Number(cashierPayment.amount),
-          status: cashierPayment.status,
-          method: cashierPayment.method,
+          amount: Number(intent.payment.amount),
+          status: intent.payment.status,
+          method: intent.payment.method,
           provider: null,
         }
       );
       emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
-
-      return cashierPayment;
+      return intent.payment;
     }
 
-    // ============================================================
-    // Gateway payment — QRIS (DINE-IN) or VA (legacy TAKEAWAY/DELIVERY)
-    // ============================================================
-    // A DINE-IN order that chose cashier first must not silently create a
-    // different payment intent on top of the UNPAID KASIR row.
-    if (options?.method !== "QRIS") {
-      const cashierUnpaid = await prisma.payment.findFirst({
-        where: {
-          orderId,
-          restaurantId,
-          method: "KASIR",
-          status: "UNPAID",
-        },
-      });
-      if (cashierUnpaid) {
-        throw new ConflictError(
-          "Pembayaran di kasir sudah dicatat untuk pesanan ini"
-        );
-      }
-    }
-
-    const isQris = options?.method === "QRIS";
-
-    // Create payment with provider (amount = grandTotal from the DB).
-    // The iPaymu direct endpoint rejects empty buyer phone/email (reported as
-    // "unauthorized signature"), so fall back to the restaurant's real contact
-    // data when the customer did not provide any. The provider applies a final
-    // non-empty placeholder only if the restaurant has none either.
-    const paymentResult = await this.provider.createPayment({
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-      amount: Number(order.grandTotal),
-      customerName: order.customer.name || "Customer",
-      customerPhone: order.customer.phone || order.restaurant.phone || "",
-      customerEmail: order.restaurant.email || "",
-      items: order.items.map((item) => ({
-        name: item.product.name,
-        quantity: item.quantity,
-        price: Number(item.unitPrice),
-      })),
-      channel: isQris ? "qris" : "va",
-    });
-
-    // Save payment to database
-    const payment = await prisma.payment.create({
-      data: {
-        restaurantId: order.restaurantId,
-        orderId: order.id,
-        status: "PENDING",
-        amount: order.grandTotal,
-        method: isQris ? "QRIS" : null,
-        provider: "ipaymu",
-        providerRef: paymentResult.reference,
-        paymentUrl: paymentResult.paymentUrl,
-        qrImage: paymentResult.qrImage || null,
-        qrString: paymentResult.qrString || null,
-        expiresAt: paymentResult.expiresAt,
-      },
-      include: {
-        order: true,
-      },
-    });
-
-    // Update order payment status
-    await prisma.order.update({
-      where: { id: orderId },
-      data: { paymentStatus: "PENDING" },
-    });
-
-    // Realtime: a payment was initiated for an order.
-    emitRealtime(
-      restaurantId,
-      REALTIME_EVENT_TYPES.PAYMENT_CREATED,
-      payment.id,
-      {
-        paymentId: payment.id,
+    // ------------------------------------------------------------
+    // 3. Gateway call (OUTSIDE the lock — never hold a row lock over
+    //    network I/O).
+    // ------------------------------------------------------------
+    try {
+      // The iPaymu direct endpoint rejects empty buyer phone/email (reported
+      // as "unauthorized signature"), so fall back to the restaurant's real
+      // contact data when the customer did not provide any. The provider
+      // applies a final non-empty placeholder only if the restaurant has
+      // none either. Amount is ALWAYS order.grandTotal from the DB.
+      const paymentResult = await this.provider.createPayment({
         orderId: order.id,
         orderNumber: order.orderNumber,
-        amount: Number(payment.amount),
-        status: payment.status,
-        method: payment.method || null,
-        provider: payment.provider,
-      }
-    );
-    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
+        amount: Number(order.grandTotal),
+        customerName: order.customer.name || "Customer",
+        customerPhone: order.customer.phone || order.restaurant.phone || "",
+        customerEmail: order.restaurant.email || "",
+        items: order.items.map((item) => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          price: Number(item.unitPrice),
+        })),
+        channel: isQris ? "qris" : "va",
+      });
 
-    return payment;
+      // 4. Finalize the intent with the gateway's reference + payment data.
+      const payment = await prisma.payment.update({
+        where: { id: intent.payment.id },
+        data: {
+          providerRef: paymentResult.reference,
+          paymentUrl: paymentResult.paymentUrl,
+          qrImage: paymentResult.qrImage || null,
+          qrString: paymentResult.qrString || null,
+          expiresAt: paymentResult.expiresAt,
+        },
+        include: {
+          order: true,
+        },
+      });
+
+      // Realtime: a payment was initiated for an order.
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.PAYMENT_CREATED,
+        payment.id,
+        {
+          paymentId: payment.id,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          amount: Number(payment.amount),
+          status: payment.status,
+          method: payment.method || null,
+          provider: payment.provider,
+        }
+      );
+      emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
+
+      return payment;
+    } catch (error) {
+      // 5. Gateway failure → the intent becomes FAILED (guarded updates, so a
+      //    racing webhook cannot be overwritten). A FAILED payment may be
+      //    retried by the business flow.
+      await prisma.payment.updateMany({
+        where: { id: intent.payment.id, status: "PENDING" },
+        data: { status: "FAILED" },
+      });
+      await prisma.order.updateMany({
+        where: { id: orderId, paymentStatus: "PENDING" },
+        data: { paymentStatus: "FAILED" },
+      });
+
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.PAYMENT_STATUS_CHANGED,
+        `${intent.payment.id}-FAILED`,
+        {
+          paymentId: intent.payment.id,
+          orderId: orderId,
+          orderNumber: order.orderNumber,
+          amount: Number(intent.payment.amount),
+          status: "FAILED",
+          provider: "ipaymu",
+        }
+      );
+      emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, orderId);
+
+      throw error;
+    }
   }
 
   /**
@@ -783,6 +876,13 @@ export class PaymentService {
       return payment;
     }
 
+    // Step 4b: A PENDING callback must never change an existing state (M1).
+    // The intent was already created as PENDING server-side; a late pending
+    // notification (e.g. after EXPIRED) must not resurrect or fail it.
+    if (webhookData.status === "PENDING") {
+      return payment;
+    }
+
     // Step 5: Amount verification
     // Compare webhook amount against expected amount from database
     if (webhookData.status === "PAID") {
@@ -802,7 +902,11 @@ export class PaymentService {
       const updated = await tx.payment.update({
         where: { id: payment.id },
         data: {
-          status: webhookData.status as "PAID" | "FAILED" | "EXPIRED",
+          status: webhookData.status as
+            | "PAID"
+            | "FAILED"
+            | "EXPIRED"
+            | "CANCELLED",
           paidAt: webhookData.status === "PAID" ? new Date() : null,
         },
         include: {
@@ -828,7 +932,11 @@ export class PaymentService {
           where: { id: payment.orderId },
           data: { paymentStatus: "PAID" },
         });
-      } else if (webhookData.status === "FAILED" || webhookData.status === "EXPIRED") {
+      } else if (
+        webhookData.status === "FAILED" ||
+        webhookData.status === "EXPIRED" ||
+        webhookData.status === "CANCELLED"
+      ) {
         await tx.order.update({
           where: { id: payment.orderId },
           data: { paymentStatus: webhookData.status },

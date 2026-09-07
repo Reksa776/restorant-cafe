@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ConflictError, NotFoundError, ValidationError } from "@/lib/errors";
 import { emitRealtime } from "@/lib/realtime/bus";
@@ -103,21 +104,41 @@ export class ShiftService {
       );
     }
 
-    const shiftNumber = await nextShiftNumber(input.restaurantId);
-    const shift = await prisma.cashierShift.create({
-      data: {
-        restaurantId: input.restaurantId,
-        userId: input.userId,
-        shiftNumber,
-        openingCash: input.openingCash,
-        notes: input.notes || null,
-        status: "OPEN",
-        openedAt: new Date(),
-      },
-      include: {
-        user: { select: { id: true, name: true, email: true } },
-      },
-    });
+    // Retry on a shift-number unique violation (M5): two cashiers opening
+    // concurrently can read the same sequence value. Bounded retry with a
+    // fresh number; any other error propagates immediately.
+    let shift: Awaited<ReturnType<typeof prisma.cashierShift.create>> | null =
+      null;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const shiftNumber = await nextShiftNumber(input.restaurantId);
+      try {
+        shift = await prisma.cashierShift.create({
+          data: {
+            restaurantId: input.restaurantId,
+            userId: input.userId,
+            shiftNumber,
+            openingCash: input.openingCash,
+            notes: input.notes || null,
+            status: "OPEN",
+            openedAt: new Date(),
+          },
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+          },
+        });
+        break;
+      } catch (error) {
+        const isCollision =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002";
+        if (!isCollision || attempt === 4) {
+          throw error;
+        }
+      }
+    }
+    if (!shift) {
+      throw new Error("Failed to open shift after retries");
+    }
 
     emitRealtime(
       input.restaurantId,

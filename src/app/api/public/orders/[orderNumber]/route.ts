@@ -2,21 +2,35 @@ import { NextRequest } from "next/server";
 import { orderService } from "@/services/order/order.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
+import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 
 /**
  * GET /api/public/orders/[orderNumber]
  * Get order details by order number (public tracking).
  * No authentication required.
+ *
+ * Security (H3):
+ * - Rate limited per IP (order numbers are customer-facing; a bounded
+ *   window prevents enumeration/screen-scraping even with higher entropy).
+ * - Returns an EXPLICIT DTO: customer phone, internal payment fields
+ *   (provider / paymentUrl / providerRef) and DB identifiers are never
+ *   exposed. The service layer already avoids selecting them.
  */
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ orderNumber: string }> }
 ) {
   try {
+    assertRateLimit(
+      rateLimitKey("public-order-lookup", request),
+      120,
+      60_000
+    );
+
     const { orderNumber } = await params;
     const order = await orderService.getOrderByNumber(orderNumber);
 
-    // Return safe subset of order data
+    // Explicit public DTO — nothing is spread from the Prisma object.
     return successResponse({
       orderNumber: order.orderNumber,
       status: order.status,
@@ -31,10 +45,7 @@ export async function GET(
       notes: order.notes,
       createdAt: order.createdAt,
       customer: {
-        name: order.customer?.name,
-        phone: order.customer?.phone?.startsWith("guest-")
-          ? null
-          : order.customer?.phone,
+        name: order.customer?.name ?? null,
       },
       table: order.table
         ? { number: order.table.number, name: order.table.name }
@@ -60,7 +71,12 @@ export async function GET(
           customizations,
         };
       }),
-      payments: order.payments,
+      payments: order.payments.map((p) => ({
+        method: p.method,
+        status: p.status,
+        amount: p.amount,
+        paidAt: p.paidAt,
+      })),
       statusHistory: order.statusHistory.map((h) => ({
         status: h.status,
         notes: h.notes,

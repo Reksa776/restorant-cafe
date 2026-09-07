@@ -1,3 +1,5 @@
+import crypto from "crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   NotFoundError,
@@ -34,11 +36,40 @@ const VALID_STATUS_TRANSITIONS: Record<string, string[]> = {
 function generateOrderNumber(): string {
   const date = new Date();
   const dateStr = date.toISOString().split("T")[0].replace(/-/g, "");
-  const random = Math.floor(Math.random() * 10000)
-    .toString()
-    .padStart(4, "0");
+  // High-entropy suffix (base-36, 6 chars ≈ 2.1B values per day) so public
+  // order numbers cannot be enumerated (previously ORD-YYYYMMDD-NNNN had
+  // only 10k values per day and powered an unauthenticated lookup).
+  const random = crypto
+    .randomInt(0, 36 ** 6)
+    .toString(36)
+    .toUpperCase()
+    .padStart(6, "0");
   return `ORD-${dateStr}-${random}`;
 }
+
+/** True when the error is a Prisma unique-constraint violation (P2002). */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  );
+}
+
+/**
+ * The Prisma P2002 `meta.target` (field name or array of field names) as a
+ * plain string — used to decide whether a collision is retryable (i.e. it
+ * concerns the order number) or not (e.g. a customer phone duplicate).
+ */
+function orderNumberTarget(error: unknown): string {
+  const meta = (error as Prisma.PrismaClientKnownRequestError)?.meta;
+  const target = meta?.target;
+  if (Array.isArray(target)) return target.join(",");
+  return String(target ?? "");
+}
+
+// Retry cap for the (astronomically unlikely) order-number / shift-number
+// unique-constraint race — bounded so a retry can never loop forever.
+const UNIQUE_RETRY_ATTEMPTS = 5;
 
 /**
  * Build WhatsApp notification message based on order type.
@@ -102,20 +133,25 @@ export class OrderService {
       }
     }
 
-    // Validate all products exist, are available, and belong to this restaurant
+    // Validate all products exist, are available, and belong to this restaurant.
+    // Deduplicate product ids BEFORE comparing counts: the same product may
+    // legitimately appear several times with different customizations, and
+    // Prisma returns one row per unique id — a raw count comparison would
+    // reject those orders (see H7). Each line item is still preserved below.
     const productIds = input.items.map((item) => item.productId);
+    const uniqueProductIds = [...new Set(productIds)];
     const products = await prisma.product.findMany({
       where: {
-        id: { in: productIds },
+        id: { in: uniqueProductIds },
         restaurantId,
         isActive: true,
         isAvailable: true,
       },
     });
 
-    if (products.length !== productIds.length) {
+    if (products.length !== uniqueProductIds.length) {
       const foundIds = new Set(products.map((p) => p.id));
-      const missingIds = productIds.filter((id) => !foundIds.has(id));
+      const missingIds = uniqueProductIds.filter((id) => !foundIds.has(id));
       throw new ValidationError(
         `Products not found or unavailable: ${missingIds.join(", ")}`
       );
@@ -147,83 +183,103 @@ export class OrderService {
     const serviceCharge = isDineIn ? 0 : Math.round(subtotal * 0.05);
     const grandTotal = subtotal + tax + serviceCharge;
 
-    // Generate order number
-    const orderNumber = generateOrderNumber();
-
-    // Create order in transaction
-    const order = await prisma.$transaction(async (tx) => {
-      // Create order
-      const newOrder = await tx.order.create({
-        data: {
-          restaurantId,
-          orderNumber,
-          customerId: input.customerId,
-          tableId: input.tableId,
-          orderType: input.orderType || "DINE_IN",
-          status: "PENDING",
-          paymentStatus: "UNPAID",
-          subtotal,
-          tax,
-          serviceCharge,
-          grandTotal,
-          notes: input.notes,
-          items: {
-            create: orderItems,
-          },
-        },
-        include: {
-          customer: true,
-          table: true,
-          items: {
-            include: {
-              product: true,
+    // Create order in transaction, retrying on a unique-constraint race
+    // (restaurantId + orderNumber) with a fresh order number each attempt.
+    const createInTx = (orderNumber: string) =>
+      prisma.$transaction(async (tx) => {
+        // Create order
+        const newOrder = await tx.order.create({
+          data: {
+            restaurantId,
+            orderNumber,
+            customerId: input.customerId,
+            tableId: input.tableId,
+            orderType: input.orderType || "DINE_IN",
+            status: "PENDING",
+            paymentStatus: "UNPAID",
+            subtotal,
+            tax,
+            serviceCharge,
+            grandTotal,
+            notes: input.notes,
+            items: {
+              create: orderItems,
             },
           },
-        },
-      });
-
-      // Create initial status history
-      await tx.orderStatusHistory.create({
-        data: {
-          orderId: newOrder.id,
-          status: "PENDING",
-          notes: "Order created",
-        },
-      });
-
-      // Update table status if table is assigned
-      if (input.tableId) {
-        await tx.table.update({
-          where: { id: input.tableId },
-          data: { status: "OCCUPIED" },
+          include: {
+            customer: true,
+            table: true,
+            items: {
+              include: {
+                product: true,
+              },
+            },
+          },
         });
-      }
 
-      return newOrder;
-    });
+        // Create initial status history
+        await tx.orderStatusHistory.create({
+          data: {
+            orderId: newOrder.id,
+            status: "PENDING",
+            notes: "Order created",
+          },
+        });
+
+        // Update table status if table is assigned
+        if (input.tableId) {
+          await tx.table.update({
+            where: { id: input.tableId },
+            data: { status: "OCCUPIED" },
+          });
+        }
+
+        return newOrder;
+      });
+
+    let order: Awaited<ReturnType<typeof createInTx>> | null = null;
+    for (let attempt = 0; attempt < UNIQUE_RETRY_ATTEMPTS; attempt++) {
+      try {
+        order = await createInTx(generateOrderNumber());
+        break;
+      } catch (error) {
+        const isCollision =
+          isUniqueViolation(error) &&
+          // Only retry when the collision is on the order number, not e.g.
+          // a customer phone duplicate that a fresh number cannot fix.
+          orderNumberTarget(error).includes("orderNumber");
+        if (!isCollision || attempt === UNIQUE_RETRY_ATTEMPTS - 1) {
+          throw error;
+        }
+      }
+    }
+    if (!order) {
+      throw new Error("Failed to create order after retries");
+    }
+    const createdOrder = order;
 
     // Realtime: order created by the restaurant admin.
-    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.ORDER_CREATED, order.id, {
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-      orderType: order.orderType,
-      status: order.status,
-      tableId: order.tableId || null,
-      visitorCount: order.visitorCount,
-      customerId: order.customerId,
-      grandTotal: Number(order.grandTotal),
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.ORDER_CREATED, createdOrder.id, {
+      orderId: createdOrder.id,
+      orderNumber: createdOrder.orderNumber,
+      orderType: createdOrder.orderType,
+      status: createdOrder.status,
+      tableId: createdOrder.tableId || null,
+      visitorCount: createdOrder.visitorCount,
+      customerId: createdOrder.customerId,
+      grandTotal: Number(createdOrder.grandTotal),
     });
-    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
-    if (order.tableId) {
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, createdOrder.id);
+    if (createdOrder.tableId) {
       emitRealtime(
         restaurantId,
         REALTIME_EVENT_TYPES.TABLE_STATUS_CHANGED,
-        `${order.tableId}-OCCUPIED`,
-        { tableId: order.tableId, status: "OCCUPIED" }
+        `${createdOrder.tableId}-OCCUPIED`,
+        { tableId: createdOrder.tableId, status: "OCCUPIED" }
       );
     }
 
-    return order;
+    return createdOrder;
   }
 
   /**
@@ -269,11 +325,14 @@ export class OrderService {
       }
     }
 
-    // Validate all products exist, are available, and belong to this restaurant
+    // Validate all products exist, are available, and belong to this restaurant.
+    // Deduplicate product ids BEFORE comparing counts — the same product may
+    // appear several times with different customizations (see H7).
     const productIds = input.items.map((item) => item.productId);
+    const uniqueProductIds = [...new Set(productIds)];
     const products = await prisma.product.findMany({
       where: {
-        id: { in: productIds },
+        id: { in: uniqueProductIds },
         restaurantId,
         isActive: true,
         isAvailable: true,
@@ -293,9 +352,9 @@ export class OrderService {
       },
     });
 
-    if (products.length !== productIds.length) {
+    if (products.length !== uniqueProductIds.length) {
       const foundIds = new Set(products.map((p) => p.id));
-      const missingIds = productIds.filter((id) => !foundIds.has(id));
+      const missingIds = uniqueProductIds.filter((id) => !foundIds.has(id));
       throw new ValidationError(
         `Produk tidak ditemukan atau tidak tersedia: ${missingIds.join(", ")}`
       );
@@ -441,9 +500,6 @@ export class OrderService {
     const serviceCharge = isDineIn ? 0 : Math.round(subtotal * 0.05);
     const grandTotal = subtotal + tax + serviceCharge;
 
-    // Generate order number
-    const orderNumber = generateOrderNumber();
-
     // Track customer side effects to notify the admin in realtime after the
     // transaction commits (a guest checkout creates a new Customer row).
     let createdCustomerId: string | null = null;
@@ -451,8 +507,10 @@ export class OrderService {
     let createdCustomerPhone: string | null = null;
     let createdCashierPaymentId: string | null = null;
 
-    // Create order in transaction
-    const order = await prisma.$transaction(async (tx) => {
+    // Create order in transaction, retrying on an order-number collision
+    // with a fresh number (bounded — see UNIQUE_RETRY_ATTEMPTS).
+    const createInTx = (orderNumber: string) =>
+      prisma.$transaction(async (tx) => {
       // Find or create customer
       let customer;
       if (normalizedPhone) {
@@ -563,6 +621,24 @@ export class OrderService {
 
       return newOrder;
     });
+
+    let order: Awaited<ReturnType<typeof createInTx>> | null = null;
+    for (let attempt = 0; attempt < UNIQUE_RETRY_ATTEMPTS; attempt++) {
+      try {
+        order = await createInTx(generateOrderNumber());
+        break;
+      } catch (error) {
+        const isCollision =
+          isUniqueViolation(error) &&
+          orderNumberTarget(error).includes("orderNumber");
+        if (!isCollision || attempt === UNIQUE_RETRY_ATTEMPTS - 1) {
+          throw error;
+        }
+      }
+    }
+    if (!order) {
+      throw new Error("Failed to create order after retries");
+    }
 
     // Realtime (after commit): notify the admin's restaurant channel.
     if (createdCustomerId) {
@@ -777,13 +853,18 @@ export class OrderService {
   /**
    * Get order by order number (public — for customer tracking).
    * No auth required, but order must exist.
+   *
+   * Returns only the fields needed for customer tracking — the caller maps
+   * this to an explicit DTO (never the raw Prisma object). Customer phone
+   * and internal payment fields (provider / paymentUrl / providerRef) are
+   * intentionally NOT selected here (see H3).
    */
   async getOrderByNumber(orderNumber: string) {
     const order = await prisma.order.findFirst({
       where: { orderNumber },
       include: {
         customer: {
-          select: { name: true, phone: true },
+          select: { name: true },
         },
         table: {
           select: { number: true, name: true },
@@ -806,10 +887,8 @@ export class OrderService {
         payments: {
           select: {
             method: true,
-            provider: true,
             status: true,
             amount: true,
-            paymentUrl: true,
             paidAt: true,
           },
           orderBy: { createdAt: "desc" },
@@ -863,13 +942,26 @@ export class OrderService {
 
     let whatsappTriggered = false;
 
-    // Update order status
+    // Update order status. The transition itself is a CONDITIONAL update
+    // (only from the status we validated above), so two concurrent or
+    // double-clicked requests cannot both write the same transition — the
+    // loser gets a ConflictError instead of a duplicate history row (LOW-7).
     const updatedOrder = await prisma.$transaction(async (tx) => {
-      const updated = await tx.order.update({
-        where: { id },
+      const updated = await tx.order.updateMany({
+        where: { id, status: order.status },
         data: {
           status: input.status as "PENDING" | "CONFIRMED" | "PROCESSING" | "READY" | "COMPLETED" | "CANCELLED",
         },
+      });
+
+      if (updated.count === 0) {
+        throw new ConflictError(
+          "Status pesanan telah berubah — silakan muat ulang"
+        );
+      }
+
+      const fresh = await tx.order.findUnique({
+        where: { id },
         include: {
           customer: true,
           table: true,
@@ -880,6 +972,9 @@ export class OrderService {
           },
         },
       });
+      if (!fresh) {
+        throw new NotFoundError("Order not found");
+      }
 
       // Create status history
       await tx.orderStatusHistory.create({
@@ -902,7 +997,7 @@ export class OrderService {
         });
       }
 
-      return updated;
+      return fresh;
     });
 
     // ============================================================

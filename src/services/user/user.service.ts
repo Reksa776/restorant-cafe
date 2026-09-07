@@ -118,7 +118,12 @@ export class UserService {
     }
     const updated = await prisma.user.update({
       where: { id: user.id },
-      data: { isActive: input.isActive },
+      data: {
+        isActive: input.isActive,
+        // Invalidate every existing session for this user (M3): JWTs carry
+        // the pre-bump sessionVersion and are rejected on the next request.
+        sessionVersion: { increment: 1 },
+      },
       select: {
         id: true,
         name: true,
@@ -168,7 +173,12 @@ export class UserService {
     const password = await bcrypt.hash(input.newPassword, 12);
     await prisma.user.update({
       where: { id: user.id },
-      data: { password },
+      data: {
+        password,
+        // Invalidate every existing session (M3) — including the current
+        // one: the client is signed out cleanly after a successful change.
+        sessionVersion: { increment: 1 },
+      },
     });
 
     await auditService.log({

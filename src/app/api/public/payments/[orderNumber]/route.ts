@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
+import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 
 /**
  * GET /api/public/payments/[orderNumber]
@@ -17,6 +18,14 @@ export async function GET(
   { params }: { params: Promise<{ orderNumber: string }> }
 ) {
   try {
+    // Rate limited per IP — the payment page polls every 4 s (≈15/min),
+    // so a 120/min window leaves generous headroom while blocking abuse.
+    assertRateLimit(
+      rateLimitKey("public-payment-status", request),
+      120,
+      60_000
+    );
+
     const { orderNumber } = await params;
 
     const order = await prisma.order.findFirst({

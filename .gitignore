@@ -7,6 +7,13 @@ npm-debug.log*
 *.tsbuildinfo
 
 # Runtime product image uploads (local filesystem storage)
+# Runtime uploads are LIVE DATA and must never be committed.
+# NOTE: these patterns are anchored to the repository root so the upload
+# SOURCE routes under src/app/api/admin/uploads and src/app/uploads stay
+# tracked — only runtime storage directories are ignored.
+/.runtime-data/
+/uploads/
+/public/uploads/
 
-# Runtime data kept outside the `next dev` watcher (product image uploads
-# in local development via PRODUCT_UPLOAD_DIR)
+# Local E2E browser screenshots (test artifacts only)
+/shots/

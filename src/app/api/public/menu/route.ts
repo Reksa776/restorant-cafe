@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
+import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 
 /**
  * GET /api/public/menu?restaurantId=xxx
@@ -10,6 +11,8 @@ import { AppError } from "@/lib/errors";
  */
 export async function GET(request: NextRequest) {
   try {
+    assertRateLimit(rateLimitKey("public-menu", request), 240, 60_000);
+
     const { searchParams } = new URL(request.url);
     const restaurantId = searchParams.get("restaurantId");
     const categoryId = searchParams.get("categoryId");

@@ -40,7 +40,7 @@ export interface PaymentResult {
 
 export interface WebhookData {
   reference: string;
-  status: "PAID" | "FAILED" | "EXPIRED";
+  status: "PAID" | "PENDING" | "FAILED" | "EXPIRED" | "CANCELLED";
   amount: number;
   rawData: any;
 }

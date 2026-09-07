@@ -45,6 +45,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           name: user.name,
           email: user.email,
           role: user.role,
+          // Carried into the JWT by the jwt callback so the API layer can
+          // reject sessions that predate a password change / deactivation.
+          sessionVersion: user.sessionVersion,
         };
       },
     }),

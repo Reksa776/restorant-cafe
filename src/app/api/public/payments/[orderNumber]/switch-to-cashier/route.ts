@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { paymentService } from "@/services/payment/payment.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
+import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 
 /**
  * POST /api/public/payments/[orderNumber]/switch-to-cashier
@@ -27,6 +28,12 @@ export async function POST(
   { params }: { params: Promise<{ orderNumber: string }> }
 ) {
   try {
+    assertRateLimit(
+      rateLimitKey("public-payment-switch-cashier", request),
+      10,
+      60_000
+    );
+
     const { orderNumber } = await params;
 
     const result = await paymentService.switchToCashier(orderNumber);

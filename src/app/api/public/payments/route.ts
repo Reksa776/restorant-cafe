@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { paymentService } from "@/services/payment/payment.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
+import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 
 /**
  * POST /api/public/payments
@@ -11,6 +12,9 @@ import { AppError, ValidationError } from "@/lib/errors";
  */
 export async function POST(request: NextRequest) {
   try {
+    // Anti-abuse: bound payment-intent creation per client (M2).
+    assertRateLimit(rateLimitKey("public-payment-create", request), 30, 60_000);
+
     const body = await request.json();
 
     if (!body.orderNumber) {

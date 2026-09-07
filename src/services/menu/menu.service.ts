@@ -13,6 +13,21 @@ import { productImageUploadService } from "@/services/upload/product-image-uploa
  * - invalid string → ValidationError (400)
  * Only called when the caller actually wants to SET/CHANGE the image.
  */
+/**
+ * Validate a money value (price / priceAdjustment / addon price). Accepts
+ * numbers and numeric strings (the existing API contract); rejects NaN,
+ * Infinity and negative values (M6). Returns the normalized number.
+ */
+function validateMoney(value: unknown, fieldName: string): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    throw new ValidationError(
+      `${fieldName} harus berupa angka non-negatif yang valid`
+    );
+  }
+  return n;
+}
+
 function validateProductImageValue(
   imageUrl: string | null | undefined,
   restaurantId: string,
@@ -256,8 +271,9 @@ export class MenuService {
       );
     }
 
-    // Validate imageUrl (string → http/https URL or local upload owned by
-    // this restaurant; null/absent → no image)
+    // Validate price (M6) and imageUrl (string → http/https URL or local
+    // upload owned by this restaurant; null/absent → no image)
+    const price = validateMoney(data.price, "price");
     const imageUrl =
       data.imageUrl === undefined
         ? null
@@ -269,7 +285,7 @@ export class MenuService {
         categoryId: data.categoryId,
         name: data.name,
         description: data.description,
-        price: data.price,
+        price,
         imageUrl,
         isAvailable: data.isAvailable ?? true,
       },
@@ -342,6 +358,9 @@ export class MenuService {
       }
     }
 
+    // Price must be a valid non-negative number when provided (M6).
+    const price = data.price !== undefined ? validateMoney(data.price, "price") : undefined;
+
     // imageUrl semantics:
     //  - absent        → keep the current image (backward compatible)
     //  - null          → remove the image
@@ -360,7 +379,7 @@ export class MenuService {
       data: {
         ...restData,
         ...(nextImageUrl !== undefined ? { imageUrl: nextImageUrl } : {}),
-        price: data.price,
+        ...(price !== undefined ? { price } : {}),
       },
       include: {
         category: true,
@@ -408,6 +427,14 @@ export class MenuService {
       where: { id },
       data: { isActive: false },
     });
+
+    // Remove the associated runtime image file (M7). Best-effort: the delete
+    // service confines the path under OUR upload root + this restaurant's
+    // folder and never fails the business write when the file is missing.
+    const ownPrefix = `/uploads/products/${restaurantId}/`;
+    if (product.imageUrl?.startsWith(ownPrefix)) {
+      await productImageUploadService.deleteByUrl(product.imageUrl);
+    }
 
     emitRealtime(
       restaurantId,
@@ -643,11 +670,17 @@ export class MenuService {
       throw new NotFoundError("Option group not found");
     }
 
+    // Money field validation (M6): price adjustments feed order totals.
+    const priceAdjustment =
+      data.priceAdjustment !== undefined
+        ? validateMoney(data.priceAdjustment, "priceAdjustment")
+        : 0;
+
     return prisma.productOption.create({
       data: {
         optionGroupId: groupId,
         name: data.name,
-        priceAdjustment: data.priceAdjustment ?? 0,
+        priceAdjustment,
         sortOrder: data.sortOrder ?? 0,
       },
     });
@@ -678,6 +711,11 @@ export class MenuService {
       where: { id: optionId, optionGroupId: groupId },
     });
     if (!option) throw new NotFoundError("Option not found");
+
+    // Money field validation (M6).
+    if (data.priceAdjustment !== undefined) {
+      data = { ...data, priceAdjustment: validateMoney(data.priceAdjustment, "priceAdjustment") };
+    }
 
     return prisma.productOption.update({
       where: { id: optionId },
@@ -737,11 +775,14 @@ export class MenuService {
     });
     if (!product) throw new NotFoundError("Product not found");
 
+    // Money field validation (M6).
+    const price = validateMoney(data.price, "price");
+
     return prisma.productAddon.create({
       data: {
         productId,
         name: data.name,
-        price: data.price,
+        price,
         sortOrder: data.sortOrder ?? 0,
       },
     });
@@ -767,6 +808,11 @@ export class MenuService {
       where: { id: addonId, productId },
     });
     if (!addon) throw new NotFoundError("Addon not found");
+
+    // Money field validation (M6).
+    if (data.price !== undefined) {
+      data = { ...data, price: validateMoney(data.price, "price") };
+    }
 
     return prisma.productAddon.update({
       where: { id: addonId },
