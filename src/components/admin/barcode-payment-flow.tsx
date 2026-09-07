@@ -55,6 +55,9 @@ type ScanStatus =
 
 interface BarcodePaymentFlowProps {
   onPaymentCompleted?: (orderId: string, orderNumber: string) => void;
+  /** Optional controlled open state (e.g. an external "Bayar" button). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 // Polling cadence matches the customer payment page (4s). Same infrastructure
@@ -63,8 +66,11 @@ const POLL_INTERVAL_MS = 4000;
 
 export function BarcodePaymentFlow({
   onPaymentCompleted,
+  open,
+  onOpenChange,
 }: BarcodePaymentFlowProps) {
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const dialogOpen = open !== undefined ? open : internalOpen;
   const [scanStatus, setScanStatus] = useState<ScanStatus>("idle");
   const [order, setOrder] = useState<Order | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(null);
@@ -138,7 +144,11 @@ export function BarcodePaymentFlow({
       setQrCountdown(null);
       paidNotifiedRef.current = false;
     }
-    setDialogOpen(next);
+    if (onOpenChange) {
+      onOpenChange(next);
+    } else {
+      setInternalOpen(next);
+    }
   };
 
   const resetToChoose = () => {
@@ -152,7 +162,7 @@ export function BarcodePaymentFlow({
   };
 
   const handleClose = () => {
-    setDialogOpen(false);
+    handleOpenChange(false);
   };
 
   const startScanner = () => {
@@ -476,8 +486,8 @@ export function BarcodePaymentFlow({
               {payStatus === "choose" && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium">
-                      Pilih Metode Pembayaran
+                    <p className="text-sm font-semibold">
+                      Proses Pembayaran
                     </p>
                     <Button
                       type="button"

@@ -71,30 +71,41 @@ export function CashierPayDialog({
   // the success flow — the receipt keeps rendering from the snapshot).
   useEffect(() => {
     if (!open) return;
-    const payments = (order?.payments || [])
-      .slice()
-      .sort((a, b) => {
-        const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        return tb - ta;
-      });
-    const unpaid = payments.find(
-      (p) => p.method === "KASIR" && p.status === "UNPAID"
-    );
-    if (unpaid && order) {
-      setSnapshot({
-        paymentId: unpaid.id,
-        orderId: order.id,
-        orderNumber: order.orderNumber,
-        customerName: order.customer?.name || "Guest",
-        amountDue: Math.round(Number(unpaid.amount) * 100) / 100,
-      });
-    } else {
-      setSnapshot(null);
-    }
-    setReceivedRaw("");
-    setReceipt(null);
-    setIsSubmitting(false);
+    let cancelled = false;
+    // Defer off the effect body (React 19 purity rule) — the snapshot and
+    // form state are captured once when the dialog opens, then stay stable
+    // even after the parent refetches the (now PAID) order.
+    (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      const payments = (order?.payments || [])
+        .slice()
+        .sort((a, b) => {
+          const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return tb - ta;
+        });
+      const unpaid = payments.find(
+        (p) => p.method === "KASIR" && p.status === "UNPAID"
+      );
+      if (unpaid && order) {
+        setSnapshot({
+          paymentId: unpaid.id,
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          customerName: order.customer?.name || "Guest",
+          amountDue: Math.round(Number(unpaid.amount) * 100) / 100,
+        });
+      } else {
+        setSnapshot(null);
+      }
+      setReceivedRaw("");
+      setReceipt(null);
+      setIsSubmitting(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 

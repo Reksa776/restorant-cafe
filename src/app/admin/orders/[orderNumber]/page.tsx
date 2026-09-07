@@ -98,9 +98,17 @@ export default function AdminOrderByNumberPage({
   }, [orderNumber]);
 
   useEffect(() => {
-    setLoadState("loading");
-    setOrder(null);
-    loadOrder();
+    let cancelled = false;
+    (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
+      setLoadState("loading");
+      setOrder(null);
+      void loadOrder();
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [loadOrder]);
 
   // Keep this page live: cashier actions + order workflow arrive via SSE.
@@ -300,6 +308,8 @@ export default function AdminOrderByNumberPage({
       />
 
       <BarcodePaymentFlow
+        open={barcodePaymentOpen}
+        onOpenChange={setBarcodePaymentOpen}
         onPaymentCompleted={() => loadOrder()}
       />
 
