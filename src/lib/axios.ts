@@ -63,16 +63,17 @@ function clearSessionCookies(): void {
  * session cookie.
  */
 function recoverFromUnauthorized(): void {
+  // Use relative path - Auth.js will handle the redirect correctly
+  // regardless of the current host (localhost or production domain)
   if (authRecoveryInFlight) return;
   authRecoveryInFlight = true;
 
-  signOut({ redirectTo: LOGIN_PATH, redirect: false })
+  signOut({ redirect: false })
     .then((result) => {
-      // On success Auth.js resolves { url: "/login" } after clearing the
-      // session cookie server-side. Navigate only now — full navigation is
-      // preferred because authentication state/cookies have changed.
-      if (result?.url && result.url.startsWith(LOGIN_PATH)) {
-        window.location.href = result.url;
+      // On success Auth.js clears the session cookie server-side.
+      // Navigate to relative /login path - this works on any host.
+      if (result?.url) {
+        window.location.href = "/login";
         return;
       }
       // Sign-out responded but not with the expected target (e.g. a CSRF or
