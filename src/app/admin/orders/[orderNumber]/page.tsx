@@ -10,6 +10,7 @@ import {
   CreditCard,
   Loader2,
   RefreshCw,
+  ScanLine,
   UtensilsCrossed,
   ShoppingBag,
   Truck,
@@ -21,6 +22,7 @@ import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { OrderScanner } from "@/components/admin/order-scanner";
 import { CashierPayDialog } from "@/components/admin/orders/cashier-pay-dialog";
+import { BarcodePaymentFlow } from "@/components/admin/barcode-payment-flow";
 import { ApprovalActions } from "@/components/admin/orders/approval-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -67,6 +69,7 @@ export default function AdminOrderByNumberPage({
   const [order, setOrder] = useState<Order | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "not_found" | "error">("loading");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [barcodePaymentOpen, setBarcodePaymentOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -262,14 +265,24 @@ export default function AdminOrderByNumberPage({
                   </p>
                 </div>
               </div>
-              <Button
-                size="sm"
-                className="bg-green-600 hover:bg-green-700 flex-shrink-0"
-                onClick={() => setDialogOpen(true)}
-              >
-                <Banknote className="h-4 w-4 mr-1" />
-                Proses Pembayaran Kasir
-              </Button>
+              <div className="flex gap-2 flex-shrink-0">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setBarcodePaymentOpen(true)}
+                >
+                  <ScanLine className="h-4 w-4 mr-1" />
+                  Scan & Bayar
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700"
+                  onClick={() => setDialogOpen(true)}
+                >
+                  <Banknote className="h-4 w-4 mr-1" />
+                  Proses Pembayaran Kasir
+                </Button>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
@@ -284,6 +297,10 @@ export default function AdminOrderByNumberPage({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onCompleted={() => loadOrder()}
+      />
+
+      <BarcodePaymentFlow
+        onPaymentCompleted={() => loadOrder()}
       />
 
       {/* Payment history + audit */}

@@ -322,7 +322,7 @@ export function OrderCard({
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 pt-1">
+        <div className="flex items-center gap-2 pt-1 flex-wrap">
           <Button
             variant="outline"
             size="sm"
@@ -394,15 +394,26 @@ export function OrderCard({
 
         {/* Cashier payment — collect & mark as paid (UNPAID only) */}
         {isCashierUnpaid && cashierPayment && (
-          <Button
-            size="sm"
-            onClick={() => onMarkPaid(cashierPayment.id, order.id)}
-            disabled={isUpdating}
-            className="w-full bg-green-600 hover:bg-green-700"
-          >
-            <Banknote className="h-3.5 w-3.5 mr-1" />
-            Tandai Sudah Dibayar
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onMarkPaid(cashierPayment.id, order.id)}
+              disabled={isUpdating}
+              className="flex-1 bg-green-600 hover:bg-green-700"
+            >
+              <Banknote className="h-3.5 w-3.5 mr-1" />
+              Tandai Bayar
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => onStatusChange(order.id, "COMPLETED")}
+              disabled={isUpdating}
+              className="flex-1 bg-blue-500 hover:bg-blue-600"
+            >
+              Scan Barcode
+            </Button>
+          </div>
         )}
       </CardContent>
     </Card>

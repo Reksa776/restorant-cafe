@@ -58,6 +58,24 @@ export const paymentService = {
   },
 
   /**
+   * Create QRIS payment from kasir context (barcode scan).
+   * Supports retry on FAILED/EXPIRED payments.
+   */
+  async createKasirQrisPayment(
+    orderNumber: string
+  ): Promise<{
+    payment: Payment;
+    kind: string;
+    message: string;
+  }> {
+    const response = await api.post("/payments", {
+      orderNumber,
+      method: "QRIS",
+    });
+    return response.data.data;
+  },
+
+  /**
    * Cashier action — complete a KASIR payment (admin only).
    *
    * `amountReceived` is the cash handed by the customer (payment form); when

@@ -29,8 +29,18 @@ export async function POST(request: NextRequest) {
     const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
     const body = await request.json();
 
+    // Support both orderId-based creation and orderNumber-based kasir QRIS
+    if (body.orderNumber && body.method === "QRIS") {
+      // Kasir-initiated QRIS payment
+      const result = await paymentService.createKasirQrisPayment(
+        body.orderNumber,
+        restaurantId
+      );
+      return successResponse(result, result.message);
+    }
+
     if (!body.orderId) {
-      throw new ValidationError("orderId is required");
+      throw new ValidationError("orderId or orderNumber is required");
     }
 
     const payment = await paymentService.createPayment(body.orderId, restaurantId);

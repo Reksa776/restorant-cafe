@@ -994,6 +994,130 @@ export class PaymentService {
 
     return { paymentUrl: payment.paymentUrl };
   }
+
+  /**
+   * Kasir-initiated QRIS payment creation.
+   *
+   * Mirras createPayment with method QRIS, but scoped to kasir context:
+   * - Must be DINE_IN order
+   * - Must not already be PAID
+   * - Allows retry on FAILED/EXPIRED by expiring stale rows first
+   * - Returns the created/retry payment with QR data
+   */
+  async createKasirQrisPayment(orderNumber: string, restaurantId: string) {
+    // Find the order with payments
+    const order = await prisma.order.findFirst({
+      where: {
+        orderNumber,
+        restaurantId,
+      },
+      include: {
+        customer: true,
+        restaurant: {
+          select: { phone: true, email: true },
+        },
+        items: {
+          include: {
+            product: true,
+          },
+        },
+        payments: {
+          orderBy: { createdAt: "desc" },
+        },
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundError("Order not found");
+    }
+
+    if (order.orderType !== "DINE_IN") {
+      throw new ValidationError(
+        "QRIS payment only available for dine-in orders"
+      );
+    }
+
+    // Already paid orders cannot create new payments
+    if (
+      order.paymentStatus === "PAID" ||
+      order.payments.some((p) => p.status === "PAID")
+    ) {
+      throw new ConflictError("Order already paid");
+    }
+
+    const now = new Date();
+
+    // Handle existing UNPAID KASIR row - return it (kasir can collect cash)
+    const existingCashier = order.payments.find(
+      (p) => p.method === "KASIR" && p.status === "UNPAID"
+    );
+    if (existingCashier) {
+      return {
+        payment: existingCashier,
+        kind: "kasir_existing" as const,
+        message: "Cash payment already recorded for this order",
+      };
+    }
+
+    // Handle existing PENDING/FAILED/EXPIRED QRIS or VA payment
+    const latestPayment = order.payments[0];
+    if (latestPayment) {
+      // If PENDING and not expired, return it (QR still valid)
+      if (
+        latestPayment.status === "PENDING" &&
+        latestPayment.expiresAt &&
+        new Date(latestPayment.expiresAt).getTime() > now.getTime()
+      ) {
+        return {
+          payment: latestPayment,
+          kind: "pending_existing" as const,
+          message: "QRIS payment still active",
+        };
+      }
+
+      // Expired or failed - allow retry by marking stale row expired first
+      if (
+        latestPayment.status === "EXPIRED" ||
+        latestPayment.status === "FAILED" ||
+        (latestPayment.status === "PENDING" &&
+          latestPayment.expiresAt &&
+          new Date(latestPayment.expiresAt).getTime() <= now.getTime())
+      ) {
+        // Mark stale row as EXPIRED if it was PENDING
+        if (latestPayment.status === "PENDING") {
+          await prisma.payment.updateMany({
+            where: { id: latestPayment.id, status: "PENDING" },
+            data: { status: "EXPIRED" },
+          });
+        }
+        // Re-check no new payment was created concurrently
+        const checkPayment = await prisma.payment.findFirst({
+          where: {
+            orderId: order.id,
+            status: { in: ["PENDING", "PAID"] },
+          },
+        });
+        if (checkPayment) {
+          return {
+            payment: checkPayment,
+            kind: "pending_existing" as const,
+            message: "Active payment now exists for this order",
+          };
+        }
+      }
+    }
+
+    // Create new QRIS payment
+    const result = await this.createPayment(order.id, restaurantId, {
+      method: "QRIS",
+    });
+
+    return {
+      payment: result,
+      kind: "qris_created" as const,
+      message: "QRIS payment created successfully",
+    };
+  }
 }
 
 export const paymentService = new PaymentService();

@@ -12,7 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { paymentService, type Payment } from "@/services/payment.service";
-import { ExternalLink, Banknote, Loader2 } from "lucide-react";
+import { ExternalLink, Banknote, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
@@ -74,6 +74,31 @@ export default function PaymentsPage() {
     } catch (error) {
       console.error("Failed to mark cashier payment paid:", error);
       toast.error("Gagal menandai pembayaran kasir");
+    } finally {
+      setMarkingId(null);
+    }
+  };
+
+  // Repayment: create new QRIS payment for FAILED/EXPIRED QRIS payments
+  const handleRepayment = async (payment: Payment) => {
+    setMarkingId(payment.id);
+    try {
+      const result = await paymentService.createKasirQrisPayment(
+        payment.order.orderNumber
+      );
+      if (result.kind === "kasir_existing") {
+        toast.info("Pembayaran kasir sudah tercatat. Silakan tandai sebagai lunas.");
+        // Switch to mark-paid flow
+        await handleMarkPaid(result.payment as unknown as Payment);
+      } else {
+        toast.success("QRIS baru berhasil dibuat untuk pembayaran ulang.");
+        await loadPayments(true);
+      }
+    } catch (error) {
+      console.error("Failed to create repayment payment:", error);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const msg = (error as any)?.response?.data?.message;
+      toast.error(msg || "Gagal membuat pembayaran ulang");
     } finally {
       setMarkingId(null);
     }
@@ -181,6 +206,38 @@ export default function PaymentsPage() {
                           Tandai Dibayar
                         </Button>
                       )}
+                    {payment.status === "FAILED" && payment.method === "QRIS" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-red-300 text-red-600 hover:bg-red-50"
+                        disabled={markingId === payment.id}
+                        onClick={() => handleRepayment(payment)}
+                      >
+                        {markingId === payment.id ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4 mr-1" />
+                        )}
+                        Repayment
+                      </Button>
+                    )}
+                    {payment.status === "EXPIRED" && payment.method === "QRIS" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-orange-300 text-orange-600 hover:bg-orange-50"
+                        disabled={markingId === payment.id}
+                        onClick={() => handleRepayment(payment)}
+                      >
+                        {markingId === payment.id ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                        ) : (
+                          <RefreshCw className="h-4 w-4 mr-1" />
+                        )}
+                        Repayment
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}
