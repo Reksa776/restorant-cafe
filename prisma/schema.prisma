@@ -189,6 +189,9 @@ model BranchProduct {
   productId     String
   isAvailable   Boolean  @default(true)
   priceOverride Decimal? @db.Decimal(10, 2)
+  // Per-branch inventory quantity (inventory count managed by staff/admin).
+  // Orders/payments do NOT auto-decrement this; it is a manual stock level.
+  stock         Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

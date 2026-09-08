@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { branchService, type Branch } from "@/services/branch.service";
+import { refreshBranchContext } from "@/hooks/use-branch-context";
 import { toast } from "sonner";
 import { Loader2, Plus, Store, Pencil, Power } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -78,6 +79,7 @@ export default function BranchSettingsPage() {
       toast.success("Cabang berhasil dibuat");
       setCreateOpen(false);
       await load();
+      refreshBranchContext();
     } catch (err) {
       toast.error(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -101,6 +103,7 @@ export default function BranchSettingsPage() {
       toast.success("Cabang berhasil diperbarui");
       setEditing(null);
       await load();
+      refreshBranchContext();
     } catch (err) {
       toast.error(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,6 +121,7 @@ export default function BranchSettingsPage() {
         branch.isActive ? "Cabang dinonaktifkan" : "Cabang diaktifkan"
       );
       await load();
+      refreshBranchContext();
     } catch (err) {
       toast.error(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

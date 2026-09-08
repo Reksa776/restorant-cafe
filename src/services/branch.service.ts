@@ -26,6 +26,7 @@ export interface BranchProductRow {
   isAvailable: boolean;
   priceOverride: number | null;
   effectivePrice: number;
+  stock: number;
 }
 
 export const branchService = {
@@ -77,8 +78,17 @@ export const branchService = {
   async updateBranchProduct(
     branchId: string,
     productId: string,
-    data: { isAvailable?: boolean; priceOverride?: number | null }
-  ): Promise<{ productId: string; isAvailable: boolean; priceOverride: number | null }> {
+    data: {
+      isAvailable?: boolean;
+      priceOverride?: number | null;
+      stock?: number;
+    }
+  ): Promise<{
+    productId: string;
+    isAvailable: boolean;
+    priceOverride: number | null;
+    stock: number;
+  }> {
     const response = await api.put(
       `/admin/branches/${branchId}/products/${productId}`,
       data

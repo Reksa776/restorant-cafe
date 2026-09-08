@@ -1228,3 +1228,53 @@ Sesi ini menutup seluruh temuan OPEN §26. **Tidak ada perubahan schema/migratio
 
 ## 36.9 FINAL VERDICT — ✅ **🟡 READY WITH CONDITIONS**
 Semua tes isolasi tenant, isolasi branch, IDOR, negative, dan regression (mobile/QRIS/KASIR) **LULUS di lingkungan lokal**; `tsc` & `build` hijau; lint tanpa error baru; satusatunya defect produksi-blocking (route `/t` slug conflict) **sudah diperbaiki & diverifikasi**. Satu-satunya syarat untuk 🟢 PRODUCTION READY: **verifikasi `prisma migrate status` + jalankan backfill idempotent di lingkungan produksi/staging** (tidak tersedia pada sesi ini). **🔴 NOT READY tidak terpenuhi** — tidak ada leak/bypass/IDOR yang terkonfirmasi.
+
+---
+
+# 38. BRANCH FRONTEND VISIBILITY BUG
+
+## Status: ✅ 🟢 FIXED
+
+## Gejala
+Admin membuat cabang baru dari **Settings → Cabang**: toast "Cabang berhasil dibuat", tapi cabang baru **tidak muncul di branch selector** (pojok kanan atas seluruh halaman admin) sampai reload penuh / login ulang.
+
+## Audit — Root Cause
+1. **CREATE (backend): PASS.** `POST /api/admin/branches` → `requireAdmin()` (restaurantId dari SESSION, bukan client) → `branchService.createBranch()` → `prisma.branch.create({ restaurantId, code, name, ..., isActive: true })`. Diverifikasi runtime: `201`, `isActive=true`, `restaurantId` Resto A benar. Kode unik per-resto (`409` untuk duplikat).
+2. **LIST (backend): PASS.** `GET /api/admin/branches` → `listBranches(ctx.restaurantId, ctx.branchScoped ? ctx.branchIds : undefined)`. Cabang baru **LANGSUNG tampil** (diverifikasi runtime).
+3. **SESSION (backend): PASS.** `GET /api/auth/session` → query DB segar → cabang baru **LANGSUNG tampil** (`branchScoped=false`, tanpa UserBranch — sesuai desain: ADMIN unrestricted melihat semua cabang resto).
+4. **DATABASE: PASS.** Cabang baru ada di `branch` (`isActive=1`, resto benar); `userbranch` kosong (wajar untuk unrestricted admin — bukan degradasi akses).
+5. **FRONTEND (list halaman): PASS.** `admin/settings/branches/page.tsx` `handleCreate` → `await load()` → `getBranches()` fresh → list halaman ter-update.
+6. **FRONTEND (branch selector): FAIL (stale state).** `BranchSelector` memakai `useBranchContext()` yang fetch `/api/auth/session` **hanya sekali saat mount** (`useEffect([])`). Layout admin adalah client component yang persist antar navigasi → setelah create, dropdown selector masih memegang daftar cabang versi login. **Inilah satu-satunya permukaan usang.**
+
+**Kesimpulan: Case B — GET sudah memuat cabang, UI selector tidak merefresh; bukan bug backend, bukan mis-match restaurantId, bukan filter isActive, bukan cache server, bukan masalah UserBranch.**
+
+## FIX APPLIED
+Strategi invalidasi terkecil & tepat: sinyal refresh modul di `useBranchContext` yang memicu **semua instance** ter-mount untuk refetch `/api/auth/session` (tanpa menghapus mekanisme clamping `admin_branch_id`).
+
+FILES CHANGED:
+- `src/hooks/use-branch-context.ts` — extract `load()` (refetch session + re-clamp stored branch) + module-level `refreshListeners: Set` + **export `refreshBranchContext()`**.
+- `src/app/admin/settings/branches/page.tsx` — panggil `refreshBranchContext()` setelah `createBranch` / `updateBranch` / `setBranchActive` (di samping `load()` yang sudah ada).
+
+WHY:
+- Backend/authorization TIDAK disentuh → tetap authoritative (`requireAdmin`, `listBranches` scope, tenant isolation utuh).
+- Tanpa `cache:no-store` global, tanpa revalidatePath (mutasi murni client-side), tanpa store eksternal.
+- Menangani case restart-less: setelah mutasi, selector & konsumen branch lain langsung sinkron dengan DB.
+
+SECURITY IMPACT:
+- **NONE / positif.** Semua guard server tidak berubah. Diverifikasi di build baru: tenant isolation (Resto B hanya BKS, tidak pernah X-TEST), branch scope (scoped admin hanya JKT), forge `x-branch-id` asing tetap dinetralkan (server authoritative).
+
+## REGRESSION
+- Create branch → POST `201`; `GET /admin/branches` memuat cabang; `GET /auth/session` memuat cabang. (runtime, port 3001)
+- Refresh halaman & login-ulang: cabang tetap tampil (kondisi kedua bergantung pada refresh context yang kini otomatis).
+- Tenant: `Resto A → JKT/BDG/MAIN`; `Resto B → BKS`; **A tidak pernah melihat BKS**, B tidak pernah melihat X-TEST.
+- Edit / toggle aktif: memicu `refreshBranchContext()` yang sama.
+
+## GATES
+- `npx tsc --noEmit`: **PASS** (exit 0)
+- `npm run build`: **PASS** (0 error)
+- `npm run lint`: **33 error / 46 warning — SAMA dengan baseline pre-existing; 0 error baru** (diff 4 baris +1 import).
+- App tetap berjalan `next start -p 3001` di build terbaru (port 3000 tidak disentuh).
+
+## Catatan
+- Data repro `X-TEST` dibuat untuk verifikasi lalu **dihapus** (0 child row; tanpa penghapusan data lain).
+- Bukan Case A/C/D/E/F: tidak ada perubahan backend/query, cache server, isActive, UserBranch, atau tenant resolution.

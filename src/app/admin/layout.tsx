@@ -21,6 +21,7 @@ import {
   LogOut,
   Menu,
   X,
+  Boxes,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
@@ -44,11 +45,12 @@ const navigation: NavItem[] = [
   { name: "Orders", href: "/admin/orders", icon: ShoppingCart, roles: ["ADMIN", "CASHIER"] },
   { name: "Payments", href: "/admin/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
   { name: "Shifts", href: "/admin/shifts", icon: Clock, roles: ["ADMIN", "CASHIER"] },
-  { name: "Reports", href: "/admin/reports", icon: BarChart3, roles: ["ADMIN"] },
+  { name: "Reports", href: "/admin/reports", icon: BarChart3, roles: ["ADMIN", "CASHIER"] },
   { name: "Marketing", href: "/admin/marketing", icon: Megaphone, roles: ["ADMIN"] },
   { name: "Users", href: "/admin/users", icon: Users, roles: ["ADMIN"] },
   { name: "Menu", href: "/admin/menu", icon: UtensilsCrossed, roles: ["ADMIN"] },
-  { name: "Tables", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN"] },
+  { name: "Stok", href: "/admin/stock", icon: Boxes, roles: ["ADMIN", "CASHIER"] },
+  { name: "Tables", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN", "CASHIER"] },
   { name: "Customers", href: "/admin/customers", icon: Users, roles: ["ADMIN"] },
   { name: "Cabang", href: "/admin/settings/branches", icon: Store, roles: ["ADMIN"] },
   { name: "WhatsApp", href: "/admin/whatsapp", icon: MessageSquare, roles: ["ADMIN"] },

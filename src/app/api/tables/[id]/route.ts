@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { tableService } from "@/services/table/table.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
@@ -10,7 +10,7 @@ export async function GET(
 ) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireAdmin(branchId);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { id } = await params;
     const table = await tableService.getTable(id, ctx.restaurantId, authorizedBranches(ctx));
 
@@ -30,7 +30,7 @@ export async function PUT(
 ) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireAdmin(branchId);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { id } = await params;
     const body = await request.json();
     const table = await tableService.updateTable(
@@ -56,7 +56,7 @@ export async function DELETE(
 ) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireAdmin(branchId);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { id } = await params;
     await tableService.deleteTable(id, ctx.restaurantId, authorizedBranches(ctx));
 

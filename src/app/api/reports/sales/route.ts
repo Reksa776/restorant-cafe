@@ -2,15 +2,16 @@ import { NextRequest } from "next/server";
 import { reportService, type ReportPeriod } from "@/services/report/report.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 // ============================================================
 // GET /api/reports/sales
 //   ?period=today|yesterday|week|month|custom&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
 //
-// ADMIN only, restaurant-scoped (restaurantId from the session — never
+// ADMIN or CASHIER, restaurant-scoped (restaurantId from the session — never
 // from the query string). Branch-scoped via the x-branch-id header hint and
-// the admin's branch assignments. All aggregations run server-side.
+// the user's branch assignments: a branch-scoped user (e.g. kasir) only ever
+// sees their authorized branches. All aggregations run server-side.
 // ============================================================
 
 const PERIODS: ReportPeriod[] = [
@@ -24,7 +25,7 @@ const PERIODS: ReportPeriod[] = [
 export async function GET(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireAdmin(branchId);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
 
     const { searchParams } = new URL(request.url);
     const periodRaw = searchParams.get("period") || "today";

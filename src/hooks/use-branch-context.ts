@@ -21,6 +21,12 @@ interface SessionDto {
   branchScoped: boolean;
 }
 
+const refreshListeners = new Set<() => void>();
+
+export function refreshBranchContext() {
+  refreshListeners.forEach((listener) => listener());
+}
+
 export function useBranchContext(): {
   session: SessionDto | null;
   branchId: string | null;
@@ -32,37 +38,36 @@ export function useBranchContext(): {
   const [branchId, setBranchIdState] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load session once.
   useEffect(() => {
     let alive = true;
-    api
-      .get("/auth/session")
-      .then((res) => {
-        if (!alive) return;
-        const data = res.data?.data;
-        if (data?.role) {
-          setSession(data as SessionDto);
-          // Restore last selected branch, but clamp it to the user's allowed
-          // branches so a cross-user change never leaks the wrong branch.
-          const stored = localStorage.getItem("admin_branch_id");
-          const allowed = (data as SessionDto).branches.some(
-            (b) => b.id === stored
-          );
-          if (stored && allowed) {
-            setBranchIdState(stored);
-          } else {
-            setBranchIdState(null);
+
+    const load = () => {
+      api
+        .get("/auth/session")
+        .then((res) => {
+          if (!alive) return;
+          const data = res.data?.data;
+          if (data?.role) {
+            setSession(data as SessionDto);
+            const stored = localStorage.getItem("admin_branch_id");
+            const allowed = (data as SessionDto).branches.some(
+              (b) => b.id === stored
+            );
+            setBranchIdState(stored && allowed ? stored : null);
           }
-        }
-      })
-      .catch(() => {
-        // Not authenticated.
-      })
-      .finally(() => {
-        if (alive) setIsLoading(false);
-      });
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (alive) setIsLoading(false);
+        });
+    };
+
+    load();
+    refreshListeners.add(load);
+
     return () => {
       alive = false;
+      refreshListeners.delete(load);
     };
   }, []);
 

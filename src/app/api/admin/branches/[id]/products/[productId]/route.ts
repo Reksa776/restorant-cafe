@@ -1,21 +1,21 @@
 import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 import { branchService } from "@/services/branch/branch.service";
 
 type Params = { params: Promise<{ id: string; productId: string }> };
 
 /**
  * PUT /api/admin/branches/[id]/products/[productId]
- * ADMIN-only. Sets per-branch product availability and optional price
- * override. A branch-scoped admin may only modify their own branches'
- * products.
+ * ADMIN or CASHIER. Sets per-branch product availability, optional price
+ * override, and inventory stock. A branch-scoped user may only modify their
+ * own branches' products.
  */
 export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireAdmin(branchId);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { id, productId } = await params;
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
 
@@ -36,6 +36,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
           typeof body.priceOverride === "number"
             ? (body.priceOverride as number | null)
             : undefined,
+        stock: typeof body.stock === "number" ? body.stock : undefined,
       },
       authorizedBranches(ctx)
     );
@@ -45,6 +46,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
         productId,
         isAvailable: bp.isAvailable,
         priceOverride: bp.priceOverride ? Number(bp.priceOverride) : null,
+        stock: bp.stock,
       },
       "Ketersediaan produk cabang diperbarui"
     );

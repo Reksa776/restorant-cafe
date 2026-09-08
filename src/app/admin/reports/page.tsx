@@ -16,6 +16,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useUserRole } from "@/hooks/use-user-role";
 import {
   reportService,
   type ReportPeriod,
@@ -23,7 +24,9 @@ import {
 } from "@/services/report.service";
 
 // ============================================================
-// Sales Report / Rekapitulasi Penjualan (ADMIN only — server-enforced)
+// Sales Report / Rekapitulasi Penjualan
+// Branch-aware: scoped to the active/authorized branch(es) via x-branch-id.
+// CSV export remains ADMIN-only (server-enforced); hidden for kasir.
 // ============================================================
 
 const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
@@ -59,6 +62,7 @@ const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function ReportsPage() {
+  const { role } = useUserRole();
   const [period, setPeriod] = useState<ReportPeriod>("today");
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(todayStr());
@@ -157,14 +161,16 @@ export default function ReportsPage() {
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
             Refresh
           </Button>
-          <Button size="sm" onClick={handleExport} disabled={isExporting}>
-            {isExporting ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <Download className="h-4 w-4 mr-2" />
-            )}
-            Export CSV
-          </Button>
+          {role === "ADMIN" && (
+            <Button size="sm" onClick={handleExport} disabled={isExporting}>
+              {isExporting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4 mr-2" />
+              )}
+              Export CSV
+            </Button>
+          )}
         </div>
       </div>
 

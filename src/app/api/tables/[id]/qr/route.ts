@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { tableService } from "@/services/table/table.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 export async function POST(
   request: NextRequest,
@@ -10,7 +10,7 @@ export async function POST(
 ) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireAdmin(branchId);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { id } = await params;
     // Optional baseUrl from the client (current origin) keeps the QR payload
     // identical to the customer link shown in the admin UI.

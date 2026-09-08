@@ -1,19 +1,21 @@
 import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom, assertBranchInScope } from "@/lib/auth-helpers";
 import { branchService } from "@/services/branch/branch.service";
 
 type Params = { params: Promise<{ id: string }> };
 
 /**
  * PATCH /api/admin/branches/[id]/status
- * ADMIN-only. Activates or deactivates a branch.
+ * ADMIN-only. Activates or deactivates a branch. A branch-scoped admin may
+ * only toggle the status of their own assigned branches.
  */
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
-    const ctx = await requireAdmin();
+    const ctx = await requireAdmin(branchHintFrom(request));
     const { id } = await params;
+    await assertBranchInScope(ctx, id);
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
 
     if (!body || typeof body.isActive !== "boolean") {

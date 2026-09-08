@@ -307,6 +307,7 @@ export class BranchService {
         productId: true,
         isAvailable: true,
         priceOverride: true,
+        stock: true,
       },
     });
     const map = new Map(
@@ -339,18 +340,23 @@ export class BranchService {
           effectivePrice: bp?.priceOverride
             ? Number(bp.priceOverride)
             : Number(p.price),
+          stock: bp?.stock ?? 0,
         };
       }),
     };
   }
 
-  /** Set availability (and optional price override) for a branch product. */
+  /** Set availability, optional price override, and inventory stock for a branch product. */
   async updateBranchProduct(
     restaurantId: string,
     branchId: string,
     productId: string,
     userId: string,
-    data: { isAvailable?: boolean; priceOverride?: number | null },
+    data: {
+      isAvailable?: boolean;
+      priceOverride?: number | null;
+      stock?: number;
+    },
     allowedBranchFilters?: string[] | null
   ) {
     // A branch-scoped admin may only modify THEIR branches' product
@@ -375,6 +381,19 @@ export class BranchService {
       throw new ValidationError("Harga override tidak valid");
     }
 
+    if (
+      data.stock !== undefined &&
+      (!Number.isInteger(data.stock) || data.stock < 0)
+    ) {
+      throw new ValidationError("Stok harus berupa bilangan bulat >= 0");
+    }
+
+    // Capture previous stock for audit trail (Phase: stock history).
+    const existing = await prisma.branchProduct.findUnique({
+      where: { branchId_productId: { branchId, productId } },
+      select: { id: true, stock: true },
+    });
+
     const bp = await prisma.branchProduct.upsert({
       where: {
         branchId_productId: { branchId, productId },
@@ -383,12 +402,14 @@ export class BranchService {
         isAvailable: data.isAvailable ?? undefined,
         priceOverride:
           data.priceOverride === null ? null : (data.priceOverride ?? undefined),
+        stock: data.stock ?? undefined,
       },
       create: {
         branchId,
         productId,
         isAvailable: data.isAvailable ?? product.isAvailable,
         priceOverride: data.priceOverride ?? null,
+        stock: data.stock ?? 0,
       },
     });
 
@@ -403,6 +424,12 @@ export class BranchService {
         productId,
         isAvailable: bp.isAvailable,
         priceOverride: bp.priceOverride ? Number(bp.priceOverride) : null,
+        stock: bp.stock,
+        oldStock: existing ? existing.stock : null,
+        stockChanged:
+          data.stock !== undefined && existing
+            ? existing.stock !== data.stock
+            : false,
       },
     });
 

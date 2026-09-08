@@ -2,12 +2,12 @@ import { NextRequest } from "next/server";
 import { tableService } from "@/services/table/table.service";
 import { successResponse, createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireAdmin, branchHintFrom, authorizedBranches, effectiveWriteBranchId, assertBranchInScope } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches, effectiveWriteBranchId, assertBranchInScope } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireAdmin(branchId);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status") || undefined;
 
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireAdmin(branchId);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const body = await request.json();
 
     if (!body.number || !body.name) {
