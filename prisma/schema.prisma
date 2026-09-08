@@ -131,6 +131,7 @@ model Restaurant {
   auditLogs    AuditLog[]
   promos       Promo[]
   settings     RestaurantSettings?
+  productRecommendations ProductRecommendation[]
 
   @@map("restaurant")
 }
@@ -365,12 +366,54 @@ model Product {
   orderItems   OrderItem[]
   optionGroups ProductOptionGroup[]
   addons       ProductAddon[]
+  // Admin-curated "recommend for this product" rows (F3).
+  recommendationsFrom ProductRecommendation[] @relation("RecommendationSource")
+  recommendationsTo   ProductRecommendation[] @relation("RecommendationTarget")
 
   @@index([restaurantId])
   @@index([categoryId])
   @@index([isAvailable])
 
   @@map("product")
+}
+
+// ============================================================
+// PRODUCT RECOMMENDATION (F3) — admin-curated, tenant-scoped.
+//
+// Meaning: "product A (productId) manually recommends product B
+// (recommendedProductId)". ONE row per pair — the (restaurantId,
+// productId, recommendedProductId) unique constraint keeps the pair
+// unique. sortOrder controls display order; isActive lets an admin
+// disable a recommendation without deleting it.
+//
+// Public tier (highest priority first):
+//   1. MANUAL admin recommendations (this model, active only)
+//   2. Personalized (customer favorites)
+//   3. Frequently bought together
+//   4. Best sellers
+//   5. Active product fallback
+// ============================================================
+
+model ProductRecommendation {
+  id                  String   @id @default(cuid())
+  restaurantId        String
+  productId           String
+  recommendedProductId String
+  sortOrder           Int      @default(0)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  product    Product    @relation("RecommendationSource", fields: [productId], references: [id], onDelete: Cascade)
+  recommendedProduct Product @relation("RecommendationTarget", fields: [recommendedProductId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, productId, recommendedProductId])
+  @@index([restaurantId])
+  @@index([productId])
+  @@index([recommendedProductId])
+
+  @@map("productrecommendation")
 }
 
 model Customer {

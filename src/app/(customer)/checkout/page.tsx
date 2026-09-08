@@ -30,6 +30,56 @@ interface Table {
 }
 
 // ============================================================
+// Voucher (F2) — "Voucher Saya" / pilih / kode / preview / confirm.
+// The server re-validates everything at order creation; this state is
+// UX only. The client NEVER sends a discount amount.
+// ============================================================
+
+interface ClaimablePromo {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  type: "PERCENT" | "FIXED";
+  value: number;
+  minOrder: number;
+  maxDiscount: number | null;
+  expiresAt: string | null;
+}
+
+interface VoucherPreview {
+  valid: boolean;
+  promo: {
+    id: string;
+    code: string;
+    name: string;
+    description: string | null;
+    type: "PERCENT" | "FIXED";
+    value: number;
+    minOrder: number;
+    maxDiscount: number | null;
+    expiresAt: string | null;
+  };
+  subtotal: number;
+  discount: number;
+  finalSubtotal: number;
+}
+
+interface ConfirmedVoucher {
+  code: string;
+  name: string;
+  discount: number;
+}
+
+function voucherDiscountLabel(p: { type: "PERCENT" | "FIXED"; value: number; maxDiscount: number | null }): string {
+  if (p.type === "PERCENT") {
+    const base = `Diskon ${p.value}%`;
+    return p.maxDiscount ? `${base} · maks Rp${Math.round(p.maxDiscount).toLocaleString("id-ID")}` : base;
+  }
+  return `Diskon Rp${Math.round(p.value).toLocaleString("id-ID")}`;
+}
+
+// ============================================================
 // Component
 // ============================================================
 
@@ -52,7 +102,17 @@ export default function CheckoutPage() {
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
-  const [promoCode, setPromoCode] = useState("");
+
+  // ---- Voucher (F2) state ----
+  // Claimed vouchers shown in "Voucher Saya" (fetched from /public/promos
+  // which already marks claimed state server-side from the session cookie).
+  const [claimedPromos, setClaimedPromos] = useState<ClaimablePromo[]>([]);
+  const [voucherShowMine, setVoucherShowMine] = useState(false);
+  const [manualCode, setManualCode] = useState("");
+  const [isCheckingVoucher, setIsCheckingVoucher] = useState(false);
+  const [voucherError, setVoucherError] = useState<string | null>(null);
+  const [voucherPreview, setVoucherPreview] = useState<VoucherPreview | null>(null);
+  const [confirmedVoucher, setConfirmedVoucher] = useState<ConfirmedVoucher | null>(null);
   const [orderType, setOrderType] = useState<"DINE_IN" | "TAKEAWAY" | "DELIVERY">(
     tableContext ? "DINE_IN" : "DINE_IN"
   );
@@ -68,7 +128,6 @@ export default function CheckoutPage() {
   // DINE_IN orders (QR table flow or manually selected) are tax-free and
   // service-free — subtotal = total. TAKEAWAY / DELIVERY keep tax + service.
   const isDineIn = (tableContext ? "DINE_IN" : orderType) === "DINE_IN";
-  const displayTotal = isDineIn ? subtotal : grandTotal;
 
   // Prefill customer data from the logged-in account (F3).
   useEffect(() => {
@@ -76,6 +135,92 @@ export default function CheckoutPage() {
     setCustomerName((prev) => prev || customer.name || "");
     setCustomerPhone((prev) => prev || customer.phone || "");
   }, [isHydrated, customer]);
+
+  // Load the customer's CLAIMED vouchers for "Voucher Saya" (F2). The
+  // /public/promos endpoint marks claimed state server-side from the
+  // httpOnly session cookie — never trusted from the client.
+  useEffect(() => {
+    if (!isHydrated || !customer || !restaurantId) return;
+    (async () => {
+      try {
+        const res = await api.get("/public/promos", {
+          params: { restaurantId },
+        });
+        const all = (res.data.data.promos || []) as Array<
+          ClaimablePromo & { claimed?: boolean }
+        >;
+        setClaimedPromos(all.filter((p) => p.claimed));
+      } catch {
+        setClaimedPromos([]);
+      }
+    })();
+  }, [isHydrated, customer, restaurantId]);
+
+  /**
+   * Run the non-mutating server-side voucher preview (F2). Requires login;
+   * never consumes quota; the order path re-validates authoritatively.
+   */
+  const checkVoucher = async (code: string) => {
+    if (!customer) {
+      setVoucherError("Login customer diperlukan untuk memakai voucher");
+      return;
+    }
+    const trimmed = code.trim().toUpperCase();
+    if (!trimmed) {
+      setVoucherError("Masukkan kode voucher");
+      return;
+    }
+    setIsCheckingVoucher(true);
+    setVoucherError(null);
+    setVoucherPreview(null);
+    try {
+      const res = await api.post("/public/promos/validate", {
+        promoCode: trimmed,
+        // Advisory cart subtotal — server only uses it to compute the
+        // preview; order creation recomputes subtotal from DB prices.
+        subtotal,
+      });
+      setVoucherPreview(res.data.data as VoucherPreview);
+    } catch (err) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const msg = (err as any)?.response?.data?.message;
+      setVoucherError(msg || "Voucher tidak valid");
+    } finally {
+      setIsCheckingVoucher(false);
+    }
+  };
+
+  const confirmVoucher = (preview: VoucherPreview) => {
+    setConfirmedVoucher({
+      code: preview.promo.code,
+      name: preview.promo.name,
+      discount: preview.discount,
+    });
+    setVoucherPreview(null);
+    setManualCode("");
+    setVoucherError(null);
+    setVoucherShowMine(false);
+  };
+
+  const cancelVoucher = () => {
+    setConfirmedVoucher(null);
+    setVoucherPreview(null);
+    setManualCode("");
+    setVoucherError(null);
+  };
+
+  // Final total including a CONFIRMED voucher discount (display only —
+  // server recomputes at order creation). Tax/service for TAKEAWAY /
+  // DELIVERY are applied on the discounted subtotal, same as the server.
+  const confirmedDiscount = confirmedVoucher?.discount ?? 0;
+  const discountedBase = Math.max(subtotal - confirmedDiscount, 0);
+  const discountedTax = isDineIn ? 0 : Math.round(discountedBase * 0.1);
+  const discountedService = isDineIn ? 0 : Math.round(discountedBase * 0.05);
+  const displayTotal = confirmedVoucher
+    ? discountedBase + discountedTax + discountedService
+    : isDineIn
+      ? subtotal
+      : grandTotal;
 
   // Load tables if restaurant is available and not coming from QR
   useEffect(() => {
@@ -162,6 +307,10 @@ export default function CheckoutPage() {
 
       // Step 1: Create order. The KASIR intent also records the UNPAID
       // cashier payment atomically on the server (no gateway involved).
+      // F2 — a voucher is only sent AFTER it was previewed + confirmed by
+      // the user; the server re-validates the promo against the DB and
+      // recomputes the discount (quota/per-customer consumed atomically
+      // with the order, never by the preview).
       const orderData: Record<string, unknown> = {
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim() || null,
@@ -171,9 +320,9 @@ export default function CheckoutPage() {
         notes: notes.trim() || undefined,
         items: orderItems,
         paymentMethod: isDineIn ? paymentMethod : undefined,
-        // F3 — promo code applied server-side at order creation (the server
-        // recomputes the discount and re-validates quota/per-customer limits).
-        ...(promoCode.trim() ? { promoCode: promoCode.trim() } : {}),
+        ...(confirmedVoucher
+          ? { promoCode: confirmedVoucher.code }
+          : {}),
       };
 
       const orderRes = await api.post("/public/orders", orderData);
@@ -414,28 +563,16 @@ export default function CheckoutPage() {
           </div>
         )}
 
-        {/* Promo — F3: requires login; discount applied server-side */}
+        {/* Voucher — F2: requires login; preview → confirm → apply at submit.
+            The server is always authoritative (re-validates + recomputes the
+            discount when the order is created). */}
         <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
           <div className="flex items-center gap-2">
             <BadgePercent className="h-4 w-4 text-gray-500" />
-            <h2 className="font-medium">Kode Promo</h2>
+            <h2 className="font-medium">Voucher</h2>
           </div>
-          {customer ? (
-            <>
-              <input
-                type="text"
-                value={promoCode}
-                onChange={(e) =>
-                  setPromoCode(e.target.value.toUpperCase())
-                }
-                placeholder="Masukkan kode promo (contoh: HEMAT10)"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
-              />
-              <p className="text-xs text-gray-400">
-                Diskon dihitung otomatis oleh sistem saat pesanan dibuat.
-              </p>
-            </>
-          ) : (
+
+          {!customer ? (
             <p className="text-sm text-gray-500">
               <Link
                 href="/menu"
@@ -443,8 +580,162 @@ export default function CheckoutPage() {
               >
                 Masuk akun di halaman menu
               </Link>{" "}
-              untuk memakai kode promo.
+              untuk memakai voucher. Guest tetap bisa checkout tanpa voucher.
             </p>
+          ) : confirmedVoucher ? (
+            /* ---- Confirmed voucher — order can proceed ---- */
+            <div className="rounded-lg border border-green-200 bg-green-50 p-3 space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold">
+                  Voucher:{" "}
+                  <span className="font-mono">{confirmedVoucher.code}</span>
+                </p>
+                <button
+                  type="button"
+                  onClick={cancelVoucher}
+                  className="text-xs text-gray-500 underline hover:text-gray-700"
+                >
+                  Batalkan
+                </button>
+              </div>
+              <p className="text-xs text-gray-500">{confirmedVoucher.name}</p>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Diskon</span>
+                <span className="font-medium text-green-700 tabular-nums">
+                  -Rp{confirmedVoucher.discount.toLocaleString("id-ID")}
+                </span>
+              </div>
+              <div className="flex justify-between text-sm font-semibold">
+                <span>Total</span>
+                <span className="tabular-nums">
+                  Rp{displayTotal.toLocaleString("id-ID")}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* ---- Voucher Saya (claimed) ---- */}
+              <button
+                type="button"
+                onClick={() => setVoucherShowMine((v) => !v)}
+                className="w-full flex items-center justify-between rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+              >
+                <span>Voucher Saya ({claimedPromos.length})</span>
+                <span className="text-xs text-gray-400">
+                  {voucherShowMine ? "▲" : "▼"}
+                </span>
+              </button>
+              {voucherShowMine && (
+                <div className="space-y-1.5">
+                  {claimedPromos.length === 0 ? (
+                    <p className="text-xs text-gray-400 px-1">
+                      Belum ada voucher yang diklaim.
+                    </p>
+                  ) : (
+                    claimedPromos.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">
+                            <span className="font-mono">{p.code}</span> ·{" "}
+                            {p.name}
+                          </p>
+                          <p className="text-[11px] text-gray-500">
+                            {voucherDiscountLabel(p)}
+                            {p.minOrder > 0 &&
+                              ` · Min. ${Math.round(p.minOrder).toLocaleString("id-ID")}`}
+                            {p.expiresAt &&
+                              ` · s.d. ${new Date(p.expiresAt).toLocaleDateString("id-ID")}`}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => checkVoucher(p.code)}
+                          disabled={isCheckingVoucher}
+                          className="flex-shrink-0 rounded-full bg-brand-primary text-brand-primary-foreground px-3 py-1 text-xs font-medium disabled:opacity-50"
+                        >
+                          Pilih
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* ---- Or enter a code ---- */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={manualCode}
+                  onChange={(e) => {
+                    setManualCode(e.target.value.toUpperCase());
+                    setVoucherError(null);
+                    setVoucherPreview(null);
+                  }}
+                  placeholder="Masukkan kode voucher (contoh: HEMAT10)"
+                  className="flex-1 min-w-0 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
+                />
+                <button
+                  type="button"
+                  onClick={() => checkVoucher(manualCode)}
+                  disabled={isCheckingVoucher}
+                  className="flex-shrink-0 rounded-lg bg-gray-900 text-white px-3 py-2 text-sm font-medium disabled:opacity-50"
+                >
+                  {isCheckingVoucher ? "Cek..." : "Cek Voucher"}
+                </button>
+              </div>
+
+              {voucherError && (
+                <p className="text-xs text-red-600">{voucherError}</p>
+              )}
+
+              {/* ---- Preview (validated server-side, non-mutating) ---- */}
+              {voucherPreview && (
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                    Preview Voucher
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-semibold">
+                      {voucherPreview.promo.code}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {voucherDiscountLabel(voucherPreview.promo)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Potongan</span>
+                    <span className="font-medium text-green-700 tabular-nums">
+                      Rp{voucherPreview.discount.toLocaleString("id-ID")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-sm font-semibold">
+                    <span>Total setelah diskon</span>
+                    <span className="tabular-nums">
+                      Rp{voucherPreview.finalSubtotal.toLocaleString("id-ID")}
+                    </span>
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={cancelVoucher}
+                      className="flex-1 rounded-lg border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-white"
+                    >
+                      Ganti Voucher
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => confirmVoucher(voucherPreview)}
+                      className="flex-1 rounded-lg bg-green-600 text-white px-3 py-1.5 text-xs font-medium hover:bg-green-700"
+                    >
+                      Konfirmasi Voucher
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -509,15 +800,23 @@ export default function CheckoutPage() {
               <span className="text-gray-500">Subtotal</span>
               <span>Rp{subtotal.toLocaleString("id-ID")}</span>
             </div>
+            {confirmedVoucher && (
+              <div className="flex justify-between text-green-700">
+                <span>Diskon ({confirmedVoucher.code})</span>
+                <span className="tabular-nums">
+                  -Rp{confirmedVoucher.discount.toLocaleString("id-ID")}
+                </span>
+              </div>
+            )}
             {!isDineIn && (
               <>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Pajak (10%)</span>
-                  <span>Rp{tax.toLocaleString("id-ID")}</span>
+                  <span>Rp{(confirmedVoucher ? discountedTax : tax).toLocaleString("id-ID")}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Service Charge (5%)</span>
-                  <span>Rp{serviceCharge.toLocaleString("id-ID")}</span>
+                  <span>Rp{(confirmedVoucher ? discountedService : serviceCharge).toLocaleString("id-ID")}</span>
                 </div>
               </>
             )}

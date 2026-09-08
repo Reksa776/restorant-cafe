@@ -147,6 +147,101 @@ export class PromoService {
   }
 
   /**
+   * NON-MUTATING preview/validation of a promo code or id (F2).
+   *
+   * Used by the checkout "Cek Voucher" step. It NEVER creates a
+   * PromoUsage row and NEVER consumes quota — the authoritative
+   * validation + consumption still happens inside applyPromoToOrder when
+   * the order is actually created.
+   *
+   * `subtotal` is client-supplied and only used to compute the preview
+   * discount; the order-creation path recomputes subtotal from DB prices.
+   * Throws the same errors the order path would (expired, minOrder,
+   * quota, per-customer limit) so the UI can show them before submit.
+   */
+  async validatePromoPreview(
+    restaurantId: string,
+    customerId: string,
+    input: { promoCode?: string; promoId?: string },
+    subtotal: number
+  ) {
+    const promo = await prisma.promo.findFirst({
+      where: {
+        restaurantId,
+        ...(input.promoId ? { id: input.promoId } : {}),
+        ...(input.promoCode ? { code: input.promoCode } : {}),
+      },
+    });
+    if (!promo) {
+      throw new ValidationError("Kode promo tidak ditemukan");
+    }
+    assertPromoUsable(promo);
+
+    if (Number(subtotal) < Number(promo.minOrder)) {
+      throw new ValidationError(
+        `Minimum order Rp${Number(promo.minOrder).toLocaleString("id-ID")} untuk memakai promo ini`
+      );
+    }
+
+    // Global usage quota (rows with an order attached).
+    if (promo.maxUsage > 0) {
+      const used = await prisma.promoUsage.count({
+        where: { promoId: promo.id, orderId: { not: null } },
+      });
+      if (used >= promo.maxUsage) {
+        throw new ConflictError("Kuota promo sudah habis");
+      }
+    }
+
+    // Per-customer usage limit.
+    if (promo.perCustomerLimit > 0) {
+      const customerUsed = await prisma.promoUsage.count({
+        where: {
+          promoId: promo.id,
+          customerId,
+          orderId: { not: null },
+        },
+      });
+      if (customerUsed >= promo.perCustomerLimit) {
+        throw new ConflictError(
+          "Kuota penggunaan promo untuk akun Anda sudah habis"
+        );
+      }
+    }
+
+    // Same authoritative discount math as applyPromoToOrder (server-side).
+    let discount: number;
+    if (promo.type === "PERCENT") {
+      discount = Math.round(subtotal * (Number(promo.value) / 100));
+      if (promo.maxDiscount !== null && discount > Number(promo.maxDiscount)) {
+        discount = Number(promo.maxDiscount);
+      }
+    } else {
+      discount = Number(promo.value);
+    }
+    discount = Math.min(discount, subtotal);
+    discount = Math.round(discount * 100) / 100;
+
+    return {
+      valid: true,
+      promo: {
+        id: promo.id,
+        code: promo.code,
+        name: promo.name,
+        description: promo.description,
+        type: promo.type,
+        value: Number(promo.value),
+        minOrder: Number(promo.minOrder),
+        maxDiscount: promo.maxDiscount !== null ? Number(promo.maxDiscount) : null,
+        expiresAt: promo.expiresAt,
+      },
+      subtotal,
+      discount,
+      finalSubtotal: Math.max(subtotal - discount, 0),
+    };
+  }
+
+  /**
    * Validate + compute the discount for a promo code. Runs INSIDE the order
    * creation transaction so the quota checks and the usage row are atomic
    * with the order itself. Throws when the promo is not applicable.

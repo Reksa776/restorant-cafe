@@ -32,7 +32,7 @@ import {
   type ProductOption,
   type ProductAddon,
 } from "@/services/menu.service";
-import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp, MoveUp, MoveDown, Star, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
@@ -41,6 +41,10 @@ import {
   productImageValueFromUrl,
   type ProductImageValue,
 } from "@/components/admin/product-image-field";
+import {
+  recommendationService,
+  type RecommendationProduct,
+} from "@/services/recommendation.service";
 
 // ============================================================
 // Helpers
@@ -521,6 +525,7 @@ export default function MenuPage() {
           <TabsList>
             <TabsTrigger value="categories">Kategori</TabsTrigger>
             <TabsTrigger value="products">Produk</TabsTrigger>
+            <TabsTrigger value="recommendations">Rekomendasi</TabsTrigger>
           </TabsList>
 
           {/* Categories Tab */}
@@ -612,6 +617,11 @@ export default function MenuPage() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          {/* Recommendations Tab — F3: admin-curated, tenant-scoped */}
+          <TabsContent value="recommendations">
+            <RecommendationsTab />
           </TabsContent>
         </Tabs>
       )}
@@ -1011,5 +1021,315 @@ function CustomizationView({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ============================================================
+// Recommendations Tab (F3) — admin-curated "product A recommends B,C,D".
+// Tenant-scoped server-side (requireAdmin + restaurantId); this UI only
+// picks products the server already validated as active + available and
+// belonging to THIS restaurant. Reorder / toggle / remove are local edits
+// committed atomically by the single Save (PUT replace).
+// ============================================================
+
+interface WorkingRecommendation {
+  recommendedProductId: string;
+  name: string;
+  isAvailable: boolean;
+  isActive: boolean;
+}
+
+function RecommendationsTab() {
+  const [products, setProducts] = useState<RecommendationProduct[]>([]);
+  const [sourceProductId, setSourceProductId] = useState("");
+  const [recs, setRecs] = useState<WorkingRecommendation[]>([]);
+  const [addCandidateId, setAddCandidateId] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  const loadProducts = useCallback(async () => {
+    try {
+      const data = await recommendationService.getRecommendations();
+      setProducts(data.products || []);
+      // Default to the first product so the tab is immediately usable.
+      if (data.products.length > 0) {
+        setSourceProductId((prev) => prev || data.products[0].id);
+      }
+    } catch (error) {
+      console.error("Failed to load products:", error);
+      toast.error("Gagal memuat produk");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Deliberate one-shot fetch effect — same pattern the repo already
+    // tolerates for load-on-mount (see admin/menu loadData effect).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadProducts();
+  }, [loadProducts]);
+
+  const loadRecommendations = useCallback(async (productId: string) => {
+    setIsLoading(true);
+    try {
+      const data = await recommendationService.getRecommendations(productId);
+      setRecs(
+        (data.recommendations || []).map((r) => ({
+          recommendedProductId: r.recommendedProductId,
+          name: r.name,
+          isAvailable: r.isAvailable && r.recommendedIsActive,
+          isActive: r.isActive,
+        }))
+      );
+      setDirty(false);
+    } catch (error) {
+      console.error("Failed to load recommendations:", error);
+      toast.error("Gagal memuat rekomendasi");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Reload the curated list whenever the source product changes.
+  useEffect(() => {
+    if (!sourceProductId) return;
+    // Deliberate fetch-on-source-change effect (same tolerated pattern).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadRecommendations(sourceProductId);
+  }, [sourceProductId, loadRecommendations]);
+
+  const markDirty = (next: WorkingRecommendation[]) => {
+    setRecs(next);
+    setDirty(true);
+  };
+
+  const move = (index: number, dir: -1 | 1) => {
+    const target = index + dir;
+    if (target < 0 || target >= recs.length) return;
+    const next = [...recs];
+    [next[index], next[target]] = [next[target], next[index]];
+    markDirty(next);
+  };
+
+  const toggle = (index: number) => {
+    const next = [...recs];
+    next[index] = { ...next[index], isActive: !next[index].isActive };
+    markDirty(next);
+  };
+
+  const remove = (index: number) => {
+    markDirty(recs.filter((_, i) => i !== index));
+  };
+
+  const addProduct = () => {
+    if (!addCandidateId) return;
+    const candidate = products.find((p) => p.id === addCandidateId);
+    if (!candidate) return;
+    if (recs.some((r) => r.recommendedProductId === candidate.id)) return;
+    markDirty([
+      ...recs,
+      {
+        recommendedProductId: candidate.id,
+        name: candidate.name,
+        isAvailable: true,
+        isActive: true,
+      },
+    ]);
+    setAddCandidateId("");
+  };
+
+  const handleSave = async () => {
+    if (!sourceProductId) return;
+    setIsSaving(true);
+    try {
+      await recommendationService.saveRecommendations(
+        sourceProductId,
+        recs.map((r) => ({
+          recommendedProductId: r.recommendedProductId,
+          isActive: r.isActive,
+        }))
+      );
+      toast.success("Rekomendasi berhasil disimpan");
+      setDirty(false);
+      await loadRecommendations(sourceProductId);
+    } catch (error) {
+      const msg = apiErrorMessage(error, "Gagal menyimpan rekomendasi");
+      toast.error(msg);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // Products that can still be added (not already recommended, not self).
+  const addableProducts = products.filter(
+    (p) =>
+      p.id !== sourceProductId &&
+      !recs.some((r) => r.recommendedProductId === p.id)
+  );
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <CardTitle className="text-base">Rekomendasi Produk</CardTitle>
+        <Button size="sm" onClick={handleSave} disabled={isSaving || !dirty}>
+          {isSaving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+          Simpan
+        </Button>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-gray-500">
+          Atur produk mana yang direkomendasikan untuk setiap produk. Produk
+          rekomendasi tampil pertama di bagian{" "}
+          <span className="font-medium">Rekomendasi</span> pada menu pelanggan.
+        </p>
+
+        {/* Source product */}
+        <div>
+          <Label>Rekomendasikan untuk</Label>
+          <Select
+            value={sourceProductId}
+            onValueChange={(v) => v && setSourceProductId(v)}
+          >
+            <SelectTrigger className="mt-1">
+              <SelectValue placeholder="Pilih produk sumber" />
+            </SelectTrigger>
+            <SelectContent>
+              {products.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.name}
+                  {p.category?.name ? ` (${p.category.name})` : ""}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-10">
+            <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+          </div>
+        ) : (
+          <>
+            {/* Curated list */}
+            <div className="space-y-2">
+              {recs.length === 0 ? (
+                <p className="text-center text-sm text-gray-400 py-6">
+                  Belum ada produk rekomendasi. Tambahkan di bawah.
+                </p>
+              ) : (
+                recs.map((r, index) => (
+                  <div
+                    key={r.recommendedProductId}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 px-3 py-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-gray-400 tabular-nums">
+                        {index + 1}.
+                      </span>
+                      <span
+                        className={`text-sm font-medium ${
+                          r.isActive ? "" : "text-gray-400 line-through"
+                        }`}
+                      >
+                        {r.name}
+                      </span>
+                      {!r.isAvailable && (
+                        <Badge variant="destructive" className="text-[10px]">
+                          Tidak Tersedia
+                        </Badge>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7"
+                        disabled={index === 0}
+                        onClick={() => move(index, -1)}
+                        aria-label="Naik"
+                      >
+                        <MoveUp className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7"
+                        disabled={index === recs.length - 1}
+                        onClick={() => move(index, 1)}
+                        aria-label="Turun"
+                      >
+                        <MoveDown className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7"
+                        onClick={() => toggle(index)}
+                        aria-label="Aktif / nonaktif"
+                      >
+                        {r.isActive ? (
+                          <ToggleRight className="h-4 w-4 text-green-600" />
+                        ) : (
+                          <ToggleLeft className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-red-500 hover:text-red-700"
+                        onClick={() => remove(index)}
+                        aria-label="Hapus"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Add product */}
+            <div className="flex gap-2">
+              <Select value={addCandidateId} onValueChange={(v) => v && setAddCandidateId(v)}>
+                <SelectTrigger className="flex-1 min-w-0">
+                  <SelectValue placeholder="Pilih produk untuk ditambahkan" />
+                </SelectTrigger>
+                <SelectContent>
+                  {addableProducts.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-gray-400">
+                      Semua produk sudah direkomendasikan
+                    </p>
+                  ) : (
+                    addableProducts.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                        {p.category?.name ? ` (${p.category.name})` : ""}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={addProduct}
+                disabled={!addCandidateId}
+              >
+                <Plus className="h-4 w-4 mr-1" /> Tambah
+              </Button>
+            </div>
+
+            {dirty && (
+              <p className="text-xs text-amber-600 flex items-center gap-1">
+                <Star className="h-3 w-3" /> Perubahan belum disimpan — klik
+                Simpan.
+              </p>
+            )}
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

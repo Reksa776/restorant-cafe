@@ -711,6 +711,8 @@ function MenuContent() {
   const [recommendationSource, setRecommendationSource] = useState<
     "personalized" | "popular"
   >("popular");
+  // F4 — "🔥 Terlaris" (real sales from the server-side aggregation).
+  const [bestSellers, setBestSellers] = useState<Product[]>([]);
 
   const searchParams = useSearchParams();
 
@@ -791,18 +793,39 @@ function MenuContent() {
             limit: 8,
           },
         });
-        setRecommended(
-          (recRes.data.data.products || []).map((p: Product) =>
-            normalizeProduct(p)
-          )
-        );
+        const recProducts: Product[] = (
+          recRes.data.data.products || []
+        ).map((p: Product) => normalizeProduct(p));
+        setRecommended(recProducts);
         setRecommendationSource(
           recRes.data.data.source === "personalized"
             ? "personalized"
             : "popular"
         );
+
+        // Terlaris — real sales only (PAID orders, server-side). The
+        // recommendation ids are excluded so the two sections don't repeat
+        // the same products when enough different products exist.
+        try {
+          const exclIds = recProducts.map((p) => p.id).join(",");
+          const bsRes = await api.get("/public/menu/best-sellers", {
+            params: {
+              restaurantId: restaurantData.id,
+              limit: 8,
+              excludeIds: exclIds,
+            },
+          });
+          setBestSellers(
+            (bsRes.data.data.products || []).map(
+              (r: { product: Product }) => normalizeProduct(r.product)
+            )
+          );
+        } catch {
+          setBestSellers([]);
+        }
       } catch {
         setRecommended([]);
+        setBestSellers([]);
       }
     } catch (error) {
       console.error("Failed to load menu:", error);
@@ -836,18 +859,32 @@ function MenuContent() {
         const recRes = await api.get("/public/menu/recommendations", {
           params: { restaurantId: restaurant.id, limit: 8 },
         });
-        setRecommended(
-          (recRes.data.data.products || []).map((p: Product) =>
-            normalizeProduct(p)
-          )
+        const recProducts: Product[] = (recRes.data.data.products || []).map(
+          (p: Product) => normalizeProduct(p)
         );
+        setRecommended(recProducts);
         setRecommendationSource(
           recRes.data.data.source === "personalized"
             ? "personalized"
             : "popular"
         );
+
+        try {
+          const exclIds = recProducts.map((p) => p.id).join(",");
+          const bsRes = await api.get("/public/menu/best-sellers", {
+            params: { restaurantId: restaurant.id, limit: 8, excludeIds: exclIds },
+          });
+          setBestSellers(
+            (bsRes.data.data.products || []).map(
+              (r: { product: Product }) => normalizeProduct(r.product)
+            )
+          );
+        } catch {
+          setBestSellers([]);
+        }
       } catch {
         setRecommended([]);
+        setBestSellers([]);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1173,6 +1210,34 @@ function MenuContent() {
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 mb-8 sm:mb-10">
             {recommended.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                quantity={getItemQuantity(product.id)}
+                onAdd={() => handleAdd(product)}
+                onCustomize={() => {
+                  setEditingCartItemIndex(null);
+                  setCustomizingProduct(product);
+                }}
+                onEdit={() => handleEditFromMenu(product)}
+                onIncrease={() => handleIncrease(product)}
+                onDecrease={() => handleDecrease(product)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Terlaris — F4: real sales (PAID orders), separate section, placed
+          right after Rekomendasi and before the category sections. */}
+      {bestSellers.length > 0 && (
+        <section aria-label="Terlaris">
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-3 sm:mb-4 flex items-center gap-1.5">
+            <span aria-hidden>🔥</span>
+            Terlaris
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 mb-8 sm:mb-10">
+            {bestSellers.map((product) => (
               <ProductCard
                 key={product.id}
                 product={product}
