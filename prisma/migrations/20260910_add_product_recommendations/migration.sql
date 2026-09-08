@@ -11,7 +11,8 @@ CREATE TABLE `productrecommendation` (
     `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 
-    UNIQUE INDEX `productrecommendation_restaurantId_productId_recommendedProductId_key`(`restaurantId`, `productId`, `recommendedProductId`),
+    -- Explicit short name: auto-generated one exceeds MySQL's 64-char identifier limit.
+    UNIQUE INDEX `product_reco_unique`(`restaurantId`, `productId`, `recommendedProductId`),
     INDEX `productrecommendation_restaurantId_idx`(`restaurantId`),
     INDEX `productrecommendation_productId_idx`(`productId`),
     INDEX `productrecommendation_recommendedProductId_idx`(`recommendedProductId`),

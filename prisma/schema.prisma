@@ -408,7 +408,9 @@ model ProductRecommendation {
   product    Product    @relation("RecommendationSource", fields: [productId], references: [id], onDelete: Cascade)
   recommendedProduct Product @relation("RecommendationTarget", fields: [recommendedProductId], references: [id], onDelete: Cascade)
 
-  @@unique([restaurantId, productId, recommendedProductId])
+  // Explicit short name: MySQL limits identifiers to 64 chars and the
+  // auto-generated name exceeds it (P3018 / error 1059).
+  @@unique([restaurantId, productId, recommendedProductId], map: "product_reco_unique")
   @@index([restaurantId])
   @@index([productId])
   @@index([recommendedProductId])
