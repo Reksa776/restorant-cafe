@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   CreditCard,
   Loader2,
+  Printer,
   RefreshCw,
   ScanLine,
   UtensilsCrossed,
@@ -24,6 +25,7 @@ import { OrderScanner } from "@/components/admin/order-scanner";
 import { CashierPayDialog } from "@/components/admin/orders/cashier-pay-dialog";
 import { BarcodePaymentFlow } from "@/components/admin/barcode-payment-flow";
 import { ApprovalActions } from "@/components/admin/orders/approval-actions";
+import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -70,6 +72,7 @@ export default function AdminOrderByNumberPage({
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "not_found" | "error">("loading");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [barcodePaymentOpen, setBarcodePaymentOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -195,6 +198,14 @@ export default function AdminOrderByNumberPage({
             onScan={(num) => router.push(`/admin/orders/${num}`)}
             triggerLabel="Pindai Pesanan Lain"
           />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPrintOpen(true)}
+          >
+            <Printer className="h-4 w-4 mr-1" />
+            Print Bill
+          </Button>
           <Button variant="outline" size="sm" onClick={loadOrder}>
             <RefreshCw className="h-4 w-4" />
           </Button>
@@ -305,6 +316,13 @@ export default function AdminOrderByNumberPage({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onCompleted={() => loadOrder()}
+      />
+
+      {/* Print bill — pure client-side, never mutates the order */}
+      <PrintBillDialog
+        order={order}
+        open={printOpen}
+        onOpenChange={setPrintOpen}
       />
 
       <BarcodePaymentFlow

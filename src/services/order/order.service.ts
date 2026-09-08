@@ -5,6 +5,7 @@ import {
   NotFoundError,
   ValidationError,
   ConflictError,
+  UnauthorizedError,
 } from "@/lib/errors";
 import type {
   CreateOrderInput,
@@ -15,6 +16,7 @@ import type {
 import { normalizePhone } from "@/lib/phone";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
+import { promoService } from "@/services/promo/promo.service";
 
 // ============================================================
 // Constants
@@ -283,10 +285,18 @@ export class OrderService {
   }
 
   /**
-   * Create an order from customer website (public, no auth).
+   * Create an order from customer website (public).
    * Finds or creates customer by phone, validates table belongs to restaurant.
+   *
+   * `sessionCustomerId` (from the verified customer session cookie) is
+   * required ONLY when a promoCode is used — guest checkout is unchanged.
+   * The promo discount is always computed server-side from the DB.
    */
-  async createCustomerOrder(input: CreateCustomerOrderInput, restaurantId: string) {
+  async createCustomerOrder(
+    input: CreateCustomerOrderInput,
+    restaurantId: string,
+    sessionCustomerId?: string
+  ) {
     // The QRIS/KASIR payment intent is DINE_IN-only. TAKEAWAY/DELIVERY must
     // keep the legacy gateway flow, so a paymentMethod on those types is a
     // server-side validation error (never silently ignored).
@@ -494,11 +504,9 @@ export class OrderService {
     });
 
     // DINE_IN orders are tax-free and service-free: total = subtotal.
-    // TAKEAWAY / DELIVERY keep the 10% tax + 5% service charge.
+    // TAKEAWAY / DELIVERY keep the 10% tax + 5% service charge, computed on
+    // the discounted subtotal when a promo is applied.
     const isDineIn = input.orderType === "DINE_IN";
-    const tax = isDineIn ? 0 : Math.round(subtotal * 0.1);
-    const serviceCharge = isDineIn ? 0 : Math.round(subtotal * 0.05);
-    const grandTotal = subtotal + tax + serviceCharge;
 
     // Track customer side effects to notify the admin in realtime after the
     // transaction commits (a guest checkout creates a new Customer row).
@@ -511,9 +519,30 @@ export class OrderService {
     // with a fresh number (bounded — see UNIQUE_RETRY_ATTEMPTS).
     const createInTx = (orderNumber: string) =>
       prisma.$transaction(async (tx) => {
-      // Find or create customer
+      // Find or create customer. A promo REQUIRES the logged-in customer
+      // (promos are only usable by logged-in customers) — the order is then
+      // tied to that account so usage limits can be enforced per customer.
       let customer;
-      if (normalizedPhone) {
+      if (input.promoCode) {
+        if (!sessionCustomerId) {
+          throw new UnauthorizedError(
+            "Login customer diperlukan untuk memakai promo"
+          );
+        }
+        customer = await tx.customer.findFirst({
+          where: { id: sessionCustomerId, restaurantId, isActive: true },
+        });
+        if (!customer) {
+          throw new NotFoundError("Customer tidak ditemukan");
+        }
+        if (input.customerName && !customer.name) {
+          customer = await tx.customer.update({
+            where: { id: customer.id },
+            data: { name: input.customerName },
+          });
+          updatedCustomerId = customer.id;
+        }
+      } else if (normalizedPhone) {
         // Try to find existing customer by phone
         customer = await tx.customer.findFirst({
           where: {
@@ -555,6 +584,31 @@ export class OrderService {
         createdCustomerPhone = placeholderPhone;
       }
 
+      // Promo application — server-authoritative discount, validated inside
+      // this transaction (per-promo row lock, quota + per-customer limits).
+      let discount = 0;
+      let promoId: string | null = null;
+      let promoCode: string | null = null;
+      if (input.promoCode) {
+        const applied = await promoService.applyPromoToOrder(
+          tx,
+          restaurantId,
+          customer.id,
+          input.promoCode,
+          subtotal
+        );
+        discount = applied.discount;
+        promoId = applied.promoId;
+        promoCode = applied.promoCode;
+      }
+
+      // DINE_IN orders are tax-free and service-free. TAKEAWAY/DELIVERY
+      // keep 10% tax + 5% service charge on the discounted subtotal.
+      const taxBase = Math.max(subtotal - discount, 0);
+      const tax = isDineIn ? 0 : Math.round(taxBase * 0.1);
+      const serviceCharge = isDineIn ? 0 : Math.round(taxBase * 0.05);
+      const grandTotal = taxBase + tax + serviceCharge;
+
       // Create order
       const newOrder = await tx.order.create({
         data: {
@@ -567,10 +621,13 @@ export class OrderService {
           status: "PENDING",
           paymentStatus: "UNPAID",
           subtotal,
+          discount,
           tax,
           serviceCharge,
           grandTotal,
           notes: input.notes,
+          promoId,
+          promoCode,
           items: {
             create: orderItems,
           },
@@ -585,6 +642,11 @@ export class OrderService {
           },
         },
       });
+
+      // Record the promo use (upgrades a prior claim row when present).
+      if (promoId) {
+        await promoService.recordPromoUse(tx, promoId, customer.id, newOrder.id);
+      }
 
       // Create initial status history
       await tx.orderStatusHistory.create({
@@ -776,6 +838,8 @@ export class OrderService {
    * Get single order by ID with restaurant ownership verification.
    * Payment rows carry their transactions so cashier audit entries
    * (amountDue/amountReceived/changeAmount/processedBy) can be shown.
+   * Restaurant + branding (logo/site name) are included so the admin can
+   * render a print bill without a second round-trip.
    */
   async getOrder(id: string, restaurantId: string) {
     const order = await prisma.order.findFirst({
@@ -786,6 +850,19 @@ export class OrderService {
       include: {
         customer: true,
         table: true,
+        restaurant: {
+          select: {
+            name: true,
+            address: true,
+            phone: true,
+            settings: {
+              select: {
+                siteName: true,
+                logoUrl: true,
+              },
+            },
+          },
+        },
         items: {
           include: {
             product: true,
@@ -825,6 +902,19 @@ export class OrderService {
       include: {
         customer: true,
         table: true,
+        restaurant: {
+          select: {
+            name: true,
+            address: true,
+            phone: true,
+            settings: {
+              select: {
+                siteName: true,
+                logoUrl: true,
+              },
+            },
+          },
+        },
         items: {
           include: {
             product: true,

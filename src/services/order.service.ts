@@ -45,6 +45,20 @@ export interface Order {
     number: number;
     name: string;
   };
+  /**
+   * Restaurant header for the print bill — included on admin order detail
+   * endpoints (name/address/phone + branding logo/site name). Null on the
+   * public/legacy shapes that intentionally do not carry it.
+   */
+  restaurant?: {
+    name: string;
+    address?: string | null;
+    phone?: string | null;
+    settings?: {
+      siteName?: string | null;
+      logoUrl?: string | null;
+    } | null;
+  } | null;
   items: Array<{
     id: string;
     quantity: number;

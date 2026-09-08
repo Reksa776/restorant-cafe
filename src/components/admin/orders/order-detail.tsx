@@ -26,8 +26,10 @@ import {
   User,
   CreditCard,
   Banknote,
+  Printer,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
 import type { Order } from "@/services/order.service";
 
 // ============================================================
@@ -114,6 +116,7 @@ export function OrderDetail({
   onActionDone,
 }: OrderDetailProps) {
   const [cashierOpen, setCashierOpen] = useState(false);
+  const [printOpen, setPrintOpen] = useState(false);
 
   if (!order) return null;
 
@@ -184,11 +187,22 @@ export function OrderDetail({
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-md overflow-y-auto">
-        <SheetHeader>
-          <SheetTitle className="font-mono text-lg">
-            #{order.orderNumber}
-          </SheetTitle>
-          <SheetDescription>{orderDate}</SheetDescription>
+        <SheetHeader className="flex-row items-center justify-between gap-3">
+          <div className="min-w-0">
+            <SheetTitle className="font-mono text-lg">
+              #{order.orderNumber}
+            </SheetTitle>
+            <SheetDescription>{orderDate}</SheetDescription>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-shrink-0"
+            onClick={() => setPrintOpen(true)}
+          >
+            <Printer className="h-3.5 w-3.5 mr-1" />
+            Print Bill
+          </Button>
         </SheetHeader>
 
         <div className="px-4 pb-6 space-y-5">
@@ -537,6 +551,13 @@ export function OrderDetail({
             onCompleted={(paymentId, orderId, audit) =>
               onCashierCompleted?.(paymentId, orderId, audit)
             }
+          />
+
+          {/* Print bill — pure client-side, never mutates the order */}
+          <PrintBillDialog
+            order={order}
+            open={printOpen}
+            onOpenChange={setPrintOpen}
           />
 
           {/* Notes */}

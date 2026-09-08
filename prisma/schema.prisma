@@ -129,6 +129,7 @@ model Restaurant {
   refunds      Refund[]
   cancellations CancellationRequest[]
   auditLogs    AuditLog[]
+  promos       Promo[]
   settings     RestaurantSettings?
 
   @@map("restaurant")
@@ -378,13 +379,20 @@ model Customer {
   name         String?
   phone        String?
   whatsappId   String?
+  // Customer login (F3 promo). Nullable so existing guest-only customers
+  // keep working untouched; email is unique per restaurant when set.
+  email        String?
+  password     String? // bcrypt hash; null = customer has no login yet
+  isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
-  orders     Order[]
+  restaurant  Restaurant  @relation(fields: [restaurantId], references: [id])
+  orders      Order[]
+  promoUsages PromoUsage[]
 
   @@unique([restaurantId, phone])
+  @@unique([restaurantId, email])
   @@index([restaurantId])
   @@index([phone])
 
@@ -419,6 +427,11 @@ model Order {
   payments      Payment[]
   refunds       Refund[]
   cancellations CancellationRequest[]
+  // Promo applied to this order (F3) — null when no promo was used.
+  promoId       String?
+  promoCode     String?
+  promo         Promo?               @relation(fields: [promoId], references: [id])
+  promoUsages   PromoUsage[]
 
   @@unique([restaurantId, orderNumber])
   @@index([restaurantId])
@@ -561,6 +574,65 @@ model Payment {
   @@index([shiftId])
 
   @@map("payment")
+}
+
+// ============================================================
+// PROMO (F3) — tenant-scoped marketing/coupon engine.
+// ============================================================
+
+model Promo {
+  id          String   @id @default(cuid())
+  restaurantId String
+  code        String
+  name        String
+  description String?  @db.Text
+  type        String   @default("PERCENT") // PERCENT | FIXED
+  value       Decimal  @db.Decimal(10, 2)
+  minOrder    Decimal  @default(0) @db.Decimal(10, 2)
+  // Cap for PERCENT promos (e.g. 10% max Rp10.000).
+  maxDiscount Decimal? @db.Decimal(10, 2)
+  startsAt    DateTime?
+  expiresAt   DateTime?
+  // Global usage quota (0 = unlimited). Enforced server-side.
+  maxUsage    Int      @default(0)
+  // Max times ONE customer may use this promo (0 = unlimited).
+  perCustomerLimit Int  @default(1)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  usages     PromoUsage[]
+  orders     Order[]
+
+  @@unique([restaurantId, code])
+  @@index([restaurantId])
+  @@index([isActive])
+
+  @@map("promo")
+}
+
+// One row per customer-promo interaction.
+//  - Claim: row with orderId = null (reserves the right to use it).
+//  - Use:   row with orderId set (the promo was applied to an order).
+// Quota/per-customer limits are enforced with a per-promo row lock inside
+// a transaction (race-safe), never from client input.
+model PromoUsage {
+  id         String   @id @default(cuid())
+  promoId    String
+  customerId String
+  orderId    String?
+  createdAt  DateTime @default(now())
+
+  promo    Promo    @relation(fields: [promoId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id])
+  order    Order?   @relation(fields: [orderId], references: [id])
+
+  @@index([promoId])
+  @@index([customerId])
+  @@index([orderId])
+
+  @@map("promousage")
 }
 
 model PaymentTransaction {

@@ -3,9 +3,14 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ShoppingCart } from "lucide-react";
+import { LogIn, LogOut, ShoppingCart } from "lucide-react";
 import { CartProvider, useCart } from "@/hooks/use-cart";
 import { BrandingProvider, useBranding } from "@/hooks/use-branding";
+import {
+  CustomerAuthProvider,
+  useCustomerAuth,
+} from "@/hooks/use-customer-auth";
+import { CustomerAuthDialog } from "@/components/customer/auth-dialog";
 
 function CartBadge() {
   const { items, isHydrated } = useCart();
@@ -45,6 +50,9 @@ function BrandLogo({ url, alt }: { url?: string | null; alt: string }) {
 function CustomerHeader() {
   const pathname = usePathname();
   const { branding } = useBranding();
+  const { customer, isHydrated, logout } = useCustomerAuth();
+  const { restaurantId } = useCart();
+  const [authOpen, setAuthOpen] = useState(false);
 
   return (
     <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-sm border-b border-gray-100">
@@ -55,7 +63,7 @@ function CustomerHeader() {
             {branding.siteName}
           </span>
         </Link>
-        <nav className="flex items-center gap-3">
+        <nav className="flex items-center gap-2.5">
           <Link
             href="/menu"
             className={`text-xs font-medium transition-colors py-1 ${
@@ -73,8 +81,45 @@ function CustomerHeader() {
             <ShoppingCart className="h-4.5 w-4.5" />
             <CartBadge />
           </Link>
+          {isHydrated &&
+            (customer ? (
+              <div className="flex items-center gap-1">
+                <span className="hidden sm:inline text-xs font-medium text-gray-700 max-w-[120px] truncate">
+                  {customer.name || customer.email}
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      await logout();
+                    } catch {
+                      // Logout failure is not blocking.
+                    }
+                  }}
+                  className="text-gray-400 hover:text-gray-600 transition-colors p-1"
+                  aria-label="Keluar"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAuthOpen(true)}
+                className="inline-flex items-center gap-1 text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-2.5 py-1 hover:bg-brand-secondary transition-colors"
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                Masuk
+              </button>
+            ))}
         </nav>
       </div>
+
+      <CustomerAuthDialog
+        restaurantId={restaurantId}
+        open={authOpen}
+        onOpenChange={setAuthOpen}
+      />
     </header>
   );
 }
@@ -87,10 +132,12 @@ export default function CustomerLayout({
   return (
     <CartProvider>
       <BrandingProvider>
-        <div className="min-h-screen bg-gray-50">
-          <CustomerHeader />
-          <main className="max-w-4xl mx-auto px-3 pt-3">{children}</main>
-        </div>
+        <CustomerAuthProvider>
+          <div className="min-h-screen bg-gray-50">
+            <CustomerHeader />
+            <main className="max-w-4xl mx-auto px-3 pt-3">{children}</main>
+          </div>
+        </CustomerAuthProvider>
       </BrandingProvider>
     </CartProvider>
   );

@@ -154,3 +154,30 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* ============================================================
+   Print Bill — isolate #bill-print-root when printing.
+   The dialog chrome is visibility:hidden; only the bill is printed.
+   The bill is pure client-side (window.print()) and never mutates
+   order/payment state. Paper size (A4 / 58mm / 80mm) is chosen in
+   the dialog; the physical paper is picked in the browser dialog.
+   ============================================================ */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #bill-print-root,
+  #bill-print-root * {
+    visibility: visible;
+  }
+  #bill-print-root {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  #bill-print-root .bill-inner {
+    max-width: none;
+  }
+}

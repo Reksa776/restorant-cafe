@@ -12,9 +12,11 @@ import {
   Phone,
   QrCode,
   Banknote,
+  BadgePercent,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
+import { useCustomerAuth } from "@/hooks/use-customer-auth";
 
 // ============================================================
 // Types
@@ -46,8 +48,11 @@ export default function CheckoutPage() {
     clearTableContext,
   } = useCart();
 
+  const { customer, isHydrated } = useCustomerAuth();
+
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [promoCode, setPromoCode] = useState("");
   const [orderType, setOrderType] = useState<"DINE_IN" | "TAKEAWAY" | "DELIVERY">(
     tableContext ? "DINE_IN" : "DINE_IN"
   );
@@ -64,6 +69,13 @@ export default function CheckoutPage() {
   // service-free — subtotal = total. TAKEAWAY / DELIVERY keep tax + service.
   const isDineIn = (tableContext ? "DINE_IN" : orderType) === "DINE_IN";
   const displayTotal = isDineIn ? subtotal : grandTotal;
+
+  // Prefill customer data from the logged-in account (F3).
+  useEffect(() => {
+    if (!isHydrated || !customer) return;
+    setCustomerName((prev) => prev || customer.name || "");
+    setCustomerPhone((prev) => prev || customer.phone || "");
+  }, [isHydrated, customer]);
 
   // Load tables if restaurant is available and not coming from QR
   useEffect(() => {
@@ -159,6 +171,9 @@ export default function CheckoutPage() {
         notes: notes.trim() || undefined,
         items: orderItems,
         paymentMethod: isDineIn ? paymentMethod : undefined,
+        // F3 — promo code applied server-side at order creation (the server
+        // recomputes the discount and re-validates quota/per-customer limits).
+        ...(promoCode.trim() ? { promoCode: promoCode.trim() } : {}),
       };
 
       const orderRes = await api.post("/public/orders", orderData);
@@ -398,6 +413,40 @@ export default function CheckoutPage() {
             )}
           </div>
         )}
+
+        {/* Promo — F3: requires login; discount applied server-side */}
+        <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <BadgePercent className="h-4 w-4 text-gray-500" />
+            <h2 className="font-medium">Kode Promo</h2>
+          </div>
+          {customer ? (
+            <>
+              <input
+                type="text"
+                value={promoCode}
+                onChange={(e) =>
+                  setPromoCode(e.target.value.toUpperCase())
+                }
+                placeholder="Masukkan kode promo (contoh: HEMAT10)"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono uppercase focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
+              />
+              <p className="text-xs text-gray-400">
+                Diskon dihitung otomatis oleh sistem saat pesanan dibuat.
+              </p>
+            </>
+          ) : (
+            <p className="text-sm text-gray-500">
+              <Link
+                href="/menu"
+                className="text-brand-primary font-medium hover:underline"
+              >
+                Masuk akun di halaman menu
+              </Link>{" "}
+              untuk memakai kode promo.
+            </p>
+          )}
+        </div>
 
         {/* Notes */}
         <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">

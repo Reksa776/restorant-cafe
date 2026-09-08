@@ -9,6 +9,8 @@ import { toast } from "sonner";
 import api from "@/lib/axios";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBranding } from "@/hooks/use-branding";
+import { useCustomerAuth } from "@/hooks/use-customer-auth";
+import { PromoSection } from "@/components/customer/promo-section";
 
 // ============================================================
 // Types
@@ -694,6 +696,8 @@ function MenuContent() {
     clearTableContext,
   } = useCart();
   const { applyBranding } = useBranding();
+  const { customer, isHydrated: authHydrated } = useCustomerAuth();
+  const customerId = customer?.id ?? null;
   const [categories, setCategories] = useState<Category[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [restaurant, setRestaurant] = useState<RestaurantInfo | null>(null);
@@ -702,6 +706,11 @@ function MenuContent() {
     null
   );
   const [editingCartItemIndex, setEditingCartItemIndex] = useState<number | null>(null);
+  // F4 — product recommendations ("Rekomendasi Untuk Kamu" / "Produk Populer").
+  const [recommended, setRecommended] = useState<Product[]>([]);
+  const [recommendationSource, setRecommendationSource] = useState<
+    "personalized" | "popular"
+  >("popular");
 
   const searchParams = useSearchParams();
 
@@ -770,6 +779,31 @@ function MenuContent() {
       setProducts(
         (menuRes.data.data.products || []).map((p: Product) => normalizeProduct(p))
       );
+
+      // Recommendations are a progressive enhancement — a failure must never
+      // block the menu itself. Guest = popular products; logged-in customers
+      // get personalized picks (the endpoint reads the session cookie
+      // server-side and re-validates the restaurant scope).
+      try {
+        const recRes = await api.get("/public/menu/recommendations", {
+          params: {
+            restaurantId: restaurantData.id,
+            limit: 8,
+          },
+        });
+        setRecommended(
+          (recRes.data.data.products || []).map((p: Product) =>
+            normalizeProduct(p)
+          )
+        );
+        setRecommendationSource(
+          recRes.data.data.source === "personalized"
+            ? "personalized"
+            : "popular"
+        );
+      } catch {
+        setRecommended([]);
+      }
     } catch (error) {
       console.error("Failed to load menu:", error);
       toast.error("Gagal memuat menu");
@@ -792,6 +826,32 @@ function MenuContent() {
     }, 0);
     return () => clearTimeout(timer);
   }, [isHydrated, tableContext, loadMenu]);
+
+  // Re-personalize recommendations after login/logout (cookie is sent
+  // automatically; the server re-validates the session + restaurant scope).
+  useEffect(() => {
+    if (!authHydrated || !restaurant) return;
+    (async () => {
+      try {
+        const recRes = await api.get("/public/menu/recommendations", {
+          params: { restaurantId: restaurant.id, limit: 8 },
+        });
+        setRecommended(
+          (recRes.data.data.products || []).map((p: Product) =>
+            normalizeProduct(p)
+          )
+        );
+        setRecommendationSource(
+          recRes.data.data.source === "personalized"
+            ? "personalized"
+            : "popular"
+        );
+      } catch {
+        setRecommended([]);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, authHydrated, restaurant?.id]);
 
   const editHandledRef = useRef(false);
   const pendingEditIndexRef = useRef<number | null>(null);
@@ -1096,6 +1156,39 @@ function MenuContent() {
             Pesan langsung dari website
           </p>
         </div>
+      )}
+
+      {/* Promo — F3: tenant-scoped promos; claim requires login. */}
+      {restaurant && <PromoSection restaurantId={restaurant.id} />}
+
+      {/* Rekomendasi — F4: personalized (login) or popular products,
+          rendered with the same ProductCard as the category sections. */}
+      {recommended.length > 0 && (
+        <section aria-label="Rekomendasi">
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-3 sm:mb-4 flex items-center gap-1.5">
+            <span aria-hidden>⭐</span>
+            {recommendationSource === "personalized"
+              ? "Rekomendasi Untuk Kamu"
+              : "Produk Populer"}
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 mb-8 sm:mb-10">
+            {recommended.map((product) => (
+              <ProductCard
+                key={product.id}
+                product={product}
+                quantity={getItemQuantity(product.id)}
+                onAdd={() => handleAdd(product)}
+                onCustomize={() => {
+                  setEditingCartItemIndex(null);
+                  setCustomizingProduct(product);
+                }}
+                onEdit={() => handleEditFromMenu(product)}
+                onIncrease={() => handleIncrease(product)}
+                onDecrease={() => handleDecrease(product)}
+              />
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Products grouped by category */}

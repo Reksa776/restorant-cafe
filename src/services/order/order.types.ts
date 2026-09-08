@@ -61,6 +61,12 @@ export const CreateCustomerOrderSchema = z.object({
    * rejects it so their legacy gateway flow stays untouched.
    */
   paymentMethod: z.enum(["QRIS", "KASIR"]).optional(),
+  /**
+   * Optional promo code (F3). Using a promo REQUIRES the logged-in
+   * customer — the discount is always computed server-side from the DB
+   * (never trusted from the client).
+   */
+  promoCode: z.string().trim().min(1).max(50).optional(),
 });
 
 export const UpdateOrderStatusSchema = z.object({

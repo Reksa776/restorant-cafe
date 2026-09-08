@@ -176,7 +176,47 @@ async function main() {
 
   console.log(`✅ Tables created: ${tables.length}`);
 
+  // Create demo promos (F3) — tenant-scoped marketing engine. Customers can
+  // claim these from the menu after logging in, then use the code at checkout.
+  const promos = await Promise.all([
+    prisma.promo.create({
+      data: {
+        restaurantId: restaurant.id,
+        code: "HEMAT10",
+        name: "Diskon 10%",
+        description: "Nikmati potongan 10% untuk semua pesanan.",
+        type: "PERCENT",
+        value: 10,
+        minOrder: 50000,
+        maxDiscount: 20000,
+        perCustomerLimit: 1,
+        maxUsage: 0,
+        isActive: true,
+      },
+    }),
+    prisma.promo.create({
+      data: {
+        restaurantId: restaurant.id,
+        code: "GRATIS5K",
+        name: "Potongan Rp5.000",
+        description: "Potongan langsung Rp5.000 tanpa syarat minimum.",
+        type: "FIXED",
+        value: 5000,
+        minOrder: 0,
+        perCustomerLimit: 1,
+        maxUsage: 100,
+        isActive: true,
+      },
+    }),
+  ]);
+
+  console.log(`✅ Promos created: ${promos.map((p) => p.code).join(", ")}`);
+
   console.log("\n🎉 Seeding completed!");
+  console.log("\n🎟️ Promo codes:");
+  console.log("   HEMAT10 (10% maks Rp20.000, min order Rp50.000)");
+  console.log("   GRATIS5K (Rp5.000, kuota 100)");
+
   console.log("\n📋 Login credentials:");
   console.log("   Email: admin@restobahagia.com");
   console.log("   Password: admin123");

@@ -1,9 +1,10 @@
 import { NextRequest } from "next/server";
 import { orderService } from "@/services/order/order.service";
 import { CreateCustomerOrderSchema } from "@/services/order/order.types";
-import { successResponse, createdResponse, errorResponse } from "@/lib/api-response";
+import { createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { tryGetCustomerSessionFromRequest } from "@/lib/customer-session.server";
 
 /**
  * POST /api/public/orders
@@ -61,8 +62,14 @@ export async function POST(request: NextRequest) {
       restaurantId = restaurant.id;
     }
 
-    // Create order
-    const order = await orderService.createCustomerOrder(input, restaurantId);
+    // Create order. The verified customer session (httpOnly cookie) is only
+    // used when a promoCode is present — guest checkout stays anonymous.
+    const session = tryGetCustomerSessionFromRequest(request);
+    const order = await orderService.createCustomerOrder(
+      input,
+      restaurantId,
+      session?.customerId
+    );
 
     // KASIR orders get their UNPAID payment row atomically with the order —
     // surface it so the checkout never needs a second request.
