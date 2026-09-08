@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useUserRole } from "@/hooks/use-user-role";
+import { useBranchContext } from "@/hooks/use-branch-context";
+import {
+  normalizeApiError,
+  isUnauthorized,
+  type NormalizedApiError,
+} from "@/lib/api-error-handler";
 import {
   shiftService,
   type CashierShift,
@@ -17,6 +23,8 @@ import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +52,7 @@ function fmtTime(iso?: string | null) {
 
 export default function ShiftsPage() {
   const { role, isLoading: roleLoading } = useUserRole();
+  const { isLoading: branchCtxLoading } = useBranchContext();
   const isAdmin = role === "ADMIN";
 
   // Cashier drawer
@@ -53,6 +62,7 @@ export default function ShiftsPage() {
   const [allShifts, setAllShifts] = useState<CashierShift[]>([]);
   const [pendingOverrides, setPendingOverrides] = useState<ShiftOverride[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<NormalizedApiError | null>(null);
 
   // Open/close dialogs
   const [openDialog, setOpenDialog] = useState(false);
@@ -80,7 +90,9 @@ export default function ShiftsPage() {
 
   const load = useCallback(async () => {
     if (roleLoading || !role) return;
+    if (branchCtxLoading) return; // wait for branch context (stale-header guard)
     setLoading(true);
+    setError(null);
     try {
       if (role === "ADMIN") {
         const [shiftsRes, pendingRes] = await Promise.all([
@@ -98,12 +110,13 @@ export default function ShiftsPage() {
         setMyShifts(listRes.items);
       }
     } catch (err) {
+      if (isUnauthorized(err)) return; // 401 handled by the axios interceptor
       console.error("Failed to load shifts:", err);
-      toast.error("Gagal memuat data shift");
+      setError(normalizeApiError(err));
     } finally {
       setLoading(false);
     }
-  }, [role, roleLoading]);
+  }, [role, roleLoading, branchCtxLoading]);
 
   useEffect(() => {
     load();
@@ -225,6 +238,32 @@ export default function ShiftsPage() {
     return (
       <div className="flex items-center justify-center py-24">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold">
+            {isAdmin ? "Shift Kasir" : "Shift Saya"}
+          </h1>
+        </div>
+        <div className="flex flex-col items-center justify-center py-16 space-y-3 text-center">
+          <AlertCircle className="h-10 w-10 text-red-500" />
+          <p className="text-sm text-gray-600">{error.message}</p>
+          {error.retryable ? (
+            <Button variant="outline" size="sm" onClick={() => load()}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Coba Lagi
+            </Button>
+          ) : (
+            <p className="text-xs text-gray-400">
+              Silakan pilih cabang yang sesuai dengan akun Anda, atau hubungi admin.
+            </p>
+          )}
+        </div>
       </div>
     );
   }

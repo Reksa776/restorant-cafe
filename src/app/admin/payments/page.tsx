@@ -12,10 +12,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { paymentService, type Payment } from "@/services/payment.service";
-import { ExternalLink, Banknote, Loader2, RefreshCw } from "lucide-react";
+import { ExternalLink, Banknote, Loader2, RefreshCw, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
+import { useBranchContext } from "@/hooks/use-branch-context";
+import {
+  normalizeApiError,
+  isUnauthorized,
+  type NormalizedApiError,
+} from "@/lib/api-error-handler";
 
 const statusColors: Record<string, string> = {
   UNPAID: "bg-gray-100 text-gray-800",
@@ -26,21 +32,25 @@ const statusColors: Record<string, string> = {
 };
 
 export default function PaymentsPage() {
+  const { isLoading: branchCtxLoading } = useBranchContext();
   const [payments, setPayments] = useState<Payment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<NormalizedApiError | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [markingId, setMarkingId] = useState<string | null>(null);
 
   const loadPayments = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
+    setError(null);
     try {
       const result = await paymentService.getPayments({
         status: statusFilter === "all" ? undefined : statusFilter,
       });
       setPayments(result.items);
     } catch (error) {
+      if (isUnauthorized(error)) return; // 401 handled by the axios interceptor
       console.error("Failed to load payments:", error);
-      toast.error("Gagal memuat data pembayaran");
+      setError(normalizeApiError(error));
     } finally {
       setIsLoading(false);
     }
@@ -48,13 +58,16 @@ export default function PaymentsPage() {
 
   useEffect(() => {
     let cancelled = false;
+    // Wait for branch context so a stale admin_branch_id is cleared before
+    // firing the scoped payments request (Main Outlet cashier 403 root cause).
+    if (branchCtxLoading) return;
     Promise.resolve().then(() => {
       if (!cancelled) void loadPayments();
     });
     return () => {
       cancelled = true;
     };
-  }, [loadPayments]);
+  }, [loadPayments, branchCtxLoading]);
 
   // Realtime: payment created/status changed → refresh without reload.
   // The currently selected status filter is preserved (closure state).
@@ -146,7 +159,22 @@ export default function PaymentsPage() {
           <CardTitle>Daftar Pembayaran</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
+          {error ? (
+            <div className="flex flex-col items-center justify-center py-8 space-y-3 text-center">
+              <AlertCircle className="h-8 w-8 text-red-500" />
+              <p className="text-sm text-gray-600">{error.message}</p>
+              {error.retryable ? (
+                <Button variant="outline" size="sm" onClick={() => loadPayments()}>
+                  <RefreshCw className="h-4 w-4 mr-2" />
+                  Coba Lagi
+                </Button>
+              ) : (
+                <p className="text-xs text-gray-400">
+                  Silakan pilih cabang yang sesuai dengan akun Anda, atau hubungi admin.
+                </p>
+              )}
+            </div>
+          ) : isLoading ? (
             <p className="text-center text-gray-500 py-8">Loading...</p>
           ) : payments.length === 0 ? (
             <p className="text-center text-gray-500 py-8">

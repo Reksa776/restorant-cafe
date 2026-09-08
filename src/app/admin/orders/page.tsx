@@ -9,6 +9,12 @@ import { toast } from "sonner";
 import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
+import { useBranchContext } from "@/hooks/use-branch-context";
+import {
+  normalizeApiError,
+  isUnauthorized,
+  type NormalizedApiError,
+} from "@/lib/api-error-handler";
 import { Button } from "@/components/ui/button";
 import { OrderSummary } from "@/components/admin/orders/order-summary";
 import { OrderFilters } from "@/components/admin/orders/order-filters";
@@ -21,6 +27,7 @@ import {
 
 export default function OrdersPage() {
   const router = useRouter();
+  const { isLoading: branchCtxLoading } = useBranchContext();
 
   // Data state
   const [orders, setOrders] = useState<Order[]>([]);
@@ -34,7 +41,7 @@ export default function OrdersPage() {
   // UI state
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<NormalizedApiError | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
 
   // Filter state
@@ -76,8 +83,9 @@ export default function OrdersPage() {
         setOrders(filteredOrders);
         setStats(statsResult);
       } catch (err) {
+        if (isUnauthorized(err)) return; // 401 handled by the axios interceptor
         console.error("Failed to load orders:", err);
-        setError("Gagal memuat pesanan");
+        setError(normalizeApiError(err));
       } finally {
         setIsLoading(false);
         setIsRefreshing(false);
@@ -87,8 +95,11 @@ export default function OrdersPage() {
   );
 
   useEffect(() => {
+    // Wait for branch context so a stale admin_branch_id is cleared before
+    // firing scoped order requests (Main Outlet cashier 403 root cause).
+    if (branchCtxLoading) return;
     loadOrders();
-  }, [loadOrders]);
+  }, [branchCtxLoading, loadOrders]);
 
   // ============================================================
   // Realtime updates (no page refresh)
@@ -236,11 +247,18 @@ export default function OrdersPage() {
         </div>
         <div className="flex flex-col items-center justify-center py-16 space-y-4">
           <AlertCircle className="h-12 w-12 text-destructive" />
-          <p className="text-lg font-medium">{error}</p>
-          <Button onClick={() => loadOrders()} variant="outline">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Coba Lagi
-          </Button>
+          <p className="text-lg font-medium">{error.message}</p>
+          {!error.retryable && (
+            <p className="text-sm text-muted-foreground max-w-md text-center">
+              Silakan pilih cabang yang sesuai dengan akun Anda, atau hubungi admin.
+            </p>
+          )}
+          {error.retryable && (
+            <Button onClick={() => loadOrders()} variant="outline">
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Coba Lagi
+            </Button>
+          )}
         </div>
       </div>
     );

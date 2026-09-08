@@ -53,6 +53,17 @@ export function useBranchContext(): {
             const allowed = (data as SessionDto).branches.some(
               (b) => b.id === stored
             );
+            if (stored && !allowed) {
+              // A leftover admin_branch_id from a previous session (or a
+              // branch this user no longer has access to) must be REMOVED,
+              // not just ignored in React state. The axios interceptor reads
+              // localStorage synchronously on every request, so a stale value
+              // would keep reaching the server as x-branch-id and trigger 403
+              // for an otherwise-valid user (e.g. a single-branch Main Outlet
+              // cashier). Clearing it fixes the false 403 without weakening
+              // server-side authorization.
+              localStorage.removeItem("admin_branch_id");
+            }
             setBranchIdState(stored && allowed ? stored : null);
           }
         })
