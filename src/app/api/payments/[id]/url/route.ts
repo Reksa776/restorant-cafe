@@ -2,16 +2,21 @@ import { NextRequest } from "next/server";
 import { paymentService } from "@/services/payment/payment.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
     const { id } = await params;
-    const result = await paymentService.getPaymentUrl(id, restaurantId);
+    const result = await paymentService.getPaymentUrl(
+      id,
+      ctx.restaurantId,
+      authorizedBranches(ctx)
+    );
 
     return successResponse(result);
   } catch (error) {

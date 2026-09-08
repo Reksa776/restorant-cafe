@@ -2,18 +2,20 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * Centralized audit trail. Every sensitive/financial action records one row
- * with who (userId), what (action), which entity, extra context (details),
- * and the caller's IP when available.
+ * with who (userId), what (action), where (restaurantId + optional branchId),
+ * which entity, extra context (details), and the caller's IP when available.
  *
  * Actions are free-form stable strings — e.g. "PAYMENT_RECEIVED",
  * "SHIFT_OPENED", "SHIFT_CLOSED", "REFUND_APPROVED", "REFUND_DENIED",
- * "ORDER_CANCELLED", "SHIFT_OVERRIDE_REQUESTED", "ADMIN_OVERRIDE".
+ * "ORDER_CANCELLED", "SHIFT_OVERRIDE_REQUESTED", "ADMIN_OVERRIDE",
+ * "BRANCH_CREATED", "BRANCH_UPDATED".
  *
  * Never throws — auditing must never break the business write it follows.
  */
 export class AuditService {
   async log(input: {
     restaurantId: string;
+    branchId?: string | null;
     userId?: string | null;
     action: string;
     entityType?: string | null;
@@ -25,6 +27,7 @@ export class AuditService {
       await prisma.auditLog.create({
         data: {
           restaurantId: input.restaurantId,
+          branchId: input.branchId || null,
           userId: input.userId || null,
           action: input.action,
           entityType: input.entityType || null,
@@ -47,6 +50,7 @@ export class AuditService {
     restaurantId: string;
     userId?: string;
     action?: string;
+    branchId?: string;
     page?: number;
     limit?: number;
   }) {
@@ -59,6 +63,7 @@ export class AuditService {
     };
     if (input.userId) where.userId = input.userId;
     if (input.action) where.action = input.action;
+    if (input.branchId) where.branchId = input.branchId;
 
     const [items, total] = await Promise.all([
       prisma.auditLog.findMany({

@@ -2,10 +2,11 @@ import { NextRequest } from "next/server";
 import { promoService } from "@/services/promo/promo.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 // ============================================================
-// PATCH /api/admin/promos/[id] — toggle active (ADMIN, tenant-scoped).
+// PATCH /api/admin/promos/[id] — toggle active (ADMIN, tenant-scoped,
+// branch-filtered via the x-branch-id header).
 // ============================================================
 
 export async function PATCH(
@@ -13,7 +14,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
     const { id } = await params;
 
     const body = await request.json().catch(() => null);
@@ -22,9 +24,10 @@ export async function PATCH(
     }
 
     const promo = await promoService.setPromoActive(
-      restaurantId,
+      ctx.restaurantId,
       id,
-      body.isActive
+      body.isActive,
+      authorizedBranches(ctx)
     );
 
     return successResponse(

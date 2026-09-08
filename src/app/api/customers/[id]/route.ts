@@ -2,14 +2,15 @@ import { NextRequest } from "next/server";
 import { customerService } from "@/services/customer/customer.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const { restaurantId } = await requireAdmin(branchId);
     const { id } = await params;
     const customer = await customerService.getCustomer(id, restaurantId);
 

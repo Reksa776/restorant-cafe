@@ -2,14 +2,15 @@ import { NextRequest } from "next/server";
 import { reportService, type ReportPeriod } from "@/services/report/report.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 // ============================================================
 // GET /api/reports/sales
 //   ?period=today|yesterday|week|month|custom&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
 //
 // ADMIN only, restaurant-scoped (restaurantId from the session — never
-// from the query string). All aggregations run server-side.
+// from the query string). Branch-scoped via the x-branch-id header hint and
+// the admin's branch assignments. All aggregations run server-side.
 // ============================================================
 
 const PERIODS: ReportPeriod[] = [
@@ -22,7 +23,8 @@ const PERIODS: ReportPeriod[] = [
 
 export async function GET(request: NextRequest) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
 
     const { searchParams } = new URL(request.url);
     const periodRaw = searchParams.get("period") || "today";
@@ -33,10 +35,11 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get("endDate") || undefined;
 
     const report = await reportService.getSalesReport(
-      restaurantId,
+      ctx.restaurantId,
       period,
       startDate,
-      endDate
+      endDate,
+      authorizedBranches(ctx)
     );
 
     return successResponse(report);

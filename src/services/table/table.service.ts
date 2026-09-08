@@ -7,11 +7,16 @@ import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 export class TableService {
   async getTables(
     restaurantId: string,
-    params?: { status?: string; isActive?: boolean }
+    params?: { status?: string; isActive?: boolean },
+    branchFilters?: string[] | null
   ) {
     const where: Record<string, unknown> = {
       restaurantId,
     };
+
+    if (branchFilters?.length) {
+      where.branchId = { in: branchFilters };
+    }
 
     if (params?.status) {
       where.status = params.status;
@@ -23,13 +28,20 @@ export class TableService {
 
     return prisma.table.findMany({
       where,
+      include: {
+        // Branch code needed by the admin UI to build the branch-scoped
+        // customer URL / QR payload (/t/{branchCode}/{tableNumber}).
+        branch: {
+          select: { id: true, code: true, name: true },
+        },
+      },
       orderBy: { number: "asc" },
     });
   }
 
-  async getTable(id: string, restaurantId: string) {
+  async getTable(id: string, restaurantId: string, branchFilters?: string[] | null) {
     const table = await prisma.table.findFirst({
-      where: { id, restaurantId },
+      where: { id, restaurantId, branchId: branchFilters?.length ? { in: branchFilters } : undefined },
       include: {
         orders: {
           where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
@@ -51,13 +63,29 @@ export class TableService {
       number: number;
       name: string;
       capacity?: number;
-    }
+    },
+    branchId?: string | null
   ) {
-    // Check for duplicate table number
+    const resolvedBranchId = branchId || null;
+
+    // A table may only be attached to a branch that belongs to this
+    // restaurant (defense in depth — the route also validates).
+    if (resolvedBranchId) {
+      const branch = await prisma.branch.findFirst({
+        where: { id: resolvedBranchId, restaurantId },
+        select: { id: true },
+      });
+      if (!branch) {
+        throw new ValidationError("Cabang tidak ditemukan");
+      }
+    }
+
+    // Check for duplicate table number within the same branch.
     const existing = await prisma.table.findFirst({
       where: {
         restaurantId,
         number: data.number,
+        branchId: resolvedBranchId,
       },
     });
 
@@ -68,6 +96,7 @@ export class TableService {
     const table = await prisma.table.create({
       data: {
         restaurantId,
+        branchId: resolvedBranchId,
         ...data,
         capacity: data.capacity || 4,
       },
@@ -86,22 +115,24 @@ export class TableService {
   async updateTable(
     id: string,
     restaurantId: string,
-    data: { number?: number; name?: string; capacity?: number }
+    data: { number?: number; name?: string; capacity?: number },
+    branchFilters?: string[] | null
   ) {
     const table = await prisma.table.findFirst({
-      where: { id, restaurantId },
+      where: { id, restaurantId, branchId: branchFilters?.length ? { in: branchFilters } : undefined },
     });
 
     if (!table) {
       throw new NotFoundError("Table not found");
     }
 
-    // Check for duplicate table number if changing
+    // Check for duplicate table number if changing (same branch only).
     if (data.number && data.number !== table.number) {
       const existing = await prisma.table.findFirst({
         where: {
           restaurantId,
           number: data.number,
+          branchId: table.branchId,
           id: { not: id },
         },
       });
@@ -131,9 +162,9 @@ export class TableService {
     return updated;
   }
 
-  async deleteTable(id: string, restaurantId: string) {
+  async deleteTable(id: string, restaurantId: string, branchFilters?: string[] | null) {
     const table = await prisma.table.findFirst({
-      where: { id, restaurantId },
+      where: { id, restaurantId, branchId: branchFilters?.length ? { in: branchFilters } : undefined },
       include: {
         orders: {
           where: { status: { notIn: ["COMPLETED", "CANCELLED"] } },
@@ -166,10 +197,11 @@ export class TableService {
   async updateTableStatus(
     id: string,
     restaurantId: string,
-    status: "AVAILABLE" | "OCCUPIED" | "MAINTENANCE"
+    status: "AVAILABLE" | "OCCUPIED" | "MAINTENANCE",
+    branchFilters?: string[] | null
   ) {
     const table = await prisma.table.findFirst({
-      where: { id, restaurantId },
+      where: { id, restaurantId, branchId: branchFilters?.length ? { in: branchFilters } : undefined },
     });
 
     if (!table) {
@@ -197,9 +229,19 @@ export class TableService {
     return updated;
   }
 
-  async generateQrCode(id: string, restaurantId: string, baseUrl?: string) {
+  async generateQrCode(
+    id: string,
+    restaurantId: string,
+    baseUrl?: string,
+    branchFilters?: string[] | null
+  ) {
     const table = await prisma.table.findFirst({
-      where: { id, restaurantId },
+      where: { id, restaurantId, branchId: branchFilters?.length ? { in: branchFilters } : undefined },
+      include: {
+        branch: {
+          select: { code: true, name: true, isActive: true },
+        },
+      },
     });
 
     if (!table) {
@@ -213,7 +255,13 @@ export class TableService {
       baseUrl && /^https?:\/\//i.test(baseUrl)
         ? baseUrl.replace(/\/+$/, "")
         : process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const qrData = `${origin}/t/${table.number}`;
+
+    // Multi-branch QR: /t/{branchCode}/{tableNumber} disambiguates tables
+    // that share the same number across branches. Tables without a branch
+    // keep the legacy /t/{tableNumber} payload for backward compatibility.
+    const qrData = table.branch?.code
+      ? `${origin}/t/${encodeURIComponent(table.branch.code)}/${table.number}`
+      : `${origin}/t/${table.number}`;
 
     const qrCode = await QRCode.toDataURL(qrData, {
       width: 300,

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireAdmin, verifyAdminPassword } from "@/lib/auth-helpers";
+import { requireAdmin, verifyAdminPassword, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 import { shiftService } from "@/services/shift/shift.service";
 
 /**
@@ -17,7 +17,8 @@ export async function POST(
   { params }: { params: Promise<{ overrideId: string }> }
 ) {
   try {
-    const { userId, restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
     const { overrideId } = await params;
     const body = await request.json();
 
@@ -26,15 +27,16 @@ export async function POST(
     }
 
     // Admin password re-confirmation for the sensitive action.
-    await verifyAdminPassword(userId, restaurantId, body.password);
+    await verifyAdminPassword(ctx.userId, ctx.restaurantId, body.password);
 
     const result = await shiftService.decideOverride({
-      restaurantId,
-      adminId: userId,
+      restaurantId: ctx.restaurantId,
+      adminId: ctx.userId,
       overrideId,
       approve: body.approve,
       decisionNote:
         typeof body.decisionNote === "string" ? body.decisionNote : undefined,
+      branchFilters: authorizedBranches(ctx),
     });
 
     return successResponse(

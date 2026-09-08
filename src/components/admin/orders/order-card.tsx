@@ -247,6 +247,18 @@ export function OrderCard({
           </div>
         </div>
 
+        {/* Customer Note (Order.notes) — skipped when blank */}
+        {typeof order.notes === "string" && order.notes.trim() !== "" && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+            <p className="mb-0.5 text-xs font-medium text-amber-700">
+              📝 Catatan Customer
+            </p>
+            <p className="line-clamp-2 text-sm text-amber-900">
+              {order.notes}
+            </p>
+          </div>
+        )}
+
         <Separator />
 
         {/* Order Items */}

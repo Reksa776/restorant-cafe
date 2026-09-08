@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireRoles } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom } from "@/lib/auth-helpers";
 import { shiftService } from "@/services/shift/shift.service";
 
 /**
@@ -16,7 +16,8 @@ export async function POST(
   { params }: { params: Promise<{ shiftId: string }> }
 ) {
   try {
-    const { restaurantId, userId } = await requireRoles(["ADMIN", "CASHIER"]);
+    const branchId = branchHintFrom(request);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { shiftId } = await params;
     const body = await request.json();
 
@@ -25,8 +26,8 @@ export async function POST(
     }
 
     const override = await shiftService.requestOverride({
-      restaurantId,
-      userId,
+      restaurantId: ctx.restaurantId,
+      userId: ctx.userId,
       shiftId,
       reason: body.reason,
       proposedClosingCash:

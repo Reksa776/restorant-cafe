@@ -17,6 +17,7 @@ import {
   Clock,
   BarChart3,
   Megaphone,
+  Store,
   LogOut,
   Menu,
   X,
@@ -24,6 +25,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
 import { useUserRole, type StaffRole } from "@/hooks/use-user-role";
+import { BranchSelector } from "@/components/admin/branch-selector";
 import {
   AdminRealtimeProvider,
   useAdminRealtime,
@@ -48,6 +50,7 @@ const navigation: NavItem[] = [
   { name: "Menu", href: "/admin/menu", icon: UtensilsCrossed, roles: ["ADMIN"] },
   { name: "Tables", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN"] },
   { name: "Customers", href: "/admin/customers", icon: Users, roles: ["ADMIN"] },
+  { name: "Cabang", href: "/admin/settings/branches", icon: Store, roles: ["ADMIN"] },
   { name: "WhatsApp", href: "/admin/whatsapp", icon: MessageSquare, roles: ["ADMIN"] },
   { name: "Settings", href: "/admin/settings", icon: Settings, roles: ["ADMIN"] },
 ];
@@ -232,6 +235,9 @@ export default function AdminLayout({
       {/* Main content */}
       <main className="flex-1 lg:ml-64">
         <div className="p-4 pt-20 sm:p-6 sm:pt-20 lg:p-8 lg:pt-8">
+          <div className="mb-4 flex items-center justify-end gap-2">
+            <BranchSelector />
+          </div>
           {children}
         </div>
       </main>

@@ -6,6 +6,7 @@ import {
   ValidationError,
   ConflictError,
   UnauthorizedError,
+  ForbiddenError,
 } from "@/lib/errors";
 import type {
   CreateOrderInput,
@@ -103,8 +104,15 @@ export class OrderService {
   /**
    * Create a new order from items (admin-initiated).
    * restaurantId is derived from the authenticated admin's record.
+   * branchId is derived from the validated branch context — never trusted
+   * from the client directly. When a table is provided, the table's branch
+   * must match the current branch.
    */
-  async createOrder(input: CreateOrderInput, restaurantId: string) {
+  async createOrder(
+    input: CreateOrderInput,
+    restaurantId: string,
+    branchId?: string | null
+  ) {
     // Validate customer exists and belongs to this restaurant
     const customer = await prisma.customer.findFirst({
       where: {
@@ -133,6 +141,13 @@ export class OrderService {
       if (table.status === "MAINTENANCE") {
         throw new ValidationError("Table is under maintenance");
       }
+
+      // A table assigned to a branch must only be used from that branch.
+      if (table.branchId && branchId && table.branchId !== branchId) {
+        throw new ForbiddenError(
+          "Meja tidak berada di cabang yang aktif"
+        );
+      }
     }
 
     // Validate all products exist, are available, and belong to this restaurant.
@@ -157,6 +172,24 @@ export class OrderService {
       throw new ValidationError(
         `Products not found or unavailable: ${missingIds.join(", ")}`
       );
+    }
+
+    // Validate branch products: a product hidden for this branch cannot be
+    // ordered from it (only when a branch is active).
+    if (branchId) {
+      const branchProducts = await prisma.branchProduct.findMany({
+        where: {
+          branchId,
+          productId: { in: uniqueProductIds },
+          isAvailable: false,
+        },
+        select: { productId: true },
+      });
+      if (branchProducts.length > 0) {
+        throw new ValidationError(
+          "Beberapa produk tidak tersedia di cabang ini"
+        );
+      }
     }
 
     // Create product map for quick lookup
@@ -193,6 +226,7 @@ export class OrderService {
         const newOrder = await tx.order.create({
           data: {
             restaurantId,
+            branchId: branchId || null,
             orderNumber,
             customerId: input.customerId,
             tableId: input.tableId,
@@ -291,11 +325,16 @@ export class OrderService {
    * `sessionCustomerId` (from the verified customer session cookie) is
    * required ONLY when a promoCode is used — guest checkout is unchanged.
    * The promo discount is always computed server-side from the DB.
+   *
+   * `branchId` (optional) is derived server-side from the QR/table context.
+   * When a table is provided, the table's branch is authoritative and is
+   * compared against a provided branchId to keep the QR/table consistent.
    */
   async createCustomerOrder(
     input: CreateCustomerOrderInput,
     restaurantId: string,
-    sessionCustomerId?: string
+    sessionCustomerId?: string,
+    branchId?: string | null
   ) {
     // The QRIS/KASIR payment intent is DINE_IN-only. TAKEAWAY/DELIVERY must
     // keep the legacy gateway flow, so a paymentMethod on those types is a
@@ -318,6 +357,7 @@ export class OrderService {
     const normalizedPhone = normalizePhone(input.customerPhone);
 
     // Validate table if provided
+    let resolvedBranchId = branchId ?? null;
     if (input.tableId) {
       const table = await prisma.table.findFirst({
         where: {
@@ -332,6 +372,17 @@ export class OrderService {
 
       if (table.status === "MAINTENANCE") {
         throw new ValidationError("Table is under maintenance");
+      }
+
+      // The table's branch is authoritative; a mismatched request context is
+      // rejected so Jakarta Table 01 can never be ordered from Bandung.
+      if (table.branchId) {
+        if (resolvedBranchId && table.branchId !== resolvedBranchId) {
+          throw new ValidationError(
+            "Meja tidak sesuai dengan cabang yang dipilih"
+          );
+        }
+        resolvedBranchId = table.branchId;
       }
     }
 
@@ -368,6 +419,24 @@ export class OrderService {
       throw new ValidationError(
         `Produk tidak ditemukan atau tidak tersedia: ${missingIds.join(", ")}`
       );
+    }
+
+    // Branch product availability: a product hidden for this branch cannot be
+    // ordered from it (only enforced when a branch is resolved).
+    if (resolvedBranchId) {
+      const hidden = await prisma.branchProduct.findMany({
+        where: {
+          branchId: resolvedBranchId,
+          productId: { in: uniqueProductIds },
+          isAvailable: false,
+        },
+        select: { productId: true },
+      });
+      if (hidden.length > 0) {
+        throw new ValidationError(
+          "Beberapa produk tidak tersedia di cabang ini"
+        );
+      }
     }
 
     // Create product map for quick lookup
@@ -593,6 +662,7 @@ export class OrderService {
         const applied = await promoService.applyPromoToOrder(
           tx,
           restaurantId,
+          resolvedBranchId,
           customer.id,
           input.promoCode,
           subtotal
@@ -613,6 +683,7 @@ export class OrderService {
       const newOrder = await tx.order.create({
         data: {
           restaurantId,
+          branchId: resolvedBranchId,
           orderNumber,
           customerId: customer.id,
           tableId: input.tableId || null,
@@ -645,7 +716,7 @@ export class OrderService {
 
       // Record the promo use (upgrades a prior claim row when present).
       if (promoId) {
-        await promoService.recordPromoUse(tx, promoId, customer.id, newOrder.id);
+        await promoService.recordPromoUse(tx, promoId, customer.id, newOrder.id, resolvedBranchId);
       }
 
       // Create initial status history
@@ -672,6 +743,7 @@ export class OrderService {
         const cashierPayment = await tx.payment.create({
           data: {
             restaurantId,
+            branchId: resolvedBranchId,
             orderId: newOrder.id,
             status: "UNPAID",
             amount: grandTotal,
@@ -763,9 +835,13 @@ export class OrderService {
 
   /**
    * Get orders with pagination, filtering, and search.
-   * Scoped to restaurantId.
+   * Scoped to restaurantId (and branchId when the caller is branch-scoped).
    */
-  async getOrders(input: GetOrdersInput, restaurantId: string) {
+  async getOrders(
+    input: GetOrdersInput,
+    restaurantId: string,
+    branchFilters?: string[] | null
+  ) {
     const { page, limit, status, search, startDate, endDate } = input;
     const skip = (page - 1) * limit;
 
@@ -773,6 +849,10 @@ export class OrderService {
     const where: Record<string, unknown> = {
       restaurantId,
     };
+
+    if (branchFilters?.length) {
+      where.branchId = { in: branchFilters };
+    }
 
     if (status) {
       where.status = status;
@@ -840,12 +920,16 @@ export class OrderService {
    * (amountDue/amountReceived/changeAmount/processedBy) can be shown.
    * Restaurant + branding (logo/site name) are included so the admin can
    * render a print bill without a second round-trip.
+   *
+   * When `branchFilters` is provided the order must belong to one of those
+   * branches, and a branch-scoped caller can never read another branch's order.
    */
-  async getOrder(id: string, restaurantId: string) {
+  async getOrder(id: string, restaurantId: string, branchFilters?: string[] | null) {
     const order = await prisma.order.findFirst({
       where: {
         id,
         restaurantId,
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
         customer: true,
@@ -891,13 +975,20 @@ export class OrderService {
   /**
    * Get a single order by its PUBLIC order number (admin, restaurant-scoped).
    * Used by the /admin/orders/[orderNumber] page after a QR scan — the order
-   * number alone is not enough to cross the restaurant boundary.
+   * number alone is not enough to cross the restaurant boundary. When
+   * `branchFilters` is provided the order must also belong to one of those
+   * branches (QR scan from a cashier is branch-scoped).
    */
-  async getOrderByNumberScoped(orderNumber: string, restaurantId: string) {
+  async getOrderByNumberScoped(
+    orderNumber: string,
+    restaurantId: string,
+    branchFilters?: string[] | null
+  ) {
     const order = await prisma.order.findFirst({
       where: {
         orderNumber,
         restaurantId,
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
         customer: true,
@@ -997,17 +1088,22 @@ export class OrderService {
   /**
    * Update order status with validation and restaurant ownership check.
    * Returns additional info about whether WhatsApp notification was triggered.
+   *
+   * When `branchFilters` is provided the order must belong to one of those
+   * branches.
    */
   async updateOrderStatus(
     id: string,
     input: UpdateOrderStatusInput,
     restaurantId: string,
-    changedBy?: string
+    changedBy?: string,
+    branchFilters?: string[] | null
   ): Promise<{ order: Record<string, unknown>; whatsappTriggered: boolean }> {
     const order = await prisma.order.findFirst({
       where: {
         id,
         restaurantId,
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
         table: true,
@@ -1185,11 +1281,26 @@ export class OrderService {
   }
 
   /**
-   * Get dashboard statistics scoped to restaurantId.
+   * Get dashboard statistics scoped to restaurantId (and branchId when the
+   * caller is branch-scoped).
    */
-  async getDashboardStats(restaurantId: string) {
+  async getDashboardStats(restaurantId: string, branchFilters?: string[] | null) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
+    const whereBase: Record<string, unknown> = { restaurantId };
+    if (branchFilters?.length) {
+      whereBase.branchId = { in: branchFilters };
+    }
+
+    const orderWhere = (extra: Record<string, unknown>) => ({
+      ...whereBase,
+      ...extra,
+    });
+    const paymentWhere: Record<string, unknown> = {
+      restaurantId,
+      ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
+    };
 
     const [
       todayOrders,
@@ -1202,52 +1313,46 @@ export class OrderService {
       paidOrders,
     ] = await Promise.all([
       prisma.order.count({
-        where: {
-          restaurantId,
+        where: orderWhere({
           createdAt: { gte: today },
-        },
+        }),
       }),
       prisma.order.count({
-        where: {
-          restaurantId,
+        where: orderWhere({
           status: "PENDING",
-        },
+        }),
       }),
       prisma.order.count({
-        where: {
-          restaurantId,
+        where: orderWhere({
           status: "PROCESSING",
-        },
+        }),
       }),
       prisma.order.count({
-        where: {
-          restaurantId,
+        where: orderWhere({
           status: "READY",
-        },
+        }),
       }),
       prisma.order.count({
-        where: {
-          restaurantId,
+        where: orderWhere({
           status: "COMPLETED",
-        },
+        }),
       }),
       prisma.order.aggregate({
-        where: {
-          restaurantId,
+        where: orderWhere({
           status: "COMPLETED",
           createdAt: { gte: today },
-        },
+        }),
         _sum: { grandTotal: true },
       }),
       prisma.payment.count({
         where: {
-          restaurantId,
+          ...paymentWhere,
           status: { in: ["UNPAID", "PENDING"] },
         },
       }),
       prisma.payment.count({
         where: {
-          restaurantId,
+          ...paymentWhere,
           status: "PAID",
         },
       }),

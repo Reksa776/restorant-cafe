@@ -36,7 +36,8 @@ export class PaymentService {
   async createPayment(
     orderId: string,
     restaurantId: string,
-    options?: { method?: "QRIS" | "KASIR" }
+    options?: { method?: "QRIS" | "KASIR" },
+    branchFilters?: string[] | null
   ) {
     const isQris = options?.method === "QRIS";
 
@@ -47,6 +48,7 @@ export class PaymentService {
       where: {
         id: orderId,
         restaurantId,
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
         customer: true,
@@ -80,11 +82,16 @@ export class PaymentService {
       await tx.$queryRaw`SELECT id FROM \`order\` WHERE id = ${orderId} FOR UPDATE`;
 
       const lockedOrder = await tx.order.findFirst({
-        where: { id: orderId, restaurantId },
+        where: {
+          id: orderId,
+          restaurantId,
+          branchId: branchFilters?.length ? { in: branchFilters } : undefined,
+        },
         select: {
           id: true,
           orderNumber: true,
           restaurantId: true,
+          branchId: true,
           grandTotal: true,
           status: true,
           paymentStatus: true,
@@ -140,6 +147,9 @@ export class PaymentService {
         const cashierPayment = await tx.payment.create({
           data: {
             restaurantId: lockedOrder.restaurantId,
+            // The written branch is the ORDER's branch — always within the
+            // authorized filter the order was resolved against.
+            branchId: lockedOrder.branchId || branchFilters?.[0] || null,
             orderId: lockedOrder.id,
             status: "UNPAID",
             amount: lockedOrder.grandTotal,
@@ -182,6 +192,7 @@ export class PaymentService {
       const pending = await tx.payment.create({
         data: {
           restaurantId: lockedOrder.restaurantId,
+          branchId: lockedOrder.branchId || branchFilters?.[0] || null,
           orderId: lockedOrder.id,
           status: "PENDING",
           amount: lockedOrder.grandTotal,
@@ -436,6 +447,7 @@ export class PaymentService {
       const payment = await tx.payment.create({
         data: {
           restaurantId: order.restaurantId,
+          branchId: order.branchId || null,
           orderId: order.id,
           status: "UNPAID",
           amount: order.grandTotal,
@@ -510,13 +522,15 @@ export class PaymentService {
     paymentId: string,
     restaurantId: string,
     changedBy?: string,
-    options?: { amountReceived?: number }
+    options?: { amountReceived?: number },
+    branchFilters?: string[] | null
   ) {
     const payment = await prisma.payment.findFirst({
       where: {
         id: paymentId,
         restaurantId,
         method: "KASIR",
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
         order: {
@@ -585,6 +599,10 @@ export class PaymentService {
             restaurantId,
             userId: changedBy,
             status: "OPEN",
+            // Cash is collected into the drawer of the branch the payment
+            // belongs to — a cashier can never pay one branch's order into
+            // another branch's shift.
+            ...(payment.branchId ? { branchId: payment.branchId } : {}),
           },
         });
         if (!openShift) {
@@ -679,6 +697,7 @@ export class PaymentService {
     if (!result.alreadyPaid) {
       await auditService.log({
         restaurantId,
+        branchId: payment.branchId || branchFilters?.[0] || null,
         userId: changedBy || null,
         action: "PAYMENT_RECEIVED",
         entityType: "Payment",
@@ -782,7 +801,8 @@ export class PaymentService {
       page?: number;
       limit?: number;
       status?: string;
-    }
+    },
+    branchFilters?: string[] | null
   ) {
     const page = params?.page || 1;
     const limit = params?.limit || 20;
@@ -791,6 +811,10 @@ export class PaymentService {
     const where: Record<string, unknown> = {
       restaurantId,
     };
+
+    if (branchFilters?.length) {
+      where.branchId = { in: branchFilters };
+    }
 
     if (params?.status) {
       where.status = params.status;
@@ -824,9 +848,9 @@ export class PaymentService {
     };
   }
 
-  async getPayment(id: string, restaurantId: string) {
+  async getPayment(id: string, restaurantId: string, branchFilters?: string[] | null) {
     const payment = await prisma.payment.findFirst({
-      where: { id, restaurantId },
+      where: { id, restaurantId, branchId: branchFilters?.length ? { in: branchFilters } : undefined },
       include: {
         order: true,
         transactions: true,
@@ -979,9 +1003,17 @@ export class PaymentService {
     return updatedPayment;
   }
 
-  async getPaymentUrl(id: string, restaurantId: string) {
+  async getPaymentUrl(
+    id: string,
+    restaurantId: string,
+    branchFilters?: string[] | null
+  ) {
     const payment = await prisma.payment.findFirst({
-      where: { id, restaurantId },
+      where: {
+        id,
+        restaurantId,
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
+      },
     });
 
     if (!payment) {
@@ -1006,12 +1038,17 @@ export class PaymentService {
    * - Allows retry on FAILED/EXPIRED by expiring stale rows first.
    * - Returns the created/retry payment with QR data.
    */
-  async createKasirQrisPayment(orderNumber: string, restaurantId: string) {
+  async createKasirQrisPayment(
+    orderNumber: string,
+    restaurantId: string,
+    branchFilters?: string[] | null
+  ) {
     // Find the order with payments
     const order = await prisma.order.findFirst({
       where: {
         orderNumber,
         restaurantId,
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
         customer: true,
@@ -1106,7 +1143,7 @@ export class PaymentService {
     // Create new QRIS payment
     const result = await this.createPayment(order.id, restaurantId, {
       method: "QRIS",
-    });
+    }, branchFilters);
 
     return {
       payment: result,

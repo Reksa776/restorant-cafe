@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { paymentService } from "@/services/payment/payment.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireRoles } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 /**
  * POST /api/payments/[id]/mark-paid
@@ -32,7 +32,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { userId, restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
+    const branchId = branchHintFrom(request);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { id } = await params;
 
     // Optional cashier-form field.
@@ -54,9 +55,10 @@ export async function POST(
 
     const result = await paymentService.markCashierPaymentPaid(
       id,
-      restaurantId,
-      userId,
-      amountReceived !== undefined ? { amountReceived } : undefined
+      ctx.restaurantId,
+      ctx.userId,
+      amountReceived !== undefined ? { amountReceived } : undefined,
+      authorizedBranches(ctx)
     );
 
     // A second attempt on an already-PAID payment is blocked explicitly.

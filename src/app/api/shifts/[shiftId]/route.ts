@@ -1,6 +1,7 @@
+import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireRoles } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 import { shiftService } from "@/services/shift/shift.service";
 
 /**
@@ -11,17 +12,19 @@ import { shiftService } from "@/services/shift/shift.service";
  * cashier's drawer by guessing an id).
  */
 export async function GET(
-  _request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ shiftId: string }> }
 ) {
   try {
-    const ctx = await requireRoles(["ADMIN", "CASHIER"]);
+    const branchId = branchHintFrom(request);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { shiftId } = await params;
     const result = await shiftService.getShift(
       shiftId,
       ctx.restaurantId,
       ctx.userId,
-      ctx.role === "ADMIN"
+      ctx.role === "ADMIN",
+      authorizedBranches(ctx)
     );
     return successResponse(result);
   } catch (error) {

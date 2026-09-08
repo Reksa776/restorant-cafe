@@ -27,17 +27,26 @@ export async function POST(request: NextRequest) {
 
     const input = parsed.data;
 
-    // Determine restaurantId:
-    // 1. From tableId (validate server-side)
-    // 2. From request body (if provided and valid)
+    // Determine restaurantId and branchId — NEVER trust the client alone:
+    // 1. tableId wins (server-validated; branch is derived from the table)
+    // 2. the authenticated customer's session restaurant (an active restaurant)
+    // 3. the client-claimed body.restaurantId (only when it maps to an
+    //    ACTIVE restaurant)
+    // 4. legacy fallback: the first active restaurant
+    const session = tryGetCustomerSessionFromRequest(request);
     let restaurantId: string | null = null;
+    let branchId: string | null = null;
 
     if (input.tableId) {
-      // Look up table to get restaurantId
+      // Look up table to get restaurantId + branchId
       const { prisma } = await import("@/lib/prisma");
       const table = await prisma.table.findUnique({
         where: { id: input.tableId },
-        select: { restaurantId: true, isActive: true },
+        select: {
+          restaurantId: true,
+          branchId: true,
+          isActive: true,
+        },
       });
 
       if (!table || !table.isActive) {
@@ -45,30 +54,49 @@ export async function POST(request: NextRequest) {
       }
 
       restaurantId = table.restaurantId;
+      branchId = table.branchId;
     }
 
     if (!restaurantId) {
-      // No table — use first active restaurant
       const { prisma } = await import("@/lib/prisma");
-      const restaurant = await prisma.restaurant.findFirst({
-        where: { isActive: true },
-        select: { id: true },
-      });
-
-      if (!restaurant) {
-        throw new ValidationError("Tidak ada restoran aktif");
+      const candidates = [
+        session?.restaurantId,
+        typeof input.restaurantId === "string" ? input.restaurantId : null,
+      ];
+      for (const candidate of candidates) {
+        if (!candidate) continue;
+        const restaurant = await prisma.restaurant.findUnique({
+          where: { id: candidate },
+          select: { id: true, isActive: true },
+        });
+        if (restaurant?.isActive) {
+          restaurantId = restaurant.id;
+          break;
+        }
       }
 
-      restaurantId = restaurant.id;
+      if (!restaurantId) {
+        // Legacy helper: no table + no session restaurant — first active one.
+        const restaurant = await prisma.restaurant.findFirst({
+          where: { isActive: true },
+          select: { id: true },
+        });
+
+        if (!restaurant) {
+          throw new ValidationError("Tidak ada restoran aktif");
+        }
+
+        restaurantId = restaurant.id;
+      }
     }
 
     // Create order. The verified customer session (httpOnly cookie) is only
     // used when a promoCode is present — guest checkout stays anonymous.
-    const session = tryGetCustomerSessionFromRequest(request);
     const order = await orderService.createCustomerOrder(
       input,
       restaurantId,
-      session?.customerId
+      session?.customerId,
+      branchId
     );
 
     // KASIR orders get their UNPAID payment row atomically with the order —

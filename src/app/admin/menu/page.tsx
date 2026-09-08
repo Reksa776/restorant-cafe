@@ -32,8 +32,9 @@ import {
   type ProductOption,
   type ProductAddon,
 } from "@/services/menu.service";
-import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp, MoveUp, MoveDown, Star, Loader2 } from "lucide-react";
+import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp, MoveUp, MoveDown, Star, Store, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { BranchAvailabilityDialog } from "@/components/admin/branch-availability-dialog";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import {
@@ -84,6 +85,8 @@ export default function MenuPage() {
   const [isProductDialogOpen, setIsProductDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productForm, setProductForm] = useState({ name: "", description: "", price: "", categoryId: "" });
+  // Per-branch availability / price override dialog (multi-cabang)
+  const [branchAvailProduct, setBranchAvailProduct] = useState<Product | null>(null);
   // Product image: upload / URL / keep-existing / remove (see ProductImageValue)
   const [productImage, setProductImage] = useState<ProductImageValue>({ kind: "empty" });
   // In-flight guard for the product save. With the async image-upload step the
@@ -601,6 +604,9 @@ export default function MenuPage() {
                           <Button variant="outline" size="sm" onClick={() => handleToggleAvailability(prod.id)}>
                             {prod.isAvailable ? <ToggleRight className="h-4 w-4" /> : <ToggleLeft className="h-4 w-4" />}
                           </Button>
+                          <Button variant="outline" size="sm" title="Ketersediaan per cabang" onClick={() => setBranchAvailProduct(prod)}>
+                            <Store className="h-4 w-4" />
+                          </Button>
                           <Button variant="outline" size="sm" onClick={() => handleOpenCustomization(prod)}>
                             Kustomisasi
                           </Button>
@@ -811,6 +817,25 @@ export default function MenuPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Per-branch availability / price override dialog */}
+      <BranchAvailabilityDialog
+        product={
+          branchAvailProduct
+            ? {
+                id: branchAvailProduct.id,
+                name: branchAvailProduct.name,
+                price: Number(branchAvailProduct.price),
+                isAvailable: branchAvailProduct.isAvailable,
+              }
+            : { id: "", name: "", price: 0, isAvailable: true }
+        }
+        open={!!branchAvailProduct}
+        onOpenChange={(open) => {
+          if (!open) setBranchAvailProduct(null);
+        }}
+        onSaved={() => loadData(true)}
+      />
     </div>
   );
 }

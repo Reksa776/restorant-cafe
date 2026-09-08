@@ -6,11 +6,13 @@ import {
   errorResponse,
 } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom, authorizedBranches, effectiveWriteBranchId } from "@/lib/auth-helpers";
 import { z } from "zod/v4";
 
 // ============================================================
 // GET/POST /api/admin/promos — ADMIN only, restaurant-scoped.
+// Branch-scoped via the x-branch-id header: branch-scoped admins can only
+// manage their own branch (or restaurant-wide) promos.
 // ============================================================
 
 const PromoCreateSchema = z.object({
@@ -26,12 +28,18 @@ const PromoCreateSchema = z.object({
   maxUsage: z.coerce.number().int().min(0).optional(),
   perCustomerLimit: z.coerce.number().int().min(0).optional(),
   isActive: z.boolean().optional(),
+  // null / absent = restaurant-wide; specific = branch-only.
+  branchId: z.string().nullable().optional(),
 });
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { restaurantId } = await requireAdmin();
-    const promos = await promoService.listPromosAdmin(restaurantId);
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
+    const promos = await promoService.listPromosAdmin(
+      ctx.restaurantId,
+      authorizedBranches(ctx)
+    );
     return successResponse({ promos });
   } catch (error) {
     if (error instanceof AppError) {
@@ -44,7 +52,8 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
     const body = await request.json().catch(() => null);
     if (!body || typeof body !== "object") {
       throw new ValidationError("Body tidak valid");
@@ -55,7 +64,18 @@ export async function POST(request: NextRequest) {
       throw new ValidationError(parsed.error.message);
     }
 
-    const promo = await promoService.createPromo(restaurantId, parsed.data);
+    // A branch-scoped admin cannot create promos for another branch — their
+    // branch is authoritative (the server throws if no branch is active).
+    // All-branch admins may set any branchId or null.
+    const effectiveBranchId =
+      ctx.branchScoped
+        ? effectiveWriteBranchId(ctx)
+        : parsed.data.branchId ?? null;
+
+    const promo = await promoService.createPromo(ctx.restaurantId, {
+      ...parsed.data,
+      branchId: effectiveBranchId,
+    });
     return createdResponse(promo, "Promo berhasil dibuat");
   } catch (error) {
     if (error instanceof AppError) {

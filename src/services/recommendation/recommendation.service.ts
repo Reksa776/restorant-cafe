@@ -48,18 +48,50 @@ const productInclude = {
   },
 } as const;
 
-/** Load full product rows for a set of ids (restaurant-scoped, active+available). */
-async function loadProducts(restaurantId: string, ids: string[]) {
+/**
+ * Load full product rows for a set of ids (restaurant-scoped, active+available).
+ * When `branchId` is provided, products explicitly hidden for that branch
+ * (BranchProduct.isAvailable=false) are dropped and returned prices use the
+ * branch's priceOverride when set. Products without a BranchProduct row keep
+ * the restaurant default (available, base price).
+ */
+async function loadProducts(
+  restaurantId: string,
+  ids: string[],
+  branchId?: string | null
+) {
   if (ids.length === 0) return [];
-  return prisma.product.findMany({
+  const products = await prisma.product.findMany({
     where: {
       id: { in: ids },
       restaurantId,
       isActive: true,
       isAvailable: true,
     },
-    include: productInclude,
+    // Always include branchProducts; when no branch is selected the filter
+    // matches nothing so the restaurant default (base price, available)
+    // applies.
+    include: {
+      ...productInclude,
+      branchProducts: { where: { branchId: branchId ?? "__none__" } },
+    },
   });
+
+  return products
+    .filter((p) => {
+      if (!branchId) return true;
+      const bp = p.branchProducts[0];
+      // No BranchProduct row → available by default at this branch.
+      return bp?.isAvailable ?? true;
+    })
+    .map((p) => {
+      const bp = branchId ? p.branchProducts[0] : undefined;
+      return {
+        ...p,
+        // Effective branch price (priceOverride ?? product.price).
+        price: bp?.priceOverride != null ? bp.priceOverride : p.price,
+      };
+    });
 }
 
 export class RecommendationService {
@@ -249,6 +281,7 @@ export class RecommendationService {
       excludeIds?: string[];
       take?: number;
       requirePaid?: boolean;
+      branchId?: string | null;
     }
   ) {
     const orderWhere: Record<string, unknown> = {
@@ -257,6 +290,10 @@ export class RecommendationService {
     };
     if (opts?.requirePaid) {
       orderWhere.paymentStatus = "PAID";
+    }
+    // Branch-specific best sellers (buying patterns differ per location).
+    if (opts?.branchId) {
+      orderWhere.branchId = opts.branchId;
     }
     const where: Record<string, unknown> = { order: { is: orderWhere } };
     if (opts?.categoryId) {
@@ -277,7 +314,7 @@ export class RecommendationService {
       ids = ids.filter((id) => !excluded.has(id));
     }
 
-    const products = await loadProducts(restaurantId, ids);
+    const products = await loadProducts(restaurantId, ids, opts?.branchId);
     const qtyById = new Map(grouped.map((g) => [g.productId, g._sum.quantity ?? 0]));
     return products
       .map((p) => ({ product: p, qty: qtyById.get(p.id) ?? 0 }))
@@ -292,14 +329,21 @@ export class RecommendationService {
   async getBoughtTogether(
     restaurantId: string,
     targetProductId: string,
-    opts?: { excludeIds?: string[]; take?: number }
+    opts?: { excludeIds?: string[]; take?: number; branchId?: string | null }
   ) {
     // Bounded: look at the most recent orders containing the target product
-    // (distinct orderIds) so the aggregation stays cheap.
+    // (distinct orderIds) so the aggregation stays cheap. Branch-specific:
+    // buying patterns differ per location (audit §14).
     const rows = await prisma.orderItem.findMany({
       where: {
         productId: targetProductId,
-        order: { is: { restaurantId, status: { not: "CANCELLED" } } },
+        order: {
+          is: {
+            restaurantId,
+            status: { not: "CANCELLED" },
+            ...(opts?.branchId ? { branchId: opts.branchId } : {}),
+          },
+        },
       },
       select: { orderId: true },
       orderBy: { createdAt: "desc" },
@@ -327,7 +371,7 @@ export class RecommendationService {
       ids = ids.filter((id) => !excluded.has(id));
     }
 
-    const products = await loadProducts(restaurantId, ids);
+    const products = await loadProducts(restaurantId, ids, opts?.branchId);
     const qtyById = new Map(grouped.map((g) => [g.productId, g._sum.quantity ?? 0]));
     return products
       .map((p) => ({ product: p, qty: qtyById.get(p.id) ?? 0 }))
@@ -339,8 +383,10 @@ export class RecommendationService {
   async getCustomerFavorites(
     restaurantId: string,
     customerId: string,
-    opts?: { excludeIds?: string[]; take?: number }
+    opts?: { excludeIds?: string[]; take?: number; branchId?: string | null }
   ) {
+    // Personalized favorites intentionally span ALL branches (the customer's
+    // taste is global) — only the returned product list is branch-filtered.
     const grouped = await prisma.orderItem.groupBy({
       by: ["productId"],
       where: {
@@ -359,7 +405,7 @@ export class RecommendationService {
       ids = ids.filter((id) => !excluded.has(id));
     }
 
-    const products = await loadProducts(restaurantId, ids);
+    const products = await loadProducts(restaurantId, ids, opts?.branchId);
     const qtyById = new Map(grouped.map((g) => [g.productId, g._sum.quantity ?? 0]));
     return products
       .map((p) => ({ product: p, qty: qtyById.get(p.id) ?? 0 }))
@@ -370,7 +416,12 @@ export class RecommendationService {
   /** Fallback: any active/available product, newest first. */
   async getFallbackProducts(
     restaurantId: string,
-    opts?: { categoryId?: string; excludeIds?: string[]; take?: number }
+    opts?: {
+      categoryId?: string;
+      excludeIds?: string[];
+      take?: number;
+      branchId?: string | null;
+    }
   ) {
     const where: Record<string, unknown> = {
       restaurantId,
@@ -382,12 +433,31 @@ export class RecommendationService {
       where.id = { notIn: opts.excludeIds };
     }
 
-    return prisma.product.findMany({
+    const products = await prisma.product.findMany({
       where,
-      include: productInclude,
+      include: {
+        ...productInclude,
+        branchProducts: {
+          where: { branchId: opts?.branchId ?? "__none__" },
+        },
+      },
       orderBy: { createdAt: "desc" },
       take: Math.max(opts?.take ?? 10, 1),
     });
+
+    return products
+      .filter((p) => {
+        if (!opts?.branchId) return true;
+        const bp = p.branchProducts[0];
+        return bp?.isAvailable ?? true;
+      })
+      .map((p) => {
+        const bp = opts?.branchId ? p.branchProducts[0] : undefined;
+        return {
+          ...p,
+          price: bp?.priceOverride != null ? bp.priceOverride : p.price,
+        };
+      });
   }
 
   /**
@@ -401,7 +471,7 @@ export class RecommendationService {
   async getManualRecommendations(
     restaurantId: string,
     productId?: string,
-    opts?: { excludeIds?: string[]; take?: number }
+    opts?: { excludeIds?: string[]; take?: number; branchId?: string | null }
   ) {
     const rows = await prisma.productRecommendation.findMany({
       where: {
@@ -423,7 +493,8 @@ export class RecommendationService {
       ids = ids.filter((id) => !excluded.has(id));
     }
 
-    return loadProducts(restaurantId, ids);
+    // Branch filtering applies here too: skip products hidden for the branch.
+    return loadProducts(restaurantId, ids, opts?.branchId);
   }
 
   /**
@@ -438,9 +509,11 @@ export class RecommendationService {
       productId?: string;
       customerId?: string;
       limit: number;
+      branchId?: string | null;
     }
   ) {
     const limit = opts.limit;
+    const branchId = opts.branchId;
     const recommended: Array<{ id: string }> = [];
     const seen = new Set<string>();
 
@@ -459,16 +532,19 @@ export class RecommendationService {
         await this.getManualRecommendations(restaurantId, opts.productId, {
           excludeIds: [...seen],
           take: limit,
+          branchId,
         })
       );
     }
 
-    // 2. Personalized: the customer's own favorites (login only).
+    // 2. Personalized: the customer's own favorites (login only). Favorites
+    //    aggregate across ALL branches; only the result is branch-filtered.
     if (opts.customerId && recommended.length < limit) {
       push(
         await this.getCustomerFavorites(restaurantId, opts.customerId, {
           excludeIds: [...seen],
           take: limit,
+          branchId,
         })
       );
     }
@@ -489,30 +565,33 @@ export class RecommendationService {
           await this.getBoughtTogether(restaurantId, target.id, {
             excludeIds: [...seen],
             take: limit,
+            branchId,
           })
         );
       }
     }
 
     // 4. Best sellers — within the viewed category when provided, else
-    //    restaurant-wide (existing non-cancelled semantics).
+    //    branch-wide (existing non-cancelled semantics).
     if (recommended.length < limit) {
       push(
         await this.getBestSellers(restaurantId, {
           categoryId: opts.categoryId,
           excludeIds: [...seen],
           take: limit * 3,
+          branchId,
         })
       );
     }
 
-    // 5. Fallback: any active product (restaurant new / no order data).
+    // 5. Fallback: any active product available at this branch.
     if (recommended.length < limit) {
       push(
         await this.getFallbackProducts(restaurantId, {
           categoryId: opts.categoryId,
           excludeIds: [...seen],
           take: limit,
+          branchId,
         })
       );
     }

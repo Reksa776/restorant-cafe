@@ -49,6 +49,13 @@ export const CreateCustomerOrderSchema = z.object({
   customerPhone: z.string().optional().nullable(),
   orderType: z.enum(["DINE_IN", "TAKEAWAY", "DELIVERY"]).default("DINE_IN"),
   tableId: z.string().optional(),
+  /**
+   * Restaurant scope for tableless (TAKEAWAY/DELIVERY) guest orders. The
+   * server validates it against an active restaurant and prefers the
+   * authenticated customer's session restaurant when available — this body
+   * field is a client hint only, never trusted blindly.
+   */
+  restaurantId: z.string().optional(),
   visitorCount: z.number().int().min(1).max(100).optional(),
   notes: z.string().optional(),
   items: z
@@ -83,6 +90,7 @@ export const GetOrdersSchema = z.object({
   search: z.string().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
+  branchId: z.string().optional(),
 });
 
 // ============================================================

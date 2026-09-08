@@ -190,10 +190,13 @@ export default function TablesPage() {
   };
 
   /**
-   * Customer (public) ordering URL for a table: {origin}/t/{tableNumber}
+   * Customer (public) ordering URL for a table, e.g. /t/{branchCode}/{number}
+   * for branch tables or /t/{number} for legacy ones.
    */
   const customerUrl = (table: RestaurantTable): string =>
-    origin ? `${origin}/t/${table.number}` : "";
+    origin
+      ? tableService.getCustomerUrl(origin, table.number, table.branch?.code)
+      : "";
 
   /**
    * Generate (or refresh) the QR for a table and show the detail modal.
@@ -282,6 +285,11 @@ export default function TablesPage() {
                         Meja Nomor {table.number} · Kapasitas {table.capacity}{" "}
                         orang
                       </p>
+                      {table.branch && (
+                        <p className="text-[11px] font-medium text-blue-600">
+                          Cabang {table.branch.name} ({table.branch.code})
+                        </p>
+                      )}
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {/* QR + customer link */}

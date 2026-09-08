@@ -34,6 +34,7 @@ export async function POST(request: NextRequest) {
       select: {
         id: true,
         restaurantId: true,
+        branchId: true,
         paymentStatus: true,
         orderType: true,
       },
@@ -84,11 +85,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create payment (amount recomputed server-side from the order row)
+    // Create payment (amount recomputed server-side from the order row).
+    // The order's own branch is authoritative — the payment is created for
+    // that branch only.
     const payment = await paymentService.createPayment(
       order.id,
       order.restaurantId,
-      method ? { method } : undefined
+      method ? { method } : undefined,
+      order.branchId ? [order.branchId] : undefined
     );
 
     return successResponse(

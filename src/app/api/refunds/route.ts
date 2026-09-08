@@ -1,16 +1,20 @@
 import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireRoles } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 import { approvalService } from "@/services/approval/approval.service";
 
 /**
  * GET /api/refunds — pending refund requests (admin review queue).
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { restaurantId } = await requireRoles(["ADMIN"]);
-    const result = await approvalService.listPendingForRestaurant(restaurantId);
+    const branchId = branchHintFrom(request);
+    const ctx = await requireRoles(["ADMIN"], branchId);
+    const result = await approvalService.listPendingForRestaurant(
+      ctx.restaurantId,
+      authorizedBranches(ctx)
+    );
     return successResponse(result);
   } catch (error) {
     if (error instanceof AppError) {
@@ -27,7 +31,8 @@ export async function GET() {
  */
 export async function POST(request: NextRequest) {
   try {
-    const { restaurantId, userId } = await requireRoles(["ADMIN", "CASHIER"]);
+    const branchId = branchHintFrom(request);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const body = await request.json();
 
     if (!body.orderId || typeof body.orderId !== "string") {
@@ -42,11 +47,12 @@ export async function POST(request: NextRequest) {
     }
 
     const refund = await approvalService.requestRefund({
-      restaurantId,
-      userId,
+      restaurantId: ctx.restaurantId,
+      userId: ctx.userId,
       orderId: body.orderId,
       amount,
       reason: body.reason,
+      branchFilters: authorizedBranches(ctx),
     });
 
     return successResponse(refund, "Permintaan refund dikirim ke admin");

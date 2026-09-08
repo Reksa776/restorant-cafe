@@ -2,14 +2,15 @@ import { NextRequest } from "next/server";
 import { tableService } from "@/services/table/table.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
     const { id } = await params;
     // Optional baseUrl from the client (current origin) keeps the QR payload
     // identical to the customer link shown in the admin UI.
@@ -21,8 +22,9 @@ export async function POST(
     }
     const result = await tableService.generateQrCode(
       id,
-      restaurantId,
-      typeof body?.baseUrl === "string" ? body.baseUrl : undefined
+      ctx.restaurantId,
+      typeof body?.baseUrl === "string" ? body.baseUrl : undefined,
+      authorizedBranches(ctx)
     );
 
     return successResponse(result, "QR code generated successfully");

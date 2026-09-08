@@ -774,7 +774,10 @@ function MenuContent() {
       }
 
       const menuRes = await api.get("/public/menu", {
-        params: { restaurantId: restaurantData.id },
+        params: {
+          restaurantId: restaurantData.id,
+          branchCode: tableContext?.branchCode || undefined,
+        },
       });
       setCategories(menuRes.data.data.categories);
       // Normalize Decimal-as-string fields (price, priceAdjustment) to numbers
@@ -791,6 +794,7 @@ function MenuContent() {
           params: {
             restaurantId: restaurantData.id,
             limit: 8,
+            branchCode: tableContext?.branchCode || undefined,
           },
         });
         const recProducts: Product[] = (
@@ -813,6 +817,7 @@ function MenuContent() {
               restaurantId: restaurantData.id,
               limit: 8,
               excludeIds: exclIds,
+              branchCode: tableContext?.branchCode || undefined,
             },
           });
           setBestSellers(
@@ -833,7 +838,7 @@ function MenuContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [clearTableContext]);
+  }, [clearTableContext, tableContext]);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -1196,7 +1201,12 @@ function MenuContent() {
       )}
 
       {/* Promo — F3: tenant-scoped promos; claim requires login. */}
-      {restaurant && <PromoSection restaurantId={restaurant.id} />}
+      {restaurant && (
+        <PromoSection
+          restaurantId={restaurant.id}
+          branchCode={tableContext?.branchCode}
+        />
+      )}
 
       {/* Rekomendasi — F4: personalized (login) or popular products,
           rendered with the same ProductCard as the category sections. */}

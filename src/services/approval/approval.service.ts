@@ -41,6 +41,8 @@ export class ApprovalService {
     orderId: string;
     amount: number;
     reason: string;
+    // Server-validated branch scope; when set the order must belong to it.
+    branchFilters?: string[] | null;
   }) {
     if (!Number.isFinite(input.amount) || input.amount <= 0) {
       throw new ValidationError("Jumlah refund harus lebih dari 0");
@@ -56,6 +58,14 @@ export class ApprovalService {
       },
     });
     if (!order) {
+      throw new NotFoundError("Order tidak ditemukan");
+    }
+    // Branch guard: a branch-scoped cashier can only refund orders of their
+    // own branches (a headerless scoped request is never widened).
+    if (
+      input.branchFilters?.length &&
+      !input.branchFilters.includes(order.branchId ?? "")
+    ) {
       throw new NotFoundError("Order tidak ditemukan");
     }
     if (order.status === "CANCELLED") {
@@ -101,6 +111,9 @@ export class ApprovalService {
     const refund = await prisma.refund.create({
       data: {
         restaurantId: input.restaurantId,
+        // The refund belongs to the ORDER's branch (same principle as
+        // payments following their order).
+        branchId: order.branchId,
         orderId: order.id,
         paymentId: cashPayment?.id || null,
         shiftId: refundShiftId,
@@ -132,6 +145,7 @@ export class ApprovalService {
 
     await auditService.log({
       restaurantId: input.restaurantId,
+      branchId: order.branchId,
       userId: input.userId,
       action: "REFUND_REQUESTED",
       entityType: "Refund",
@@ -160,12 +174,16 @@ export class ApprovalService {
     refundId: string;
     approve: boolean;
     decisionNote?: string;
+    branchFilters?: string[] | null;
   }) {
     const refund = await prisma.refund.findFirst({
       where: {
         id: input.refundId,
         restaurantId: input.restaurantId,
         status: "PENDING",
+        ...(input.branchFilters?.length
+          ? { branchId: { in: input.branchFilters } }
+          : {}),
       },
       include: {
         order: { select: { id: true, orderNumber: true, status: true } },
@@ -253,6 +271,7 @@ export class ApprovalService {
 
     await auditService.log({
       restaurantId: input.restaurantId,
+      branchId: refund.branchId,
       userId: input.adminId,
       action: input.approve ? "REFUND_APPROVED" : "REFUND_DENIED",
       entityType: "Refund",
@@ -280,6 +299,7 @@ export class ApprovalService {
     userId: string;
     orderId: string;
     reason: string;
+    branchFilters?: string[] | null;
   }) {
     if (!input.reason || input.reason.trim().length < 5) {
       throw new ValidationError("Alasan pembatalan minimal 5 karakter");
@@ -288,6 +308,14 @@ export class ApprovalService {
       where: { id: input.orderId, restaurantId: input.restaurantId },
     });
     if (!order) {
+      throw new NotFoundError("Order tidak ditemukan");
+    }
+    // Branch guard: a branch-scoped cashier can only cancel orders of their
+    // own branches (a headerless scoped request is never widened).
+    if (
+      input.branchFilters?.length &&
+      !input.branchFilters.includes(order.branchId ?? "")
+    ) {
       throw new NotFoundError("Order tidak ditemukan");
     }
     if (["COMPLETED", "CANCELLED"].includes(order.status)) {
@@ -307,6 +335,7 @@ export class ApprovalService {
     const request = await prisma.cancellationRequest.create({
       data: {
         restaurantId: input.restaurantId,
+        branchId: order.branchId,
         orderId: order.id,
         reason: input.reason,
         status: "PENDING",
@@ -334,6 +363,7 @@ export class ApprovalService {
 
     await auditService.log({
       restaurantId: input.restaurantId,
+      branchId: order.branchId,
       userId: input.userId,
       action: "CANCELLATION_REQUESTED",
       entityType: "CancellationRequest",
@@ -355,12 +385,16 @@ export class ApprovalService {
     requestId: string;
     approve: boolean;
     decisionNote?: string;
+    branchFilters?: string[] | null;
   }) {
     const request = await prisma.cancellationRequest.findFirst({
       where: {
         id: input.requestId,
         restaurantId: input.restaurantId,
         status: "PENDING",
+        ...(input.branchFilters?.length
+          ? { branchId: { in: input.branchFilters } }
+          : {}),
       },
       include: {
         order: {
@@ -461,6 +495,7 @@ export class ApprovalService {
 
     await auditService.log({
       restaurantId: input.restaurantId,
+      branchId: request.branchId,
       userId: input.adminId,
       action: input.approve ? "ORDER_CANCELLED" : "CANCELLATION_REJECTED",
       entityType: "CancellationRequest",
@@ -479,10 +514,12 @@ export class ApprovalService {
   // Lists (used by UI)
   // ----------------------------------------------------------
 
-  async listPendingForRestaurant(restaurantId: string) {
+  async listPendingForRestaurant(restaurantId: string, branchFilters?: string[] | null) {
+    const branchWhere =
+      branchFilters?.length ? { branchId: { in: branchFilters } } : {};
     const [refunds, cancellations, overrides] = await Promise.all([
       prisma.refund.findMany({
-        where: { restaurantId, status: "PENDING" },
+        where: { ...branchWhere, restaurantId, status: "PENDING" },
         include: {
           order: { select: { id: true, orderNumber: true } },
           requester: { select: { id: true, name: true } },
@@ -490,7 +527,7 @@ export class ApprovalService {
         orderBy: { requestedAt: "desc" },
       }),
       prisma.cancellationRequest.findMany({
-        where: { restaurantId, status: "PENDING" },
+        where: { ...branchWhere, restaurantId, status: "PENDING" },
         include: {
           order: { select: { id: true, orderNumber: true } },
           requester: { select: { id: true, name: true } },
@@ -498,7 +535,11 @@ export class ApprovalService {
         orderBy: { requestedAt: "desc" },
       }),
       prisma.shiftOverride.findMany({
-        where: { restaurantId, status: "PENDING" },
+        where: {
+          restaurantId,
+          status: "PENDING",
+          ...branchWhere,
+        },
         include: {
           shift: { select: { id: true, shiftNumber: true } },
           requester: { select: { id: true, name: true } },

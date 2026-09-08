@@ -10,7 +10,8 @@ export class CustomerService {
       page?: number;
       limit?: number;
       search?: string;
-    }
+    },
+    branchFilters?: string[] | null
   ) {
     const page = params?.page || 1;
     const limit = params?.limit || 20;
@@ -19,6 +20,12 @@ export class CustomerService {
     const where: Record<string, unknown> = {
       restaurantId,
     };
+
+    // A branch-scoped list only surfaces customers who have ordered at one of
+    // the caller's branches (customers themselves are restaurant-global).
+    if (branchFilters?.length) {
+      where.orders = { some: { branchId: { in: branchFilters } } };
+    }
 
     if (params?.search) {
       where.OR = [
@@ -37,6 +44,7 @@ export class CustomerService {
             select: { orders: true },
           },
           orders: {
+            where: branchFilters?.length ? { branchId: { in: branchFilters } } : undefined,
             select: { id: true, createdAt: true },
             orderBy: { createdAt: "desc" },
             take: 1,
@@ -55,7 +63,11 @@ export class CustomerService {
     const spentRows = ids.length
       ? await prisma.order.groupBy({
           by: ["customerId"],
-          where: { restaurantId, customerId: { in: ids } },
+          where: {
+            restaurantId,
+            customerId: { in: ids },
+            ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
+          },
           _sum: { grandTotal: true },
         })
       : [];

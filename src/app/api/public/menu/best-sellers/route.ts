@@ -35,6 +35,7 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const restaurantId = searchParams.get("restaurantId");
     const categoryId = searchParams.get("categoryId") || undefined;
+    const branchCode = searchParams.get("branchCode") || undefined;
     const limit = Math.min(
       Math.max(Number(searchParams.get("limit")) || DEFAULT_LIMIT, 1),
       MAX_LIMIT
@@ -56,13 +57,28 @@ export async function GET(request: NextRequest) {
       throw new AppError("Restaurant not found", 404, "NOT_FOUND");
     }
 
+    // Resolve the branch context (branchCode from the table QR URL).
+    let branchId: string | null = null;
+    if (branchCode) {
+      const branch = await prisma.branch.findFirst({
+        where: { restaurantId, code: branchCode, isActive: true },
+        select: { id: true },
+      });
+      if (!branch) {
+        throw new AppError("Branch not found", 404, "NOT_FOUND");
+      }
+      branchId = branch.id;
+    }
+
     // Shared aggregation — same engine used by the recommendation tier,
-    // but with requirePaid: true (Terlaris counts REAL sales only).
+    // but with requirePaid: true (Terlaris counts REAL sales only), scoped
+    // to the branch when one is resolved.
     const products = await recommendationService.getBestSellers(restaurantId, {
       categoryId,
       excludeIds,
       take: limit,
       requirePaid: true,
+      branchId,
     });
 
     // Quantity per product for totalSold / rank.
@@ -71,6 +87,9 @@ export async function GET(request: NextRequest) {
       status: { not: "CANCELLED" },
       paymentStatus: "PAID",
     };
+    if (branchId) {
+      orderWhere.branchId = branchId;
+    }
     const where: Record<string, unknown> = { order: { is: orderWhere } };
     if (categoryId) {
       where.product = { is: { categoryId } };

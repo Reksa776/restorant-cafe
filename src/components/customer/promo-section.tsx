@@ -42,7 +42,13 @@ function promoDiscountLabel(p: Promo): string {
 
 const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
 
-export function PromoSection({ restaurantId }: { restaurantId: string | null }) {
+export function PromoSection({
+  restaurantId,
+  branchCode,
+}: {
+  restaurantId: string | null;
+  branchCode?: string | null;
+}) {
   const { customer } = useCustomerAuth();
   const [promos, setPromos] = useState<Promo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -53,7 +59,7 @@ export function PromoSection({ restaurantId }: { restaurantId: string | null }) 
     if (!restaurantId) return;
     try {
       const res = await api.get("/public/promos", {
-        params: { restaurantId },
+        params: { restaurantId, branchCode: branchCode || undefined },
       });
       setPromos(res.data.data.promos || []);
     } catch {
@@ -61,7 +67,7 @@ export function PromoSection({ restaurantId }: { restaurantId: string | null }) 
     } finally {
       setIsLoading(false);
     }
-  }, [restaurantId]);
+  }, [restaurantId, branchCode]);
 
   // Re-fetch on login/logout so the claimed state stays in sync.
   useEffect(() => {
@@ -75,7 +81,9 @@ export function PromoSection({ restaurantId }: { restaurantId: string | null }) 
     }
     setClaimingId(promo.id);
     try {
-      await api.post(`/public/promos/${promo.id}/claim`);
+      await api.post(`/public/promos/${promo.id}/claim`, {
+        branchCode: branchCode || undefined,
+      });
       toast.success(`Promo "${promo.name}" berhasil diklaim`);
       await loadPromos();
     } catch (err) {

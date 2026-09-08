@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
     const restaurantId = searchParams.get("restaurantId");
     const categoryId = searchParams.get("categoryId") || undefined;
     const productId = searchParams.get("productId") || undefined;
+    const branchCode = searchParams.get("branchCode") || undefined;
     const limit = Math.min(
       Math.max(Number(searchParams.get("limit")) || DEFAULT_LIMIT, 1),
       MAX_LIMIT
@@ -55,6 +56,20 @@ export async function GET(request: NextRequest) {
     });
     if (!restaurant) {
       throw new AppError("Restaurant not found", 404, "NOT_FOUND");
+    }
+
+    // Resolve the branch context (branchCode from the table QR URL) so
+    // recommendations only surface products available at this branch.
+    let branchId: string | null = null;
+    if (branchCode) {
+      const branch = await prisma.branch.findFirst({
+        where: { restaurantId, code: branchCode, isActive: true },
+        select: { id: true },
+      });
+      if (!branch) {
+        throw new AppError("Branch not found", 404, "NOT_FOUND");
+      }
+      branchId = branch.id;
     }
 
     // Optional personalization: only a customer of THIS restaurant can be
@@ -76,6 +91,7 @@ export async function GET(request: NextRequest) {
         productId,
         customerId: verifiedCustomerId,
         limit,
+        branchId,
       }
     );
 

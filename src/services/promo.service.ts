@@ -22,6 +22,9 @@ export interface AdminPromo {
   createdAt: string;
   usageCount: number;
   claimCount: number;
+  /** null = restaurant-wide (all branches), otherwise branch-scoped. */
+  branchId?: string | null;
+  branch?: { id: string; code: string; name: string } | null;
 }
 
 export interface CreatePromoInput {
@@ -37,6 +40,8 @@ export interface CreatePromoInput {
   maxUsage?: number;
   perCustomerLimit?: number;
   isActive?: boolean;
+  /** Branch scope (null = all branches). Server validates ownership. */
+  branchId?: string | null;
 }
 
 export const promoService = {

@@ -2,17 +2,22 @@ import { NextRequest } from "next/server";
 import { paymentService } from "@/services/payment/payment.service";
 import { successResponse, createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireRoles } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
-    const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
+    const branchId = branchHintFrom(request);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const { searchParams } = new URL(request.url);
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "20");
     const status = searchParams.get("status") || undefined;
 
-    const result = await paymentService.getPayments(restaurantId, { page, limit, status });
+    const result = await paymentService.getPayments(
+      ctx.restaurantId,
+      { page, limit, status },
+      authorizedBranches(ctx)
+    );
 
     return successResponse(result);
   } catch (error) {
@@ -26,7 +31,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
+    const branchId = branchHintFrom(request);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const body = await request.json();
 
     // Optional explicit payment intent on this admin route: "QRIS" (kasir
@@ -41,7 +47,8 @@ export async function POST(request: NextRequest) {
     if (body.orderNumber && method === "QRIS") {
       const result = await paymentService.createKasirQrisPayment(
         body.orderNumber,
-        restaurantId
+        ctx.restaurantId,
+        authorizedBranches(ctx)
       );
       return successResponse(result, result.message);
     }
@@ -52,8 +59,9 @@ export async function POST(request: NextRequest) {
 
     const payment = await paymentService.createPayment(
       body.orderId,
-      restaurantId,
-      method ? { method } : undefined
+      ctx.restaurantId,
+      method ? { method } : undefined,
+      authorizedBranches(ctx)
     );
 
     return createdResponse(payment, "Payment created successfully");

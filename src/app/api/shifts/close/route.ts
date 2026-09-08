@@ -1,18 +1,19 @@
 import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireRoles } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom } from "@/lib/auth-helpers";
 import { shiftService } from "@/services/shift/shift.service";
 
 /**
- * POST /api/shifts/close — close the caller's OPEN shift.
- * Body: { actualCash, notes } — the physical count in the drawer. The server
- * computes expectedCash (= opening + cash sales − refunds) and difference
- * (= actualCash − expectedCash).
+ * POST /api/shifts/close — close the caller's OPEN shift (in the current
+ * branch context). Body: { actualCash, notes } — the physical count in the
+ * drawer. The server computes expectedCash (= opening + cash sales − refunds)
+ * and difference (= actualCash − expectedCash).
  */
 export async function POST(request: NextRequest) {
   try {
-    const { restaurantId, userId } = await requireRoles(["ADMIN", "CASHIER"]);
+    const branchId = branchHintFrom(request);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const body = await request.json();
     const actualCash = Number(body.actualCash);
     if (!Number.isFinite(actualCash)) {
@@ -20,10 +21,11 @@ export async function POST(request: NextRequest) {
     }
 
     const result = await shiftService.closeShift({
-      restaurantId,
-      userId,
+      restaurantId: ctx.restaurantId,
+      userId: ctx.userId,
       actualCash,
       notes: typeof body.notes === "string" ? body.notes : undefined,
+      branchId: ctx.branchId,
     });
 
     return successResponse(result, "Shift berhasil ditutup");

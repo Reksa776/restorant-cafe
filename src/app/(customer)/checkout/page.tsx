@@ -144,7 +144,10 @@ export default function CheckoutPage() {
     (async () => {
       try {
         const res = await api.get("/public/promos", {
-          params: { restaurantId },
+          params: {
+            restaurantId,
+            branchCode: tableContext?.branchCode || undefined,
+          },
         });
         const all = (res.data.data.promos || []) as Array<
           ClaimablePromo & { claimed?: boolean }
@@ -179,6 +182,9 @@ export default function CheckoutPage() {
         // Advisory cart subtotal — server only uses it to compute the
         // preview; order creation recomputes subtotal from DB prices.
         subtotal,
+        // Branch scope from the table the customer is ordering at, so
+        // branch-only promos validate correctly.
+        branchCode: tableContext?.branchCode || undefined,
       });
       setVoucherPreview(res.data.data as VoucherPreview);
     } catch (err) {
@@ -315,6 +321,9 @@ export default function CheckoutPage() {
         customerName: customerName.trim(),
         customerPhone: customerPhone.trim() || null,
         orderType,
+        // Send the tenant so tableless (TAKEAWAY/DELIVERY) guest orders are
+        // never resolved to a different active restaurant.
+        restaurantId,
         tableId: tableContext?.tableId || (orderType === "DINE_IN" ? tableId : undefined),
         visitorCount: tableContext?.visitorCount || undefined,
         notes: notes.trim() || undefined,

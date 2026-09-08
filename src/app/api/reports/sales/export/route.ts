@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { reportService, type ReportPeriod } from "@/services/report/report.service";
 import { errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 // ============================================================
 // GET /api/reports/sales/export
 //   ?period=...&startDate=...&endDate=...
 //
-// ADMIN only, restaurant-scoped. Returns an order-level CSV download
-// (non-cancelled orders in the period). Never includes payment secrets.
+// ADMIN only, restaurant-scoped. Branch-scoped via the x-branch-id header.
+// Returns an order-level CSV download (non-cancelled orders in the period).
+// Never includes payment secrets.
 // ============================================================
 
 const PERIODS: ReportPeriod[] = [
@@ -32,7 +33,8 @@ function csvCell(value: string | number | null | undefined): string {
 
 export async function GET(request: NextRequest) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
 
     const { searchParams } = new URL(request.url);
     const periodRaw = searchParams.get("period") || "today";
@@ -43,10 +45,11 @@ export async function GET(request: NextRequest) {
     const endDate = searchParams.get("endDate") || undefined;
 
     const orders = await reportService.getSalesOrdersForExport(
-      restaurantId,
+      ctx.restaurantId,
       period,
       startDate,
-      endDate
+      endDate,
+      authorizedBranches(ctx)
     );
 
     const header = [

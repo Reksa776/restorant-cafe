@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ValidationError } from "@/lib/errors";
 
@@ -73,9 +74,14 @@ export function resolveReportRange(
 }
 
 // The "sold" order predicate shared by every aggregation.
-function soldOrderWhere(restaurantId: string, range: ReportRange) {
+function soldOrderWhere(
+  restaurantId: string,
+  range: ReportRange,
+  branchFilters?: string[] | null
+) {
   return {
     restaurantId,
+    ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
     createdAt: { gte: range.start, lte: range.end },
     status: { not: "CANCELLED" as const },
     paymentStatus: "PAID" as const,
@@ -83,15 +89,16 @@ function soldOrderWhere(restaurantId: string, range: ReportRange) {
 }
 
 export class ReportService {
-  /** Full sales report for the period. */
+  /** Full sales report for the period. When `branchFilters` is set, only those branches. */
   async getSalesReport(
     restaurantId: string,
     period: ReportPeriod,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    branchFilters?: string[] | null
   ) {
     const range = resolveReportRange(period, startDate, endDate);
-    const soldWhere = soldOrderWhere(restaurantId, range);
+    const soldWhere = soldOrderWhere(restaurantId, range, branchFilters);
 
     // ------------------------------------------------------------
     // Summary (Prisma aggregate over sold orders)
@@ -119,6 +126,7 @@ export class ReportService {
       prisma.order.count({
         where: {
           restaurantId,
+          ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
           createdAt: { gte: range.start, lte: range.end },
           status: { not: "CANCELLED" },
         },
@@ -133,6 +141,7 @@ export class ReportService {
         by: ["method", "status", "provider"],
         where: {
           restaurantId,
+          ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
           createdAt: { gte: range.start, lte: range.end },
         },
         _count: { _all: true },
@@ -170,6 +179,7 @@ export class ReportService {
                COALESCE(SUM(\`grandTotal\`), 0) AS revenue
         FROM \`order\`
         WHERE \`restaurantId\` = ${restaurantId}
+          ${branchFilters?.length ? Prisma.sql`AND \`branchId\` IN (${Prisma.join(branchFilters)})` : Prisma.empty}
           AND \`createdAt\` >= ${range.start}
           AND \`createdAt\` <= ${range.end}
           AND \`status\` <> 'CANCELLED'
@@ -359,13 +369,15 @@ export class ReportService {
     restaurantId: string,
     period: ReportPeriod,
     startDate?: string,
-    endDate?: string
+    endDate?: string,
+    branchFilters?: string[] | null
   ) {
     const range = resolveReportRange(period, startDate, endDate);
 
     const orders = await prisma.order.findMany({
       where: {
         restaurantId,
+        ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
         createdAt: { gte: range.start, lte: range.end },
         status: { not: "CANCELLED" },
       },

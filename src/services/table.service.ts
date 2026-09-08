@@ -15,6 +15,11 @@ export interface RestaurantTable {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  branch?: {
+    id: string;
+    code: string;
+    name: string;
+  } | null;
 }
 
 export interface CreateTableData {
@@ -71,9 +76,17 @@ export const tableService = {
   },
 
   /**
-   * Customer (public) ordering URL for a table, based on the caller origin.
+   * Customer (public) ordering URL for a table. Multi-branch tables encode
+   * the branch code so the QR is unambiguous across branches.
    */
-  getCustomerUrl(baseUrl: string, tableNumber: number): string {
-    return `${baseUrl.replace(/\/+$/, "")}/t/${tableNumber}`;
+  getCustomerUrl(
+    baseUrl: string,
+    tableNumber: number,
+    branchCode?: string | null
+  ): string {
+    const origin = baseUrl.replace(/\/+$/, "");
+    return branchCode
+      ? `${origin}/t/${encodeURIComponent(branchCode)}/${tableNumber}`
+      : `${origin}/t/${tableNumber}`;
   },
 };

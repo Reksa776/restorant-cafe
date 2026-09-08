@@ -49,6 +49,10 @@ export interface TableContext {
   tableName: string;
   restaurantId: string;
   visitorCount: number;
+  /** Branch the table belongs to (multi-branch). Null = legacy/no branch. */
+  branchId?: string | null;
+  /** Branch code shown in the QR payload (/t/{branchCode}/{tableNumber}). */
+  branchCode?: string | null;
 }
 
 export interface CartContextType {

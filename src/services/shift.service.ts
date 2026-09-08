@@ -221,6 +221,18 @@ export const userService = {
     return response.data.data;
   },
 
+  /** Branch assignments for a staff user (empty = all branches). */
+  async getUserBranches(userId: string): Promise<{ branchIds: string[] }> {
+    const response = await api.get(`/users/${userId}/branches`);
+    return response.data.data;
+  },
+
+  /** Replaces a user's branch assignments (empty = all branches). */
+  async setUserBranches(userId: string, branchIds: string[]) {
+    const response = await api.put(`/users/${userId}/branches`, { branchIds });
+    return response.data.data;
+  },
+
   async changeOwnPassword(currentPassword: string, newPassword: string) {
     const response = await api.patch("/users/me/password", {
       currentPassword,

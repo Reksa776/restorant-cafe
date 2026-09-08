@@ -1,7 +1,12 @@
 import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireAdmin, verifyAdminPassword } from "@/lib/auth-helpers";
+import {
+  branchHintFrom,
+  requireAdmin,
+  verifyAdminPassword,
+  authorizedBranches,
+} from "@/lib/auth-helpers";
 import { approvalService } from "@/services/approval/approval.service";
 
 /**
@@ -16,22 +21,24 @@ export async function POST(
   { params }: { params: Promise<{ refundId: string }> }
 ) {
   try {
-    const { userId, restaurantId } = await requireAdmin();
+    const branchHint = branchHintFrom(request);
+    const ctx = await requireAdmin(branchHint);
     const { refundId } = await params;
     const body = await request.json();
 
     if (typeof body.approve !== "boolean") {
       throw new ValidationError("approve wajib boolean");
     }
-    await verifyAdminPassword(userId, restaurantId, body.password);
+    await verifyAdminPassword(ctx.userId, ctx.restaurantId, body.password);
 
     const result = await approvalService.decideRefund({
-      restaurantId,
-      adminId: userId,
+      restaurantId: ctx.restaurantId,
+      adminId: ctx.userId,
       refundId,
       approve: body.approve,
       decisionNote:
         typeof body.decisionNote === "string" ? body.decisionNote : undefined,
+      branchFilters: authorizedBranches(ctx),
     });
 
     return successResponse(

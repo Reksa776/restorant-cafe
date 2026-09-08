@@ -2,16 +2,17 @@ import { NextRequest } from "next/server";
 import { tableService } from "@/services/table/table.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
     const { id } = await params;
-    const table = await tableService.getTable(id, restaurantId);
+    const table = await tableService.getTable(id, ctx.restaurantId, authorizedBranches(ctx));
 
     return successResponse(table);
   } catch (error) {
@@ -28,10 +29,16 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
     const { id } = await params;
     const body = await request.json();
-    const table = await tableService.updateTable(id, restaurantId, body);
+    const table = await tableService.updateTable(
+      id,
+      ctx.restaurantId,
+      body,
+      authorizedBranches(ctx)
+    );
 
     return successResponse(table, "Table updated successfully");
   } catch (error) {
@@ -48,9 +55,10 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const branchId = branchHintFrom(request);
+    const ctx = await requireAdmin(branchId);
     const { id } = await params;
-    await tableService.deleteTable(id, restaurantId);
+    await tableService.deleteTable(id, ctx.restaurantId, authorizedBranches(ctx));
 
     return successResponse(null, "Table deleted successfully");
   } catch (error) {

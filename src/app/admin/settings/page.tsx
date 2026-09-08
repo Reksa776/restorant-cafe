@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { MessageSquare, Upload, Trash2, Palette, Store, Loader2 } from "lucide-react";
+import { MessageSquare, Upload, Trash2, Palette, Store, Loader2, MapPin } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import api from "@/lib/axios";
@@ -566,6 +566,25 @@ export default function SettingsPage() {
                   accentColor={colors.accentColor}
                 />
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MapPin className="h-5 w-5" />
+                Cabang / Outlet
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-gray-500 mb-4">
+                Kelola outlet dan kode cabang (untuk QR meja).
+              </p>
+              <Link href="/admin/settings/branches">
+                <Button variant="outline" className="w-full">
+                  Kelola Cabang
+                </Button>
+              </Link>
             </CardContent>
           </Card>
 

@@ -18,6 +18,11 @@ interface TableInfo {
   tableName: string;
   capacity: number;
   status: string;
+  branch?: {
+    id: string;
+    code: string;
+    name: string;
+  } | null;
   restaurant: {
     id: string;
     name: string;
@@ -31,14 +36,17 @@ interface TableInfo {
   };
 }
 
-// ============================================================
-// Component
-// ============================================================
-
-export default function TableLandingPage({
-  params,
+/**
+ * Shared QR landing page for both QR payloads:
+ * - legacy `/t/{tableNumber}` (branchCode = null)
+ * - multi-branch `/t/{branchCode}/{tableNumber}` (branchCode set)
+ */
+export default function TableLanding({
+  tableNumberParam,
+  branchCodeParam,
 }: {
-  params: Promise<{ tableNumber: string }>;
+  tableNumberParam: string;
+  branchCodeParam?: string | null;
 }) {
   const router = useRouter();
   const { setTableContext } = useCart();
@@ -51,12 +59,16 @@ export default function TableLandingPage({
 
   useEffect(() => {
     loadTableInfo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const loadTableInfo = async () => {
     try {
-      const { tableNumber } = await params;
-      const res = await api.get(`/public/tables/lookup?number=${tableNumber}`);
+      const params = new URLSearchParams({ number: tableNumberParam });
+      if (branchCodeParam) {
+        params.set("branchCode", branchCodeParam);
+      }
+      const res = await api.get(`/public/tables/lookup?${params.toString()}`);
       setTableInfo(res.data.data);
 
       // Apply the tenant's website branding so the landing page (and the
@@ -97,13 +109,16 @@ export default function TableLandingPage({
 
     setIsContinuing(true);
 
-    // Persist table context in cart
+    // Persist table context in cart (branch context included so the menu
+    // menu and checkout stay on the right branch).
     setTableContext({
       tableId: tableInfo.tableId,
       tableNumber: tableInfo.tableNumber,
       tableName: tableInfo.tableName,
       restaurantId: tableInfo.restaurant.id,
       visitorCount: count,
+      branchId: tableInfo.branch?.id ?? null,
+      branchCode: tableInfo.branch?.code ?? null,
     });
 
     // Navigate to menu
@@ -170,6 +185,11 @@ export default function TableLandingPage({
         <p className="text-sm text-gray-400">
           {tableInfo.restaurant.branding?.siteName || tableInfo.restaurant.name}
         </p>
+        {tableInfo.branch?.name && (
+          <p className="text-xs font-medium text-gray-500">
+            Cabang {tableInfo.branch.name}
+          </p>
+        )}
         <h1 className="text-3xl font-bold text-brand-primary">
           Selamat Datang
         </h1>

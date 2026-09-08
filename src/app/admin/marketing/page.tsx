@@ -11,12 +11,14 @@ import {
   AlertCircle,
   Plus,
   BadgePercent,
+  Store,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   promoService,
   type AdminPromo,
 } from "@/services/promo.service";
+import { branchService, type Branch } from "@/services/branch.service";
 
 // ============================================================
 // Marketing (ADMIN) — create/manage tenant-scoped promos (F3).
@@ -37,6 +39,7 @@ interface FormState {
   expiresAt: string;
   maxUsage: string;
   perCustomerLimit: string;
+  branchId: string;
 }
 
 const emptyForm: FormState = {
@@ -51,6 +54,7 @@ const emptyForm: FormState = {
   expiresAt: "",
   maxUsage: "0",
   perCustomerLimit: "1",
+  branchId: "",
 };
 
 export default function MarketingPage() {
@@ -61,6 +65,7 @@ export default function MarketingPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [isToggling, setIsToggling] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [branches, setBranches] = useState<Branch[]>([]);
 
   const loadPromos = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
@@ -78,6 +83,10 @@ export default function MarketingPage() {
   useEffect(() => {
     loadPromos(true);
   }, [loadPromos]);
+
+  useEffect(() => {
+    branchService.getBranches().then(setBranches).catch(() => setBranches([]));
+  }, []);
 
   const handleCreate = async () => {
     if (!form.code.trim() || !form.name.trim()) {
@@ -98,6 +107,7 @@ export default function MarketingPage() {
         expiresAt: form.expiresAt ? `${form.expiresAt}T23:59:59` : null,
         maxUsage: Number(form.maxUsage) || 0,
         perCustomerLimit: Number(form.perCustomerLimit) || 1,
+        branchId: form.branchId || null,
       });
       toast.success("Promo berhasil dibuat");
       setFormOpen(false);
@@ -203,6 +213,18 @@ export default function MarketingPage() {
                           </span>
                           <Badge
                             className={
+                              promo.branchId
+                                ? "bg-indigo-100 text-indigo-800"
+                                : "bg-teal-100 text-teal-800"
+                            }
+                          >
+                            <Store className="h-3 w-3 mr-1" />
+                            {promo.branchId
+                              ? promo.branch?.name ?? "Cabang tertentu"
+                              : "Semua Cabang"}
+                          </Badge>
+                          <Badge
+                            className={
                               promo.isActive
                                 ? "bg-green-100 text-green-800"
                                 : "bg-gray-200 text-gray-600"
@@ -284,6 +306,25 @@ export default function MarketingPage() {
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
               />
             </div>
+            {branches.length > 0 && (
+              <div className="sm:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Berlaku untuk Cabang
+                </label>
+                <select
+                  value={form.branchId}
+                  onChange={(e) => set("branchId", e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none"
+                >
+                  <option value="">Semua Cabang</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Tipe

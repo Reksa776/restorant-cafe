@@ -95,6 +95,25 @@ function recoverFromUnauthorized(): void {
     });
 }
 
+// ============================================================
+// Branch context header (multi-branch admin)
+// ============================================================
+// The admin UI stores the currently-selected branch in localStorage
+// ("admin_branch_id"). Every authenticated admin/cashier request carries it
+// as `x-branch-id` so the server can scope queries to that branch. Public
+// (customer) requests must NOT include it — the server derives the branch
+// from the QR/table context instead.
+const BRANCH_STORAGE_KEY = "admin_branch_id";
+
+function currentBranchId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(BRANCH_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
 // Request interceptor
 api.interceptors.request.use(
   (config) => {
@@ -106,6 +125,18 @@ api.interceptors.request.use(
         config.headers.set("Content-Type", "application/json");
       }
     }
+
+    // Attach the active branch to admin requests only.
+    if (
+      !isPublicRequest(config.url) &&
+      !config.headers.has("x-branch-id")
+    ) {
+      const branchId = currentBranchId();
+      if (branchId) {
+        config.headers.set("x-branch-id", branchId);
+      }
+    }
+
     return config;
   },
   (error) => {

@@ -37,9 +37,29 @@ function assertPromoUsable(promo: {
   }
 }
 
+// A promo with branchId === null is restaurant-wide; otherwise it only
+// applies at that one branch. Throw when the active branch does not match.
+function assertPromoBranchScope(
+  promoBranchId: string | null,
+  branchId: string | null | undefined
+) {
+  if (promoBranchId !== null && promoBranchId !== branchId) {
+    throw new ConflictError("Promo tidak tersedia di cabang ini");
+  }
+}
+
 export class PromoService {
-  /** Public list of active promos for a restaurant (menu page). */
-  async listActivePromos(restaurantId: string, customerId?: string) {
+  /**
+   * Public list of active promos for a restaurant (menu page).
+   * When `branchId` is set, only restaurant-wide promos + the branch's own
+   * promos are returned. Without a branch context, only restaurant-wide
+   * promos (branchId null) are visible.
+   */
+  async listActivePromos(
+    restaurantId: string,
+    branchId?: string | null,
+    customerId?: string
+  ) {
     const now = new Date();
 
     const promos = await prisma.promo.findMany({
@@ -47,6 +67,9 @@ export class PromoService {
         restaurantId,
         isActive: true,
         AND: [
+          ...(branchId
+            ? [{ OR: [{ branchId: null }, { branchId }] }]
+            : [{ branchId: null }]),
           { OR: [{ startsAt: null }, { startsAt: { lte: now } }] },
           { OR: [{ expiresAt: null }, { expiresAt: { gte: now } }] },
         ],
@@ -86,6 +109,7 @@ export class PromoService {
       startsAt: p.startsAt,
       expiresAt: p.expiresAt,
       isActive: p.isActive,
+      branchId: p.branchId,
       ...(customerId
         ? {
             claimed: claimedSet.has(p.id),
@@ -101,13 +125,19 @@ export class PromoService {
    * it). Validates tenant scope, activity window, global quota and the
    * per-customer claim limit under a per-promo row lock.
    */
-  async claimPromo(restaurantId: string, customerId: string, promoId: string) {
+  async claimPromo(
+    restaurantId: string,
+    branchId: string | null | undefined,
+    customerId: string,
+    promoId: string
+  ) {
     const promo = await prisma.promo.findFirst({
       where: { id: promoId, restaurantId },
     });
     if (!promo) {
       throw new NotFoundError("Promo tidak ditemukan");
     }
+    assertPromoBranchScope(promo.branchId, branchId);
 
     const result = await prisma.$transaction(async (tx) => {
       // Serialize concurrent claims on the same promo (MySQL FOR UPDATE).
@@ -118,6 +148,7 @@ export class PromoService {
         throw new NotFoundError("Promo tidak ditemukan");
       }
       assertPromoUsable(locked);
+      assertPromoBranchScope(locked.branchId, branchId);
 
       // Per-customer claim limit (claims = rows with orderId NULL).
       const claimedCount = await tx.promoUsage.count({
@@ -138,7 +169,7 @@ export class PromoService {
       }
 
       await tx.promoUsage.create({
-        data: { promoId: locked.id, customerId, orderId: null },
+        data: { promoId: locked.id, customerId, orderId: null, branchId },
       });
       return locked;
     });
@@ -161,6 +192,7 @@ export class PromoService {
    */
   async validatePromoPreview(
     restaurantId: string,
+    branchId: string | null | undefined,
     customerId: string,
     input: { promoCode?: string; promoId?: string },
     subtotal: number
@@ -176,6 +208,7 @@ export class PromoService {
       throw new ValidationError("Kode promo tidak ditemukan");
     }
     assertPromoUsable(promo);
+    assertPromoBranchScope(promo.branchId, branchId);
 
     if (Number(subtotal) < Number(promo.minOrder)) {
       throw new ValidationError(
@@ -234,6 +267,7 @@ export class PromoService {
         minOrder: Number(promo.minOrder),
         maxDiscount: promo.maxDiscount !== null ? Number(promo.maxDiscount) : null,
         expiresAt: promo.expiresAt,
+        branchId: promo.branchId,
       },
       subtotal,
       discount,
@@ -251,6 +285,7 @@ export class PromoService {
   async applyPromoToOrder(
     tx: Tx,
     restaurantId: string,
+    orderBranchId: string | null | undefined,
     customerId: string,
     promoCode: string,
     subtotal: number
@@ -269,6 +304,10 @@ export class PromoService {
       throw new ValidationError("Kode promo tidak ditemukan");
     }
     assertPromoUsable(locked);
+    // Branch-only promo must match the order's branch.
+    if (locked.branchId !== null && locked.branchId !== orderBranchId) {
+      throw new ValidationError("Promo tidak tersedia di cabang ini");
+    }
 
     if (Number(subtotal) < Number(locked.minOrder)) {
       throw new ValidationError(
@@ -322,12 +361,18 @@ export class PromoService {
   // Admin (ADMIN role) management — tenant-scoped, no client trust.
   // ============================================================
 
-  /** All promos for a restaurant (admin), with usage counts. */
-  async listPromosAdmin(restaurantId: string) {
+  /** All promos for a restaurant (admin), with usage counts + branch scope. */
+  async listPromosAdmin(restaurantId: string, branchFilters?: string[] | null) {
     const promos = await prisma.promo.findMany({
-      where: { restaurantId },
+      where: {
+        restaurantId,
+        ...(branchFilters?.length
+          ? { OR: [{ branchId: null }, { branchId: { in: branchFilters } }] }
+          : {}),
+      },
       include: {
         _count: { select: { usages: true } },
+        branch: { select: { id: true, code: true, name: true } },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -358,6 +403,8 @@ export class PromoService {
       perCustomerLimit: p.perCustomerLimit,
       isActive: p.isActive,
       createdAt: p.createdAt,
+      branchId: p.branchId,
+      branch: p.branch ? { id: p.branch.id, code: p.branch.code, name: p.branch.name } : null,
       usageCount: usedByPromo.get(p.id) || 0,
       claimCount: p._count.usages,
     }));
@@ -379,6 +426,7 @@ export class PromoService {
       maxUsage?: number;
       perCustomerLimit?: number;
       isActive?: boolean;
+      branchId?: string | null;
     }
   ) {
     const code = input.code.trim().toUpperCase();
@@ -397,9 +445,21 @@ export class PromoService {
       throw new ValidationError("Nilai diskon harus lebih dari 0");
     }
 
+    // Validate the optional branch belongs to this restaurant.
+    if (input.branchId) {
+      const branch = await prisma.branch.findFirst({
+        where: { id: input.branchId, restaurantId },
+        select: { id: true },
+      });
+      if (!branch) {
+        throw new ValidationError("Cabang tidak ditemukan");
+      }
+    }
+
     return prisma.promo.create({
       data: {
         restaurantId,
+        branchId: input.branchId ?? null,
         code,
         name: input.name.trim(),
         description: input.description?.trim() || null,
@@ -420,10 +480,19 @@ export class PromoService {
   async setPromoActive(
     restaurantId: string,
     promoId: string,
-    isActive: boolean
+    isActive: boolean,
+    branchFilters?: string[] | null
   ) {
     const promo = await prisma.promo.findFirst({
-      where: { id: promoId, restaurantId },
+      where: {
+        id: promoId,
+        restaurantId,
+        // Branch-scoped admin may only touch their own (or restaurant-wide)
+        // promos.
+        ...(branchFilters?.length
+          ? { OR: [{ branchId: null }, { branchId: { in: branchFilters } }] }
+          : {}),
+      },
     });
     if (!promo) {
       throw new NotFoundError("Promo tidak ditemukan");
@@ -439,7 +508,8 @@ export class PromoService {
     tx: Tx,
     promoId: string,
     customerId: string,
-    orderId: string
+    orderId: string,
+    orderBranchId?: string | null
   ) {
     // Upgrade an existing claim (orderId NULL) to a real use, else create
     // the usage row directly (use without prior claim).
@@ -449,11 +519,11 @@ export class PromoService {
     if (claim) {
       await tx.promoUsage.update({
         where: { id: claim.id },
-        data: { orderId },
+        data: { orderId, branchId: orderBranchId ?? claim.branchId },
       });
     } else {
       await tx.promoUsage.create({
-        data: { promoId, customerId, orderId },
+        data: { promoId, customerId, orderId, branchId: orderBranchId },
       });
     }
   }

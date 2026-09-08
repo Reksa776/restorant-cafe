@@ -75,7 +75,7 @@ export class ShiftService {
   /**
    * Open a cash drawer shift for the authenticated cashier.
    * Rules:
-   * - One OPEN shift per cashier (and per user) at a time.
+   * - One OPEN shift per cashier per branch at a time.
    * - openingCash >= 0 and required.
    */
   async openShift(input: {
@@ -83,6 +83,7 @@ export class ShiftService {
     userId: string;
     openingCash: number;
     notes?: string;
+    branchId?: string | null;
   }) {
     if (
       !Number.isFinite(input.openingCash) ||
@@ -91,11 +92,14 @@ export class ShiftService {
       throw new ValidationError("Jumlah kas awal tidak valid");
     }
 
+    const resolvedBranchId = input.branchId ?? null;
+
     const existing = await prisma.cashierShift.findFirst({
       where: {
         restaurantId: input.restaurantId,
         userId: input.userId,
         status: "OPEN",
+        branchId: resolvedBranchId,
       },
     });
     if (existing) {
@@ -115,6 +119,7 @@ export class ShiftService {
         shift = await prisma.cashierShift.create({
           data: {
             restaurantId: input.restaurantId,
+            branchId: resolvedBranchId,
             userId: input.userId,
             shiftNumber,
             openingCash: input.openingCash,
@@ -155,6 +160,7 @@ export class ShiftService {
 
     await auditService.log({
       restaurantId: input.restaurantId,
+      branchId: resolvedBranchId,
       userId: input.userId,
       action: "SHIFT_OPENED",
       entityType: "CashierShift",
@@ -175,6 +181,7 @@ export class ShiftService {
     userId: string;
     actualCash: number;
     notes?: string;
+    branchId?: string | null;
   }) {
     if (!Number.isFinite(input.actualCash) || input.actualCash < 0) {
       throw new ValidationError("Jumlah kas aktual tidak valid");
@@ -185,6 +192,7 @@ export class ShiftService {
         restaurantId: input.restaurantId,
         userId: input.userId,
         status: "OPEN",
+        branchId: input.branchId ?? undefined,
       },
     });
     if (!shift) {
@@ -232,6 +240,7 @@ export class ShiftService {
 
     await auditService.log({
       restaurantId: input.restaurantId,
+      branchId: shift.branchId ?? input.branchId ?? null,
       userId: input.userId,
       action: "SHIFT_CLOSED",
       entityType: "CashierShift",
@@ -251,11 +260,20 @@ export class ShiftService {
   }
 
   /**
-   * Get the caller's open shift (or null).
+   * Get the caller's open shift (or null), optionally scoped to branches.
    */
-  async getMyOpenShift(restaurantId: string, userId: string) {
+  async getMyOpenShift(
+    restaurantId: string,
+    userId: string,
+    branchFilters?: string[] | null
+  ) {
     return prisma.cashierShift.findFirst({
-      where: { restaurantId, userId, status: "OPEN" },
+      where: {
+        restaurantId,
+        userId,
+        status: "OPEN",
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
+      },
       include: {
         user: { select: { id: true, name: true, email: true } },
         payments: {
@@ -270,9 +288,17 @@ export class ShiftService {
    * My shifts — a cashier may only ever read their OWN shifts
    * (server-side scoping; never trust the client).
    */
-  async listMyShifts(restaurantId: string, userId: string) {
+  async listMyShifts(
+    restaurantId: string,
+    userId: string,
+    branchFilters?: string[] | null
+  ) {
     const shifts = await prisma.cashierShift.findMany({
-      where: { restaurantId, userId },
+      where: {
+        restaurantId,
+        userId,
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
+      },
       include: {
         user: { select: { id: true, name: true } },
         _count: {
@@ -286,11 +312,14 @@ export class ShiftService {
   }
 
   /**
-   * All shifts across cashiers (admin only).
+   * All shifts across cashiers (admin only), optionally scoped to branches.
    */
-  async listAllShifts(restaurantId: string) {
+  async listAllShifts(restaurantId: string, branchFilters?: string[] | null) {
     const shifts = await prisma.cashierShift.findMany({
-      where: { restaurantId },
+      where: {
+        restaurantId,
+        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
+      },
       include: {
         user: { select: { id: true, name: true, email: true } },
         overrides: { orderBy: { createdAt: "desc" } },
@@ -305,11 +334,26 @@ export class ShiftService {
   }
 
   /** Shift detail with payments and refunds (admin all; cashier own only). */
-  async getShift(shiftId: string, restaurantId: string, userId?: string, isAdmin?: boolean) {
+  async getShift(
+    shiftId: string,
+    restaurantId: string,
+    userId?: string,
+    isAdmin?: boolean,
+    branchFilters?: string[] | null
+  ) {
     const shift = await prisma.cashierShift.findFirst({
       where: isAdmin
-        ? { id: shiftId, restaurantId }
-        : { id: shiftId, restaurantId, userId },
+        ? {
+            id: shiftId,
+            restaurantId,
+            branchId: branchFilters?.length ? { in: branchFilters } : undefined,
+          }
+        : {
+            id: shiftId,
+            restaurantId,
+            userId,
+            branchId: branchFilters?.length ? { in: branchFilters } : undefined,
+          },
       include: {
         user: { select: { id: true, name: true, email: true } },
         payments: {
@@ -368,6 +412,7 @@ export class ShiftService {
     const override = await prisma.shiftOverride.create({
       data: {
         restaurantId: input.restaurantId,
+        branchId: shift.branchId ?? null,
         shiftId: shift.id,
         requestedByCashierId: input.userId,
         reason: input.reason,
@@ -396,6 +441,7 @@ export class ShiftService {
 
     await auditService.log({
       restaurantId: input.restaurantId,
+      branchId: shift.branchId ?? null,
       userId: input.userId,
       action: "SHIFT_OVERRIDE_REQUESTED",
       entityType: "ShiftOverride",
@@ -417,9 +463,17 @@ export class ShiftService {
     overrideId: string;
     approve: boolean;
     decisionNote?: string;
+    branchFilters?: string[] | null;
   }) {
     const override = await prisma.shiftOverride.findFirst({
-      where: { id: input.overrideId, restaurantId: input.restaurantId, status: "PENDING" },
+      where: {
+        id: input.overrideId,
+        restaurantId: input.restaurantId,
+        status: "PENDING",
+        ...(input.branchFilters?.length
+          ? { branchId: { in: input.branchFilters } }
+          : {}),
+      },
       include: { shift: true },
     });
     if (!override) {
@@ -484,6 +538,7 @@ export class ShiftService {
 
     await auditService.log({
       restaurantId: input.restaurantId,
+      branchId: override.shift?.branchId ?? null,
       userId: input.adminId,
       action: input.approve ? "SHIFT_OVERRIDE_APPROVED" : "SHIFT_OVERRIDE_REJECTED",
       entityType: "ShiftOverride",
@@ -505,9 +560,17 @@ export class ShiftService {
     adminId: string;
     shiftId: string;
     reason: string;
+    branchFilters?: string[] | null;
   }) {
     const shift = await prisma.cashierShift.findFirst({
-      where: { id: input.shiftId, restaurantId: input.restaurantId, status: "CLOSED" },
+      where: {
+        id: input.shiftId,
+        restaurantId: input.restaurantId,
+        status: "CLOSED",
+        ...(input.branchFilters?.length
+          ? { branchId: { in: input.branchFilters } }
+          : {}),
+      },
     });
     if (!shift) {
       throw new NotFoundError("Shift tertutup tidak ditemukan");
@@ -540,6 +603,7 @@ export class ShiftService {
 
     await auditService.log({
       restaurantId: input.restaurantId,
+      branchId: shift.branchId ?? null,
       userId: input.adminId,
       action: "SHIFT_REOPENED",
       entityType: "CashierShift",
