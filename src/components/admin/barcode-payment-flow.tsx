@@ -58,6 +58,14 @@ interface BarcodePaymentFlowProps {
   /** Optional controlled open state (e.g. an external "Bayar" button). */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /**
+   * Order number already known at open time (e.g. the scan that landed on
+   * the order detail page). When provided the flow loads THAT order directly
+   * and skips the scanner — the cashier scans only once. The lookup still
+   * goes through the restaurant/branch-scoped admin endpoint, so a known
+   * number never bypasses authorization (foreign order → 404/403).
+   */
+  initialOrderNumber?: string | null;
 }
 
 // Polling cadence matches the customer payment page (4s). Same infrastructure
@@ -68,6 +76,7 @@ export function BarcodePaymentFlow({
   onPaymentCompleted,
   open,
   onOpenChange,
+  initialOrderNumber,
 }: BarcodePaymentFlowProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const dialogOpen = open !== undefined ? open : internalOpen;
@@ -131,6 +140,22 @@ export function BarcodePaymentFlow({
     },
     [loadOrder]
   );
+
+  // A known order number (came from a scan elsewhere, e.g. the orders list)
+  // is loaded directly on open — NO second scan. Same scoped admin lookup as
+  // the scanner path, so restaurant/branch authorization is unchanged.
+  useEffect(() => {
+    if (!dialogOpen || !initialOrderNumber) return;
+    let cancelled = false;
+    (async () => {
+      await Promise.resolve(); // defer setState past the effect body (React 19)
+      if (cancelled) return;
+      await loadOrder(initialOrderNumber);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [dialogOpen, initialOrderNumber, loadOrder]);
 
   const handleOpenChange = (next: boolean) => {
     if (!next) {
@@ -850,7 +875,7 @@ export function BarcodePaymentFlow({
             </div>
           )}
 
-          {scanStatus === "idle" && (
+          {scanStatus === "idle" && !initialOrderNumber && (
             <div className="space-y-2">
               <Button onClick={startScanner} className="w-full">
                 <ScanLine className="h-4 w-4 mr-2" />
@@ -858,6 +883,17 @@ export function BarcodePaymentFlow({
               </Button>
               <p className="text-xs text-muted-foreground text-center">
                 Arahkan kamera ke QR pesanan pelanggan
+              </p>
+            </div>
+          )}
+
+          {/* Order number already known → the order is being loaded directly;
+              no scanner flash between opening the flow and the detail view. */}
+          {scanStatus === "idle" && initialOrderNumber && (
+            <div className="text-center py-4">
+              <Loader2 className="h-8 w-8 mx-auto animate-spin text-blue-500" />
+              <p className="text-sm text-muted-foreground mt-2">
+                Memuat pesanan...
               </p>
             </div>
           )}

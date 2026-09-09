@@ -11,7 +11,6 @@ import {
   Loader2,
   Printer,
   RefreshCw,
-  ScanLine,
   UtensilsCrossed,
   ShoppingBag,
   Truck,
@@ -22,7 +21,6 @@ import { orderService, type Order } from "@/services/order.service";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { OrderScanner } from "@/components/admin/order-scanner";
-import { CashierPayDialog } from "@/components/admin/orders/cashier-pay-dialog";
 import { BarcodePaymentFlow } from "@/components/admin/barcode-payment-flow";
 import { ApprovalActions } from "@/components/admin/orders/approval-actions";
 import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
@@ -70,7 +68,6 @@ export default function AdminOrderByNumberPage({
   const [orderNumber, setOrderNumber] = useState<string | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "not_found" | "error">("loading");
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [barcodePaymentOpen, setBarcodePaymentOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
 
@@ -270,53 +267,41 @@ export default function AdminOrderByNumberPage({
                 <ApprovalActions order={order} compact onDone={loadOrder} />
               )}
             </div>
-          ) : cashierUnpaid ? (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-3">
+          ) : order.status === "CANCELLED" ? (
+            <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">
+              Pesanan dibatalkan — pembayaran tidak dapat diproses.
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg bg-muted/30 border border-border px-3 py-3">
               <div className="flex items-center gap-2 min-w-0">
-                <Banknote className="h-5 w-5 text-amber-700 flex-shrink-0" />
+                <Banknote className="h-5 w-5 text-muted-foreground flex-shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm font-semibold text-amber-900">
-                    Pembayaran kasir belum diterima
+                  <p className="text-sm font-semibold">
+                    {cashierUnpaid
+                      ? "Pembayaran kasir belum diterima"
+                      : "Pembayaran belum selesai"}
                   </p>
-                  <p className="text-xs text-amber-700">
-                    Total tagihan {rupiah(cashierUnpaid.amount)} — hitung uang
-                    diterima & kembalian.
+                  <p className="text-xs text-muted-foreground">
+                    {cashierUnpaid
+                      ? `Total tagihan ${rupiah(cashierUnpaid.amount)} — pilih Cash atau QRIS.`
+                      : "Pilih Cash / Tunai atau QRIS untuk menyelesaikan pembayaran."}
                   </p>
                 </div>
               </div>
-              <div className="flex gap-2 flex-shrink-0">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setBarcodePaymentOpen(true)}
-                >
-                  <ScanLine className="h-4 w-4 mr-1" />
-                  Scan & Bayar
-                </Button>
-                <Button
-                  size="sm"
-                  className="bg-green-600 hover:bg-green-700"
-                  onClick={() => setDialogOpen(true)}
-                >
-                  <Banknote className="h-4 w-4 mr-1" />
-                  Proses Pembayaran Kasir
-                </Button>
-              </div>
+              {/* Opens the payment flow WITH the order already loaded — the
+                  cashier never scans twice. CASH and QRIS are offered inside. */}
+              <Button
+                size="sm"
+                className="bg-green-600 hover:bg-green-700 flex-shrink-0"
+                onClick={() => setBarcodePaymentOpen(true)}
+              >
+                <Banknote className="h-4 w-4 mr-1" />
+                Proses Pembayaran
+              </Button>
             </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              Tidak ada pembayaran kasir yang menunggu.
-            </p>
           )}
         </CardContent>
       </Card>
-
-      <CashierPayDialog
-        order={order}
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        onCompleted={() => loadOrder()}
-      />
 
       {/* Print bill — pure client-side, never mutates the order */}
       <PrintBillDialog
@@ -325,9 +310,13 @@ export default function AdminOrderByNumberPage({
         onOpenChange={setPrintOpen}
       />
 
+      {/* Payment flow reuses the ALREADY-FOUND order (from the scan that
+          opened this page) — no second scan. The flow reloads it through the
+          scoped admin endpoint so authorization is always re-enforced. */}
       <BarcodePaymentFlow
         open={barcodePaymentOpen}
         onOpenChange={setBarcodePaymentOpen}
+        initialOrderNumber={order.orderNumber}
         onPaymentCompleted={() => loadOrder()}
       />
 
