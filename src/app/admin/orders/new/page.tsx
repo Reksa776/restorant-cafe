@@ -344,8 +344,8 @@ function CustomizeModal({
                       onClick={() => handleGroupSelect(group.id, option.id, group)}
                       className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-colors text-sm ${
                         isSelected
-                          ? "border-blue-500 bg-blue-50"
-                          : "border-gray-200 hover:border-blue-300"
+                          ? "border-brand-primary bg-brand-secondary text-brand-primary"
+                          : "border-gray-200 hover:border-brand-primary/40"
                       }`}
                     >
                       <span>{option.name}</span>
@@ -377,7 +377,7 @@ function CustomizeModal({
                         <button
                           onClick={() => toggleAddon(addon.id)}
                           className={`w-4 h-4 rounded border-2 flex items-center justify-center ${
-                            qty > 0 ? "border-blue-500 bg-blue-500" : "border-gray-300"
+                            qty > 0 ? "border-brand-primary bg-brand-primary" : "border-gray-300"
                           }`}
                         >
                           {qty > 0 && (
@@ -417,7 +417,7 @@ function CustomizeModal({
                 onClick={() =>
                   setState((prev) => ({ ...prev, quantity: prev.quantity + 1 }))
                 }
-                className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700"
+                className="w-10 h-10 rounded-full bg-brand-primary text-brand-primary-foreground flex items-center justify-center hover:bg-brand-primary/90"
               >
                 <Plus className="h-4 w-4" />
               </button>
@@ -433,7 +433,7 @@ function CustomizeModal({
               onChange={(e) => setState((prev) => ({ ...prev, notes: e.target.value }))}
               placeholder="Contoh: Es batu sedikit, tanpa sambal..."
               rows={2}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent resize-none"
             />
           </div>
         </div>
@@ -442,7 +442,7 @@ function CustomizeModal({
           <button
             onClick={() => onConfirm(state)}
             disabled={!isValid}
-            className="w-full bg-blue-600 text-white py-3 rounded-xl font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            className="w-full bg-brand-primary text-brand-primary-foreground py-3 rounded-xl font-medium hover:bg-brand-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             <span>{initial ? "Simpan Perubahan" : "Tambah ke Pesanan"}</span>
             <span className="font-bold">{rupiah(total)}</span>
@@ -956,7 +956,7 @@ export default function KasirManualOrderPage() {
             <ArrowLeft className="h-5 w-5" />
           </Link>
           <h1 className="text-2xl font-bold">Buat Pesanan</h1>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 border border-blue-200 px-2.5 py-1 text-xs font-medium text-blue-700">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-secondary border border-brand-accent px-2.5 py-1 text-xs font-medium text-brand-primary">
             <Store className="h-3.5 w-3.5" />
             {workingBranch.name} ({workingBranch.code})
           </span>
@@ -983,8 +983,8 @@ export default function KasirManualOrderPage() {
               onClick={() => setActiveCategoryId("all")}
               className={`flex-shrink-0 rounded-full px-4 py-1.5 text-sm font-medium border transition-colors ${
                 activeCategoryId === "all"
-                  ? "bg-blue-600 text-white border-blue-600"
-                  : "bg-white text-gray-700 border-gray-200 hover:border-blue-300"
+                  ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                  : "bg-white text-gray-700 border-gray-200 hover:border-brand-primary/40"
               }`}
             >
               Semua
@@ -995,8 +995,8 @@ export default function KasirManualOrderPage() {
                 onClick={() => setActiveCategoryId(cat.id)}
                 className={`flex-shrink-0 rounded-full px-4 py-1.5 text-sm font-medium border transition-colors ${
                   activeCategoryId === cat.id
-                    ? "bg-blue-600 text-white border-blue-600"
-                    : "bg-white text-gray-700 border-gray-200 hover:border-blue-300"
+                    ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                    : "bg-white text-gray-700 border-gray-200 hover:border-brand-primary/40"
                 }`}
               >
                 {cat.name}
@@ -1052,19 +1052,19 @@ export default function KasirManualOrderPage() {
                         <button
                           type="button"
                           onClick={() => addSimple(product)}
-                          className="w-full min-h-10 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 active:scale-[0.98]"
+                          className="w-full min-h-10 rounded-lg bg-brand-primary text-brand-primary-foreground text-sm font-medium hover:bg-brand-primary/90 active:scale-[0.98]"
                         >
                           {needsCustomization ? "Pilih Produk" : "+ Tambah"}
                         </button>
                       ) : (
-                        <div className="flex items-center bg-blue-600 rounded-lg overflow-hidden h-10">
+                        <div className="flex items-center bg-brand-primary rounded-lg overflow-hidden h-10">
                           <button
                             type="button"
                             onClick={() => {
                               const line = cart.find((l) => l.productId === product.id);
                               if (line) changeQty(line.key, -1);
                             }}
-                            className="flex-1 h-full flex items-center justify-center text-white hover:bg-blue-700 active:scale-95"
+                            className="flex-1 h-full flex items-center justify-center text-brand-primary-foreground hover:bg-brand-primary/90 active:scale-95"
                             aria-label={`Kurangi ${product.name}`}
                           >
                             <Minus className="h-4 w-4" />
@@ -1078,7 +1078,7 @@ export default function KasirManualOrderPage() {
                               const line = cart.find((l) => l.productId === product.id);
                               if (line) changeQty(line.key, 1);
                             }}
-                            className="flex-1 h-full flex items-center justify-center text-white hover:bg-blue-700 active:scale-95"
+                            className="flex-1 h-full flex items-center justify-center text-brand-primary-foreground hover:bg-brand-primary/90 active:scale-95"
                             aria-label={`Tambah ${product.name}`}
                           >
                             <Plus className="h-4 w-4" />
@@ -1235,8 +1235,8 @@ export default function KasirManualOrderPage() {
                     onClick={() => setOrderType(opt.value)}
                     className={`flex flex-col items-center gap-1 rounded-lg border-2 p-2.5 text-xs font-medium transition-colors ${
                       orderType === opt.value
-                        ? "border-blue-500 bg-blue-50 text-blue-700"
-                        : "border-gray-200 hover:border-blue-300 text-gray-600"
+                        ? "border-brand-primary bg-brand-secondary text-brand-primary"
+                        : "border-gray-200 hover:border-brand-primary/40 text-gray-600"
                     }`}
                   >
                     <Icon className="h-5 w-5" />
@@ -1253,7 +1253,7 @@ export default function KasirManualOrderPage() {
                   id="table-select"
                   value={tableId}
                   onChange={(e) => setTableId(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary"
                 >
                   <option value="">Pilih meja...</option>
                   {tables
@@ -1275,7 +1275,7 @@ export default function KasirManualOrderPage() {
                 onChange={(e) => setNotes(e.target.value)}
                 rows={2}
                 placeholder="Catatan untuk dapur / kurir"
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary resize-none"
               />
             </div>
           </div>
@@ -1301,8 +1301,8 @@ export default function KasirManualOrderPage() {
                 onClick={() => setPaymentMethod("QRIS")}
                 className={`flex items-center gap-2 rounded-xl border-2 p-3 text-sm font-medium transition-colors ${
                   paymentMethod === "QRIS"
-                    ? "border-blue-500 bg-blue-50 text-blue-700"
-                    : "border-gray-200 hover:border-blue-300 text-gray-600"
+                    ? "border-brand-primary bg-brand-secondary text-brand-primary"
+                    : "border-gray-200 hover:border-brand-primary/40 text-gray-600"
                 }`}
               >
                 <QrCode className="h-5 w-5" />

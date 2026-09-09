@@ -593,7 +593,7 @@ export function OrderDetail({
                           step.done
                             ? "bg-green-500"
                             : order.status === step.status
-                              ? "bg-blue-500 ring-2 ring-blue-200"
+                              ? "bg-brand-primary ring-2 ring-brand-accent"
                               : "bg-gray-200"
                         }`}
                       />

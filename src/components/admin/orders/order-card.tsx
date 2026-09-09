@@ -223,7 +223,7 @@ export function OrderCard({
           {order.branch && (
             <Badge
               variant="outline"
-              className="text-[11px] font-medium text-blue-700 border-blue-200 bg-blue-50"
+              className="text-[11px] font-medium text-brand-primary border-brand-accent bg-brand-secondary"
             >
               <Store className="h-3 w-3 mr-1" />
               {order.branch.name || order.branch.code}
@@ -431,7 +431,7 @@ export function OrderCard({
               size="sm"
               onClick={() => onStatusChange(order.id, "COMPLETED")}
               disabled={isUpdating}
-              className="flex-1 bg-blue-500 hover:bg-blue-600"
+              className="flex-1 bg-brand-primary hover:bg-brand-primary/90 text-brand-primary-foreground"
             >
               Scan Barcode
             </Button>

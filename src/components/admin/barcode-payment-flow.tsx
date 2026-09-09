@@ -131,6 +131,26 @@ export function BarcodePaymentFlow({
     }
   }, []);
 
+  /**
+   * Re-fetch the CURRENT order (payments included) without resetting the
+   * dialog state. The in-memory order can go stale while the cashier sits on
+   * a method screen (e.g. a QRIS intent was created, or the customer paid the
+   * QR from their phone) — every decision below is made from this fresh
+   * snapshot instead, never from the stale copy.
+   */
+  const refreshOrder = useCallback(async (
+    orderNumber: string
+  ): Promise<Order | null> => {
+    try {
+      const data = await orderService.getOrderByNumberScoped(orderNumber);
+      setOrder(data);
+      return data;
+    } catch {
+      // Transient refresh failure — fall back to the in-memory order.
+      return null;
+    }
+  }, []);
+
   const onScan = useCallback(
     (orderNumber: string) => {
       setScanStatus("opening");
@@ -176,6 +196,10 @@ export function BarcodePaymentFlow({
     }
   };
 
+  // "Kembali" from any method screen. ALL method state is dropped here (the
+  // QRIS intent object, the received-cash input, the error) so nothing leaks
+  // into the next choice, and the order snapshot is refreshed in the
+  // background so the next decision uses live payment state.
   const resetToChoose = () => {
     setPaymentMethod(null);
     setPayStatus("choose");
@@ -184,6 +208,9 @@ export function BarcodePaymentFlow({
     setErrorMsg(null);
     setQrCountdown(null);
     paidNotifiedRef.current = false;
+    if (order?.orderNumber) {
+      void refreshOrder(order.orderNumber);
+    }
   };
 
   const handleClose = () => {
@@ -217,7 +244,20 @@ export function BarcodePaymentFlow({
     setIsSubmitting(true);
     setErrorMsg(null);
     try {
-      const payments = (order.payments || [])
+      // Decide from a FRESH snapshot: the in-memory order can be stale while
+      // the cashier sat on the cash form (e.g. the customer just scanned the
+      // pending QRIS on their phone). This is the race guard for
+      // "QRIS PENDING → kasir pilih CASH → customer membayar QR".
+      const fresh =
+        (await refreshOrder(order.orderNumber)) || order;
+      if (fresh.paymentStatus === "PAID" || fresh.payments?.some((p) => p.status === "PAID")) {
+        setPayStatus("paid");
+        setErrorMsg(null);
+        onPaymentCompleted?.(fresh.id, fresh.orderNumber);
+        return;
+      }
+
+      const payments = (fresh.payments || [])
         .slice()
         .sort((a, b) => {
           const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -225,6 +265,9 @@ export function BarcodePaymentFlow({
           return tb - ta;
         });
 
+      // Reuse only an UNPAID KASIR row (an UNPAID KASIR intent is the live
+      // cash intent). CANCELLED/FAILED/EXPIRED rows are history — the server
+      // creates a fresh UNPAID row for them.
       let cashierPayment =
         payments.find(
           (p) =>
@@ -235,8 +278,10 @@ export function BarcodePaymentFlow({
       if (!cashierPayment) {
         // Admin route (POST /api/payments) derives restaurantId from the
         // session and forwards the KASIR method — the amount is always
-        // recomputed server-side from the order row.
-        const created = await paymentService.createPayment(order.id, {
+        // recomputed server-side from the order row. The server supersedes
+        // any live online intent (PENDING/FAILED/EXPIRED → CANCELLED, guarded)
+        // inside the same transaction, so QRIS → CASH never 409s.
+        const created = await paymentService.createPayment(fresh.id, {
           method: "KASIR",
         });
         cashierPayment = created ?? null;
@@ -254,14 +299,17 @@ export function BarcodePaymentFlow({
       );
 
       if (result.alreadyPaid) {
+        // Someone else (a parallel tab, a double click, or a QRIS webhook
+        // that won the race) already settled this order — surface "paid",
+        // never a 409 error.
         setPayStatus("paid");
         setErrorMsg(null);
-        onPaymentCompleted?.(order.id, order.orderNumber);
+        onPaymentCompleted?.(fresh.id, fresh.orderNumber);
         return;
       }
 
       setPayStatus("success");
-      onPaymentCompleted?.(order.id, order.orderNumber);
+      onPaymentCompleted?.(fresh.id, fresh.orderNumber);
 
       return;
     } catch (error) {
@@ -284,8 +332,23 @@ export function BarcodePaymentFlow({
     setPayStatus("qris-loading");
     setErrorMsg(null);
     try {
+      // Decide from a FRESH snapshot: a previous CASH intent or a customer
+      // payment that happened while the cashier sat on another screen must
+      // never be missed (CASH UNPAID in the snapshot is normal — the server
+      // supersedes it; CASH PAID must abort here).
+      const fresh = (await refreshOrder(order.orderNumber)) || order;
+      if (
+        fresh.paymentStatus === "PAID" ||
+        fresh.payments?.some((p) => p.status === "PAID")
+      ) {
+        setPendingPayment(null);
+        setErrorMsg("Pesanan sudah dibayar.");
+        setPayStatus("error");
+        return;
+      }
+
       const result = await paymentService.createKasirQrisPayment(
-        order.orderNumber
+        fresh.orderNumber
       );
       // The kasir QRIS engine now supersedes any stale UNPAID KASIR row and
       // always returns a QRIS intent (pending_existing / qris_created). A
@@ -575,14 +638,14 @@ export function BarcodePaymentFlow({
                       disabled={isSubmitting}
                       className={`flex items-center gap-3 rounded-xl border-2 p-4 transition-colors ${
                         paymentMethod === "QRIS"
-                          ? "border-blue-500 bg-blue-50"
-                          : "border-gray-200 hover:border-blue-300"
+                          ? "border-brand-primary bg-brand-secondary"
+                          : "border-gray-200 hover:border-brand-primary/40"
                       }`}
                     >
                       <QrCode
                         className={`h-8 w-8 flex-shrink-0 ${
                           paymentMethod === "QRIS"
-                            ? "text-blue-600"
+                            ? "text-brand-primary"
                             : "text-gray-500"
                         }`}
                       />
@@ -593,7 +656,7 @@ export function BarcodePaymentFlow({
                         </p>
                       </div>
                       {paymentMethod === "QRIS" && (
-                        <span className="ml-auto text-xs text-blue-600 font-medium">
+                        <span className="ml-auto text-xs text-brand-primary font-medium">
                           Dipilih
                         </span>
                       )}
@@ -692,7 +755,7 @@ export function BarcodePaymentFlow({
 
               {payStatus === "qris-loading" && (
                 <div className="text-center py-4">
-                  <Loader2 className="h-8 w-8 mx-auto animate-spin text-blue-500" />
+                  <Loader2 className="h-8 w-8 mx-auto animate-spin text-brand-primary" />
                   <p className="text-sm text-muted-foreground mt-2">
                     Membuat QRIS...
                   </p>
@@ -895,7 +958,7 @@ export function BarcodePaymentFlow({
               no scanner flash between opening the flow and the detail view. */}
           {scanStatus === "idle" && initialOrderNumber && (
             <div className="text-center py-4">
-              <Loader2 className="h-8 w-8 mx-auto animate-spin text-blue-500" />
+              <Loader2 className="h-8 w-8 mx-auto animate-spin text-brand-primary" />
               <p className="text-sm text-muted-foreground mt-2">
                 Memuat pesanan...
               </p>

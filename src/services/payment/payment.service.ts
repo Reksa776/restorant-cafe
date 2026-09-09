@@ -106,27 +106,40 @@ export class PaymentService {
         );
       }
 
-      // PENDING/PAID online payments are terminal for creating a new one;
-      // an UNPAID KASIR row also blocks a different method for the same
-      // order so an order never ends up with two live payment intents.
-      const existingPayment = await tx.payment.findFirst({
+      // PAID is always terminal — an order can never be paid twice.
+      const paidPayment = await tx.payment.findFirst({
         where: {
           orderId,
-          status: { in: ["PENDING", "PAID"] },
+          status: "PAID",
         },
       });
-      if (existingPayment) {
-        throw new ConflictError(
-          existingPayment.status === "PAID"
-            ? "Order already paid"
-            : "Payment already exists for this order"
-        );
+      if (paidPayment) {
+        throw new ConflictError("Order already paid");
       }
 
       // ------------------------------------------------------------
       // KASIR — no gateway call. Record UNPAID and let a cashier collect.
       // ------------------------------------------------------------
       if (options?.method === "KASIR") {
+        // A live online intent (PENDING/FAILED/EXPIRED QRIS/VA) is superseded
+        // by the cashier's explicit CASH choice. The stale rows are CANCELLED
+        // here — guarded update (only rows still in those states flip, so a
+        // racing webhook can never be overwritten) — and stay as history; the
+        // order mirrors the live KASIR intent as UNPAID. This is what makes
+        // QRIS → Kembali → CASH work without a 409 (the reverse switch,
+        // CASH → QRIS, lives in createKasirQrisPayment).
+        await tx.payment.updateMany({
+          where: {
+            orderId,
+            method: { not: "KASIR" },
+            status: { in: ["PENDING", "FAILED", "EXPIRED"] },
+          },
+          data: { status: "CANCELLED" },
+        });
+        await tx.order.updateMany({
+          where: { id: lockedOrder.id, paymentStatus: { not: "PAID" } },
+          data: { paymentStatus: "UNPAID" },
+        });
         const existingCashier = await tx.payment.findFirst({
           where: {
             orderId,
@@ -946,20 +959,67 @@ export class PaymentService {
 
     // Step 6: Update payment status in transaction
     const updatedPayment = await prisma.$transaction(async (tx) => {
-      const updated = await tx.payment.update({
+      // Webhook race protection (M1): the old QRIS payment may already have
+      // been CANCELLED server-side (e.g. the cashier switched to CASH) while
+      // this callback was in flight. A cancelled row is history — this
+      // webhook must never resurrect it, pay it, or touch the order/other
+      // payments. All further state flips below are guarded updateMany writes
+      // on the row's current status, so a racing writer can never be
+      // overwritten either.
+      const current = await tx.payment.findUnique({
         where: { id: payment.id },
+        select: { status: true, orderId: true },
+      });
+      if (!current || current.status === "CANCELLED") {
+        await tx.paymentTransaction.create({
+          data: {
+            paymentId: payment.id,
+            provider: "ipaymu",
+            type: "webhook",
+            status: "IGNORED_CANCELLED",
+            amount: webhookData.amount,
+            rawData: {
+              ...(payload as Record<string, unknown>),
+              ignoredReason: "PAYMENT_CANCELLED",
+            },
+          },
+        });
+        return null;
+      }
+
+      const paidGuard = { id: payment.id, status: current.status } as const;
+
+      const updated = await tx.payment.updateMany({
+        where: paidGuard,
         data: {
           status: webhookData.status as
             | "PAID"
             | "FAILED"
             | "EXPIRED"
             | "CANCELLED",
-          paidAt: webhookData.status === "PAID" ? new Date() : null,
-        },
-        include: {
-          order: true,
+          ...(webhookData.status === "PAID" ? { paidAt: new Date() } : {}),
         },
       });
+
+      if (updated.count === 0) {
+        // Lost the race against a concurrent writer (e.g. the cashier flow
+        // cancelled this row) — the newer state wins, this webhook is only
+        // recorded as an ignored callback.
+        await tx.paymentTransaction.create({
+          data: {
+            paymentId: payment.id,
+            provider: "ipaymu",
+            type: "webhook",
+            status: "IGNORED_STALE",
+            amount: webhookData.amount,
+            rawData: {
+              ...(payload as Record<string, unknown>),
+              ignoredReason: "STATUS_CHANGED",
+            },
+          },
+        });
+        return null;
+      }
 
       // Record transaction
       await tx.paymentTransaction.create({
@@ -973,10 +1033,12 @@ export class PaymentService {
         },
       });
 
-      // Update order payment status for all terminal states
+      // Mirror onto the order ONLY while the order still reflects THIS
+      // payment's state — a newer live intent (CASH) on a paid order is never
+      // overwritten, and a non-paid order is never dragged backwards.
       if (webhookData.status === "PAID") {
-        await tx.order.update({
-          where: { id: payment.orderId },
+        await tx.order.updateMany({
+          where: { id: payment.orderId, paymentStatus: current.status },
           data: { paymentStatus: "PAID" },
         });
       } else if (
@@ -984,14 +1046,27 @@ export class PaymentService {
         webhookData.status === "EXPIRED" ||
         webhookData.status === "CANCELLED"
       ) {
-        await tx.order.update({
-          where: { id: payment.orderId },
+        await tx.order.updateMany({
+          where: {
+            id: payment.orderId,
+            paymentStatus: current.status,
+          },
           data: { paymentStatus: webhookData.status },
         });
       }
 
-      return updated;
+      // Re-read inside the transaction so the caller gets the final row.
+      return tx.payment.findUnique({
+        where: { id: payment.id },
+        include: { order: true },
+      });
     });
+
+    // The webhook was ignored (cancelled/stale row) — nothing changed, and a
+    // PAID status must never be emitted downstream.
+    if (!updatedPayment) {
+      return payment;
+    }
 
     // Realtime: payment status changed (webhook → paid/failed/expired).
     emitRealtime(

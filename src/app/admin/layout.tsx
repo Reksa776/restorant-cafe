@@ -26,6 +26,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
 import { useUserRole, type StaffRole } from "@/hooks/use-user-role";
+import { AdminBrandingProvider } from "@/hooks/use-admin-branding";
+import { useBranding } from "@/hooks/use-branding";
 import { BranchSelector } from "@/components/admin/branch-selector";
 import {
   AdminRealtimeProvider,
@@ -57,6 +59,23 @@ const navigation: NavItem[] = [
   { name: "Settings", href: "/admin/settings", icon: Settings, roles: ["ADMIN"] },
 ];
 
+/** Brand logo with graceful fallback — same behavior as the customer header. */
+function AdminBrandLogo({ url, alt }: { url?: string | null; alt: string }) {
+  const [broken, setBroken] = useState(false);
+  if (!url || broken) {
+    return <span className="text-xl">🍽️</span>;
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={alt}
+      className="h-7 w-7 rounded object-contain"
+      onError={() => setBroken(true)}
+    />
+  );
+}
+
 /**
  * Sidebar body shared by the desktop sidebar and the mobile drawer.
  * In the mobile drawer, `onNavigate` closes the drawer after a nav item
@@ -65,6 +84,7 @@ const navigation: NavItem[] = [
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { role } = useUserRole();
+  const { branding } = useBranding();
 
   // Role-aware navigation (UI layer). Server-side API guards are the real
   // enforcement — hiding items here is UX only.
@@ -74,9 +94,13 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* Logo */}
-      <div className="flex h-16 items-center justify-center border-b border-gray-200">
-        <span className="text-xl font-bold">🍽️ Restoran Bahagia</span>
+      {/* Logo + site name — from the SAME RestaurantSettings branding as
+          the customer app (fallback: 🍽️ + "Restoran"). */}
+      <div className="flex h-16 items-center justify-center gap-2 border-b border-gray-200 px-3">
+        <AdminBrandLogo url={branding.logoUrl} alt={branding.siteName} />
+        <span className="text-xl font-bold text-brand-primary truncate">
+          {branding.siteName}
+        </span>
       </div>
 
       {/* Navigation */}
@@ -92,7 +116,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
               className={cn(
                 "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                 isActive
-                  ? "bg-gray-100 text-gray-900"
+                  ? "bg-brand-secondary text-brand-primary"
                   : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
               )}
             >
@@ -156,6 +180,19 @@ function RealtimeStatusPill() {
   );
 }
 
+/** Mobile top bar brand: logo + site name from the shared branding. */
+function MobileBrand() {
+  const { branding } = useBranding();
+  return (
+    <span className="flex items-center gap-2 min-w-0">
+      <AdminBrandLogo url={branding.logoUrl} alt={branding.siteName} />
+      <span className="truncate text-lg font-bold text-brand-primary">
+        {branding.siteName}
+      </span>
+    </span>
+  );
+}
+
 export default function AdminLayout({
   children,
 }: {
@@ -183,6 +220,7 @@ export default function AdminLayout({
   }, [sidebarOpen]);
 
   return (
+    <AdminBrandingProvider>
     <AdminRealtimeProvider>
       <div className="flex min-h-screen bg-gray-50">
       {/* Desktop sidebar — unchanged (lg and up) */}
@@ -200,9 +238,7 @@ export default function AdminLayout({
         >
           <Menu className="h-5 w-5" />
         </Button>
-        <span className="truncate text-lg font-bold">
-          🍽️ Restoran Bahagia
-        </span>
+        <MobileBrand />
       </header>
 
       {/* Mobile drawer overlay (< lg) */}
@@ -246,5 +282,6 @@ export default function AdminLayout({
       </div>
       <RealtimeStatusPill />
     </AdminRealtimeProvider>
+    </AdminBrandingProvider>
   );
 }

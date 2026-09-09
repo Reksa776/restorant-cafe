@@ -291,7 +291,7 @@ export default function TablesPage() {
                         orang
                       </p>
                       {table.branch && (
-                        <p className="text-[11px] font-medium text-blue-600">
+                        <p className="text-[11px] font-medium text-brand-primary">
                           Cabang {table.branch.name} ({table.branch.code})
                         </p>
                       )}

@@ -19,6 +19,7 @@ import {
   isAllowedBrandingLogoMime,
   normalizeBrandingColor,
 } from "@/lib/branding";
+import { useBranding } from "@/hooks/use-branding";
 
 // ============================================================
 // Website Branding — Admin Settings
@@ -265,6 +266,10 @@ export default function SettingsPage() {
   });
   const [restaurantName, setRestaurantName] = useState<string | null>(null);
 
+  // Same BrandingProvider context the admin shell renders from — a save
+  // re-themes the whole admin UI instantly (no reload / no rebuild).
+  const { applyBranding } = useBranding();
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadBranding = useCallback(async () => {
@@ -344,6 +349,17 @@ export default function SettingsPage() {
         setSiteName(b.siteName ?? "");
         setLogo(b.logoUrl ? { kind: "saved", url: b.logoUrl } : { kind: "none" });
         setColors({
+          primaryColor: b.primaryColor,
+          secondaryColor: b.secondaryColor,
+          accentColor: b.accentColor,
+        });
+        // Live-apply to the WHOLE admin shell (sidebar, buttons, accents)
+        // through the existing BrandingProvider context — no reload, no
+        // rebuild, no second theme system. Customer pages pick the new
+        // branding up on their next load via their existing sync.
+        applyBranding({
+          siteName: b.siteName,
+          logoUrl: b.logoUrl,
           primaryColor: b.primaryColor,
           secondaryColor: b.secondaryColor,
           accentColor: b.accentColor,
