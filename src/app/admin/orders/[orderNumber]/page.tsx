@@ -127,6 +127,20 @@ export default function AdminOrderByNumberPage({
     }
   );
 
+  // Completion from the payment flow (CASH collect or QRIS poll → PAID). The
+  // server has already confirmed PAID in EVERY success/already-paid path that
+  // invokes this, so the order flips to PAID instantly and the refetch below
+  // reconciles the authoritative copy. Memoized so the payment flow receives a
+  // STABLE prop — the inline `() => loadOrder()` re-created on every render
+  // churns the QRIS poll interval (it recreates handleQrisPaid) and can drop
+  // the single PAID tick.
+  const handlePaymentCompleted = useCallback(() => {
+    setOrder((prev) =>
+      prev ? { ...prev, paymentStatus: "PAID" } : prev
+    );
+    void loadOrder();
+  }, [loadOrder]);
+
   if (loadState === "loading") {
     return (
       <div className="flex items-center justify-center h-64 gap-2 text-muted-foreground">
@@ -317,7 +331,7 @@ export default function AdminOrderByNumberPage({
         open={barcodePaymentOpen}
         onOpenChange={setBarcodePaymentOpen}
         initialOrderNumber={order.orderNumber}
-        onPaymentCompleted={() => loadOrder()}
+        onPaymentCompleted={handlePaymentCompleted}
       />
 
       {/* Payment history + audit */}

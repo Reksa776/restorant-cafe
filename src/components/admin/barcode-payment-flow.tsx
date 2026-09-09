@@ -449,12 +449,14 @@ export function BarcodePaymentFlow({
       paidNotifiedRef.current = true;
       setPendingPayment(paid);
       setPayStatus("success");
-      onPaymentCompleted?.(
-        order?.id || paid.orderId,
-        order?.orderNumber || paid.order.orderNumber
-      );
+      // Authoritative ids come from the POLLED payment itself (getPayment
+      // always includes the order) — never from the possibly-stale internal
+      // order closure, which could be null after a scanner reset. Depending
+      // only on the (now stable) onPaymentCompleted also keeps the polling
+      // interval from tearing down/restarting on every parent render.
+      onPaymentCompleted?.(paid.orderId, paid.order.orderNumber);
     },
-    [onPaymentCompleted, order?.id, order?.orderNumber]
+    [onPaymentCompleted]
   );
 
   useEffect(() => {
