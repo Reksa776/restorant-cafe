@@ -53,7 +53,8 @@ const productInclude = {
  * When `branchId` is provided, products explicitly hidden for that branch
  * (BranchProduct.isAvailable=false) are dropped and returned prices use the
  * branch's priceOverride when set. Products without a BranchProduct row keep
- * the restaurant default (available, base price).
+ * the restaurant default price/availability but are treated as SOLD OUT
+ * (effective stock 0) at that branch.
  */
 async function loadProducts(
   restaurantId: string,
@@ -90,9 +91,10 @@ async function loadProducts(
         ...p,
         // Effective branch price (priceOverride ?? product.price).
         price: bp?.priceOverride != null ? bp.priceOverride : p.price,
-        // Per-branch stock. null = stock not tracked (no branch context or
-        // no BranchProduct row). 0 = sold out (page hides / blocks buying).
-        stock: bp?.stock ?? null,
+        // Per-branch stock. When a branch is resolved, a product WITHOUT a
+        // BranchProduct row counts as stock 0 (SOLD OUT — default stock).
+        // null only when there is NO branch context (legacy unmanaged flow).
+        stock: bp?.stock ?? (branchId ? 0 : null),
       };
     });
 }
@@ -459,7 +461,7 @@ export class RecommendationService {
         return {
           ...p,
           price: bp?.priceOverride != null ? bp.priceOverride : p.price,
-          stock: bp?.stock ?? null,
+          stock: bp?.stock ?? (opts?.branchId ? 0 : null),
         };
       });
   }

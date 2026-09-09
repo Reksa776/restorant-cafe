@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useCart } from "@/hooks/use-cart";
+import { useBranchStock } from "@/hooks/use-branch-stock";
 import { Plus, Minus, Trash2, ArrowLeft, Table2, Pencil } from "lucide-react";
 
 /** Cart item thumbnail with graceful fallback for empty/broken images. */
@@ -32,7 +33,24 @@ export default function CartPage() {
     grandTotal,
     totalItems,
     tableContext,
+    customerBranch,
+    restaurantId,
   } = useCart();
+
+  const branchCode =
+    tableContext?.branchCode ?? customerBranch?.branchCode ?? undefined;
+  const { getStock, isSoldOut, isOverQuantity } = useBranchStock(
+    restaurantId,
+    branchCode
+  );
+
+  let hasStockIssue = false;
+  for (const item of items) {
+    if (isSoldOut(item.productId) || isOverQuantity(item.productId, item.quantity)) {
+      hasStockIssue = true;
+      break;
+    }
+  }
 
   if (items.length === 0) {
     return (
@@ -83,7 +101,12 @@ export default function CartPage() {
 
       {/* Cart Items */}
       <div className="space-y-3">
-        {items.map((item, index) => (
+        {items.map((item, index) => {
+          const stock = getStock(item.productId);
+          const soldOut = isSoldOut(item.productId);
+          const overStock = isOverQuantity(item.productId, item.quantity);
+          const atMax = stock != null && item.quantity >= stock;
+          return (
           <div
             key={`${item.productId}-${index}`}
             className="bg-white rounded-lg border border-gray-200 p-4"
@@ -100,6 +123,16 @@ export default function CartPage() {
                 <p className="text-sm text-gray-500">
                   Rp{item.price.toLocaleString("id-ID")}
                 </p>
+
+                {soldOut ? (
+                  <p className="mt-1 inline-block rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-bold text-gray-500 uppercase tracking-wide">
+                    Habis
+                  </p>
+                ) : overStock ? (
+                  <p className="mt-1 inline-block rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">
+                    Stok tidak mencukupi{stock != null ? ` (tersisa ${stock})` : ""}
+                  </p>
+                ) : null}
 
                 {/* Customization Details */}
                 {item.selections && item.selections.length > 0 && (
@@ -154,7 +187,13 @@ export default function CartPage() {
                 </span>
                 <button
                   onClick={() => updateQuantity(index, item.quantity + 1)}
-                  className="w-7 h-7 rounded-full bg-brand-primary text-brand-primary-foreground flex items-center justify-center hover:bg-brand-primary/90 transition-colors"
+                  disabled={soldOut || atMax}
+                  className="w-7 h-7 rounded-full bg-brand-primary text-brand-primary-foreground flex items-center justify-center hover:bg-brand-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  aria-label={
+                    soldOut
+                      ? `${item.name} sudah habis`
+                      : `Tambah ${item.name}`
+                  }
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
@@ -185,7 +224,8 @@ export default function CartPage() {
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Order Summary */}
@@ -214,6 +254,14 @@ export default function CartPage() {
             </div>
           </div>
       </div>
+
+      {/* Stock issue warning (advisory — server is authoritative) */}
+      {hasStockIssue && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-700">
+          Ada item yang sudah habis atau stoknya tidak mencukupi. Silakan
+          kurangi jumlah item sebelum checkout.
+        </div>
+      )}
 
       {/* Checkout Button */}
       <Link

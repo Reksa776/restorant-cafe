@@ -136,7 +136,11 @@ export async function GET(request: NextRequest) {
             optionGroups: p.optionGroups,
             addons: p.addons,
             isPriceOverride: bp?.priceOverride != null ? true : false,
-            stock: bp?.stock ?? null,
+            // stock > 0 → buyable; stock 0 → SOLD OUT. When a branch is
+            // resolved, a product WITHOUT a BranchProduct row is treated as
+            // out of stock (default stock 0). stock stays null only when
+            // there is NO branch context (legacy unmanaged flow).
+            stock: bp?.stock ?? (branchId ? 0 : null),
           };
         }),
     });

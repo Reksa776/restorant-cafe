@@ -914,6 +914,15 @@ function MenuContent() {
     return () => clearTimeout(timer);
   }, [isHydrated, tableContext, customerBranch, loadMenu]);
 
+  // "Ganti Cabang" — only reachable when NOT ordering from a QR table
+  // (table context must stay the priority). Clears the customer branch
+  // selection and re-opens the selector; picking a new branch reloads the
+  // menu with that branch's stock/price/availability.
+  const handleChangeBranch = useCallback(() => {
+    clearCustomerBranch();
+    router.push("/pilih-cabang");
+  }, [clearCustomerBranch, router]);
+
   // Re-personalize recommendations after login/logout (cookie is sent
   // automatically; the server re-validates the session + restaurant scope).
   useEffect(() => {
@@ -1270,6 +1279,21 @@ function MenuContent() {
           <p className="text-xs text-gray-400 mt-1">
             Pesan langsung dari website
           </p>
+          {customerBranch && !tableContext && (
+            <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-brand-secondary px-3 py-1">
+              <span className="text-[11px] font-semibold text-gray-700">
+                {customerBranch.branchName}
+              </span>
+              <span className="text-gray-300">•</span>
+              <button
+                type="button"
+                onClick={handleChangeBranch}
+                className="text-[11px] font-bold text-brand-primary hover:underline"
+              >
+                Ganti Cabang
+              </button>
+            </div>
+          )}
         </div>
       )}
 

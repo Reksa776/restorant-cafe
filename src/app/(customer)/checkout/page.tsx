@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { useCustomerAuth } from "@/hooks/use-customer-auth";
+import { useBranchStock } from "@/hooks/use-branch-stock";
 import { getErrorMessage } from "@/lib/api-error-handler";
 
 // ============================================================
@@ -101,6 +102,14 @@ export default function CheckoutPage() {
   } = useCart();
 
   const { customer, isHydrated } = useCustomerAuth();
+
+  // Branch scope used everywhere below (order payload + advisory stock lookup).
+  const checkoutBranchCode =
+    tableContext?.branchCode ?? customerBranch?.branchCode ?? undefined;
+  const { getStock, stockLoaded } = useBranchStock(
+    restaurantId,
+    checkoutBranchCode
+  );
 
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
@@ -265,6 +274,29 @@ export default function CheckoutPage() {
       return;
     }
 
+    // Advisory client-side stock gate (the server re-validates and remains
+    // the source of truth). Runs only when a branch scope gave us stock for
+    // this order; legacy no-branch orders skip client checks and rely on the
+    // server, which has no branch to validate either.
+    if (stockLoaded) {
+      const stockFailures: string[] = [];
+      for (const item of items) {
+        const stock = getStock(item.productId);
+        if (stock == null) continue;
+        if (stock <= 0) {
+          stockFailures.push(`${item.name} sudah habis`);
+        } else if (item.quantity > stock) {
+          stockFailures.push(
+            `${item.name}: stok tersisa ${stock}, diminta ${item.quantity}`
+          );
+        }
+      }
+      if (stockFailures.length > 0) {
+        toast.error(`Stok tidak mencukupi: ${stockFailures[0]}`);
+        return;
+      }
+    }
+
     // tableContext hydrates asynchronously from localStorage (refreshing the
     // checkout page), so it may not be available at first render — trust it
     // over the tableId state initialized on mount.
@@ -332,10 +364,7 @@ export default function CheckoutPage() {
         restaurantId,
         // Branch scope: QR table wins; otherwise the branch the customer
         // picked (or explicitly left unset for legacy no-branch flows).
-        branchCode:
-          tableContext?.branchCode ??
-          customerBranch?.branchCode ??
-          undefined,
+        branchCode: checkoutBranchCode,
         tableId: tableContext?.tableId || (orderType === "DINE_IN" ? tableId : undefined),
         visitorCount: tableContext?.visitorCount || undefined,
         notes: notes.trim() || undefined,
@@ -813,6 +842,25 @@ export default function CheckoutPage() {
                     Catatan: {item.notes}
                   </p>
                 )}
+                {(() => {
+                  const stock = getStock(item.productId);
+                  if (stock == null) return null;
+                  if (stock <= 0) {
+                    return (
+                      <p className="pl-2 text-[11px] font-semibold text-red-600">
+                        Produk sudah habis — tidak dapat dibeli
+                      </p>
+                    );
+                  }
+                  if (item.quantity > stock) {
+                    return (
+                      <p className="pl-2 text-[11px] font-semibold text-amber-600">
+                        Stok tidak mencukupi (tersisa {stock})
+                      </p>
+                    );
+                  }
+                  return null;
+                })()}
               </div>
             ))}
           </div>

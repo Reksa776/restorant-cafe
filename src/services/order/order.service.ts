@@ -198,9 +198,10 @@ export class OrderService {
     // Stock validation: aggregate quantities per product across all line
     // items (same product may appear multiple times with different
     // customizations) and verify against BranchProduct.stock.
-    // A product WITHOUT a BranchProduct row is stock-unmanaged (legacy
-    // "available by default") and remains purchasable; an existing row with
-    // stock 0 is strictly sold out.
+    // Only enforced when a branch is active. Under a resolved branch a
+    // product WITHOUT a BranchProduct row is treated as SOLD OUT (default
+    // stock 0 after the stock migration), so a branch can only sell
+    // products the staff explicitly stocked (> 0).
     if (branchId) {
       const qtyByProduct = new Map<string, number>();
       for (const item of input.items) {
@@ -219,7 +220,12 @@ export class OrderService {
       const stockMap = new Map(branchStockRows.map((r) => [r.productId, r.stock]));
       for (const [pid, qty] of qtyByProduct) {
         const stock = stockMap.get(pid);
-        if (stock === undefined) continue; // no stock row = unmanaged
+        if (stock === undefined) {
+          const p = productMap.get(pid);
+          throw new ValidationError(
+            `Produk ${p?.name || pid} sudah habis`
+          );
+        }
         if (stock <= 0) {
           const p = productMap.get(pid);
           throw new ValidationError(
@@ -484,10 +490,10 @@ export class OrderService {
 
     // Stock validation: aggregate quantities per product across all line
     // items and verify against BranchProduct.stock. Only enforced when
-    // the branch is known (QR table context provides it). A product
-    // WITHOUT a BranchProduct row is stock-unmanaged (legacy default,
-    // available) and stays purchasable; an existing row with stock 0 is
-    // strictly sold out.
+    // the branch is known (QR table context provides it). Under a resolved
+    // branch a product WITHOUT a BranchProduct row is treated as SOLD OUT
+    // (default stock 0 after the stock migration) — a branch can only sell
+    // products the staff explicitly stocked (> 0).
     if (resolvedBranchId) {
       const qtyByProduct = new Map<string, number>();
       for (const item of input.items) {
@@ -506,7 +512,12 @@ export class OrderService {
       const stockMap = new Map(branchStockRows.map((r) => [r.productId, r.stock]));
       for (const [pid, qty] of qtyByProduct) {
         const stock = stockMap.get(pid);
-        if (stock === undefined) continue; // no stock row = unmanaged
+        if (stock === undefined) {
+          const p = productMap.get(pid);
+          throw new ValidationError(
+            `Produk ${p?.name || pid} sudah habis`
+          );
+        }
         if (stock <= 0) {
           const p = productMap.get(pid);
           throw new ValidationError(

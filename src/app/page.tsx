@@ -2,22 +2,26 @@
 
 import { useEffect, useReducer, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Building2, Check, Loader2, MapPin } from "lucide-react";
 import api from "@/lib/axios";
 import { CartProvider, useCart } from "@/hooks/use-cart";
 
 // ============================================================
-// "/" — client-side routing (replaces the old hardcoded 307).
+// "/" — client-side routing + branch control point (replaces the
+// old hardcoded 307).
 //
-// Decision tree (after cart hydration so localStorage is known):
-//   1. QR table context present        → /menu   (table wins always).
-//   2. Saved customer branch context   → validate server-side via
-//      /public/branches (exists + active). Valid → /menu.
-//      Stale/invalid                   → clear → /pilih-cabang.
-//   3. No context at all               → /pilih-cabang.
+// The root is the ONLY place a customer can consciously switch the
+// selected branch, so when a saved branch context exists it is shown
+// here (never auto-redirected past the switch): the customer either
+// continues to the menu or taps "Ganti Cabang" to re-open the
+// selector. Auto-redirect only happens for:
+//   1. QR table context present → /menu (table wins always).
+//   2. No saved branch context  → /pilih-cabang (first-time ask).
+//   3. Saved context failed server validation → clear → /pilih-cabang.
 //
-// The validation is only a redirect decider — authorization for orders
-// still happens server-side on the order endpoints themselves.
+// The validation is only a redirect/display decider — authorization
+// for orders still happens server-side on the order endpoints
+// themselves.
 // ============================================================
 
 function HomeRedirect() {
@@ -30,9 +34,11 @@ function HomeRedirect() {
   } = useCart();
   const [failed, retry] = useReducer((x: number) => x + 1, 0);
   const [error, setError] = useState(false);
+  const [branchValid, setBranchValid] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!isHydrated) return;
+    setBranchValid(null);
 
     // 1. QR table context wins unconditionally (the /t lookup already
     //    validated the restaurant + branch server-side).
@@ -41,13 +47,15 @@ function HomeRedirect() {
       return;
     }
 
-    // 3. No saved branch context → ask the customer.
+    // No saved branch context → ask the customer.
     if (!customerBranch) {
       router.replace("/pilih-cabang");
       return;
     }
 
-    // 2. Validate the saved branch context server-side.
+    // Validate the saved branch context server-side; when valid we KEEP
+    // the customer here (landing with a switch option) instead of
+    // auto-redirecting, so the branch can be changed at any time.
     let cancelled = false;
     (async () => {
       try {
@@ -67,7 +75,7 @@ function HomeRedirect() {
             b.code === customerBranch.branchCode
         );
         if (valid) {
-          router.replace("/menu");
+          setBranchValid(true);
         } else {
           clearCustomerBranch();
           router.replace("/pilih-cabang");
@@ -84,6 +92,66 @@ function HomeRedirect() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHydrated, tableContext, customerBranch, failed]);
+
+  const handleChangeBranch = () => {
+    clearCustomerBranch();
+    router.push("/pilih-cabang");
+  };
+
+  // Valid saved branch — show the branch landing with an explicit switch.
+  if (branchValid === true && customerBranch) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center px-4">
+        <div className="w-full max-w-sm text-center">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-brand-secondary mb-4">
+            <Building2 className="h-6 w-6 text-brand-primary" />
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-50 text-green-700 text-xs font-bold px-3 py-1 mb-3">
+            <Check className="h-3.5 w-3.5" />
+            Cabang terpilih
+          </span>
+          <h1 className="text-xl sm:text-2xl font-bold text-gray-900 break-words">
+            {customerBranch.branchName}
+          </h1>
+          <p className="text-xs font-medium text-gray-400 mt-0.5">
+            {customerBranch.branchCode}
+          </p>
+          <p className="text-sm text-gray-500 mt-3">
+            Anda akan melihat menu, stok, dan harga untuk cabang ini.
+          </p>
+
+          <div className="mt-6 space-y-2.5">
+            <button
+              type="button"
+              onClick={() => router.push("/menu")}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary text-brand-primary-foreground py-3 font-medium hover:bg-brand-primary/90 transition-colors"
+            >
+              <MapPin className="h-4 w-4" />
+              Lanjut ke Menu
+            </button>
+            <button
+              type="button"
+              onClick={handleChangeBranch}
+              className="w-full inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              <Building2 className="h-4 w-4" />
+              Ganti Cabang
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (branchValid === false) {
+    // Should not render (we redirect), but keep a safe fallback.
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4">
+        <Loader2 className="h-6 w-6 animate-spin mb-2 text-gray-400" />
+        <p className="text-sm text-gray-500">Mengalihkan…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-4">
