@@ -6,7 +6,7 @@ import { orderService, type Order } from "@/services/order.service";
 import { paymentService } from "@/services/payment.service";
 import { OrderScanner } from "@/components/admin/order-scanner";
 import { toast } from "sonner";
-import { Loader2, AlertCircle, RefreshCw } from "lucide-react";
+import { Loader2, AlertCircle, RefreshCw, Plus } from "lucide-react";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { useBranchContext } from "@/hooks/use-branch-context";
@@ -289,6 +289,15 @@ export default function OrdersPage() {
             onScan={(num) => router.push(`/admin/orders/${num}`)}
             triggerLabel="Scan QR Pesanan"
           />
+          <Button
+            variant="default"
+            size="sm"
+            className="w-full sm:w-auto"
+            onClick={() => router.push("/admin/orders/new")}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Buat Pesanan
+          </Button>
           <Button
             variant="outline"
             size="sm"

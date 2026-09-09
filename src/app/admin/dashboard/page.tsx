@@ -18,6 +18,7 @@ import {
   CreditCard,
   AlertCircle,
   RefreshCw,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -123,10 +124,21 @@ export default function DashboardPage() {
           <h1 className="text-3xl font-bold">Dashboard</h1>
           <p className="text-gray-500">Selamat datang di admin dashboard</p>
         </div>
-        <OrderScanner
-          onScan={(num) => router.push(`/admin/orders/${num}`)}
-          triggerLabel="Scan QR Pesanan"
-        />
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <OrderScanner
+            onScan={(num) => router.push(`/admin/orders/${num}`)}
+            triggerLabel="Scan QR Pesanan"
+          />
+          <Button
+            variant="default"
+            size="sm"
+            className="w-full sm:w-auto"
+            onClick={() => router.push("/admin/orders/new")}
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Buat Pesanan
+          </Button>
+        </div>
       </div>
 
       {/* Stats Grid */}

@@ -47,4 +47,16 @@ export const customerService = {
     const response = await api.put(`/customers/${id}`, data);
     return response.data.data;
   },
+
+  /**
+   * Find-or-create a customer for the kasir manual order flow (ADMIN /
+   * CASHIER). The restaurant is derived server-side from the session.
+   */
+  async findOrCreateCustomer(data: {
+    name: string;
+    phone?: string;
+  }): Promise<Customer> {
+    const response = await api.post("/customers", data);
+    return response.data.data;
+  },
 };

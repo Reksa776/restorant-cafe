@@ -164,6 +164,19 @@ export class OrderService {
         isActive: true,
         isAvailable: true,
       },
+      include: {
+        optionGroups: {
+          where: { isActive: true },
+          include: {
+            options: { where: { isActive: true } },
+          },
+          orderBy: { sortOrder: "asc" },
+        },
+        addons: {
+          where: { isActive: true },
+          orderBy: { sortOrder: "asc" },
+        },
+      },
     });
 
     if (products.length !== uniqueProductIds.length) {
@@ -241,19 +254,124 @@ export class OrderService {
       }
     }
 
-    // Calculate prices (always from database, never from input)
+    // Calculate prices (always from database, never from input). Per-item
+    // variant selections (option groups), addons and notes are validated
+    // server-side and the unit price is recomputed from DB prices — the
+    // client can never influence the amount (mirrors createCustomerOrder so
+    // kasir manual orders support the same customizations as the website).
     let subtotal = 0;
     const orderItems = input.items.map((item) => {
       const product = productMap.get(item.productId)!;
-      const unitPrice = Number(product.price);
+
+      // Validate + price variant selections (option groups).
+      let selectionPriceAdj = 0;
+      const validatedSelections: Array<{
+        groupId: string;
+        groupName: string;
+        optionId: string;
+        optionName: string;
+        priceAdjustment: number;
+      }> = [];
+      if (item.selections && item.selections.length > 0) {
+        for (const selection of item.selections) {
+          const group = product.optionGroups.find(
+            (g) => g.id === selection.groupId
+          );
+          if (!group) {
+            throw new ValidationError(
+              `Option group tidak valid untuk produk ${product.name}`
+            );
+          }
+          const option = group.options.find((o) => o.id === selection.optionId);
+          if (!option) {
+            throw new ValidationError(
+              `Option tidak valid: ${selection.optionName}`
+            );
+          }
+          const priceAdj = Number(option.priceAdjustment);
+          selectionPriceAdj += priceAdj;
+          validatedSelections.push({
+            groupId: group.id,
+            groupName: group.name,
+            optionId: option.id,
+            optionName: option.name,
+            priceAdjustment: priceAdj,
+          });
+        }
+
+        // Required groups, minSelect, maxSelect must be satisfied.
+        for (const group of product.optionGroups) {
+          const groupSelections = validatedSelections.filter(
+            (s) => s.groupId === group.id
+          );
+          const count = groupSelections.length;
+          if (group.isRequired && count < group.minSelect) {
+            throw new ValidationError(
+              `Wajib memilih minimal ${group.minSelect} dari ${group.name} untuk ${product.name}`
+            );
+          }
+          if (count > group.maxSelect) {
+            throw new ValidationError(
+              `Maksimal memilih ${group.maxSelect} dari ${group.name} untuk ${product.name}`
+            );
+          }
+        }
+      } else {
+        // Required groups that weren't provided are rejected.
+        for (const group of product.optionGroups) {
+          if (group.isRequired && group.minSelect > 0 && group.options.length > 0) {
+            throw new ValidationError(
+              `Wajib memilih ${group.name} untuk ${product.name}`
+            );
+          }
+        }
+      }
+
+      // Validate + price addons.
+      let addonPrice = 0;
+      const validatedAddons: Array<{
+        addonId: string;
+        name: string;
+        price: number;
+        quantity: number;
+      }> = [];
+      if (item.addons && item.addons.length > 0) {
+        for (const addon of item.addons) {
+          const dbAddon = product.addons.find((a) => a.id === addon.addonId);
+          if (!dbAddon) {
+            throw new ValidationError(`Addon tidak valid: ${addon.name}`);
+          }
+          const addonPriceTotal = Number(dbAddon.price) * addon.quantity;
+          addonPrice += addonPriceTotal;
+          validatedAddons.push({
+            addonId: dbAddon.id,
+            name: dbAddon.name,
+            price: Number(dbAddon.price),
+            quantity: addon.quantity,
+          });
+        }
+      }
+
+      const unitPrice =
+        Number(product.price) + selectionPriceAdj + addonPrice;
       const totalPrice = unitPrice * item.quantity;
       subtotal += totalPrice;
+
+      const customizations = {
+        productName: product.name,
+        basePrice: Number(product.price),
+        selections: validatedSelections,
+        addons: validatedAddons,
+        notes: item.notes || null,
+      };
 
       return {
         productId: item.productId,
         quantity: item.quantity,
         unitPrice,
         totalPrice,
+        notes: item.notes || null,
+        customizations: JSON.stringify(customizations),
       };
     });
 

@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState, useCallback, useMemo, useRef } from "rea
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCart } from "@/hooks/use-cart";
 import Link from "next/link";
-import { Plus, Minus, ShoppingCart, UtensilsCrossed, X } from "lucide-react";
+import { Plus, Minus, Search, ShoppingCart, UtensilsCrossed, X } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -532,6 +532,37 @@ function ProductCardSkeleton() {
 }
 
 // ============================================================
+// No Results (active filters matched nothing)
+// ============================================================
+
+function NoResults({
+  hasFilters,
+  onReset,
+}: {
+  hasFilters: boolean;
+  onReset: () => void;
+}) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-center">
+      <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mb-3">
+        <Search className="h-6 w-6 text-gray-300" />
+      </div>
+      <p className="text-gray-500 text-sm font-medium">
+        Tidak ada produk yang cocok
+      </p>
+      {hasFilters && (
+        <button
+          onClick={onReset}
+          className="mt-3 text-xs font-semibold text-brand-primary hover:underline"
+        >
+          Reset Filter
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // Product Image (with broken-image fallback)
 // ============================================================
 
@@ -750,6 +781,18 @@ function MenuContent() {
   >("popular");
   // F4 — "🔥 Terlaris" (real sales from the server-side aggregation).
   const [bestSellers, setBestSellers] = useState<Product[]>([]);
+
+  // F5 — menu filtering (search, category, Terlaris/Rekomendasi quick views,
+  // Tersedia / Sold Out). All filters are applied CLIENT-SIDE over the
+  // already branch-scoped menu data — the server (branch → BranchProduct →
+  // availability → stock) decides what this branch may sell in the first
+  // place, so filtering never leaks another branch's products.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeCategoryId, setActiveCategoryId] = useState<string>("all");
+  const [quickView, setQuickView] = useState<"all" | "best" | "recommended">("all");
+  const [availabilityFilter, setAvailabilityFilter] = useState<
+    "all" | "available" | "soldout"
+  >("all");
 
   const searchParams = useSearchParams();
 
@@ -1195,6 +1238,33 @@ function MenuContent() {
   // Group products by category, preserving the API category order.
   // Sections with zero products are skipped entirely; products without a
   // category fall back to a "Lainnya" section instead of crashing.
+  /**
+   * Client-side filter predicate. Applied over the branch-scoped product
+   * list: search text, category chip, and Tersedia / Sold Out toggle.
+   */
+  const matchesFilters = useCallback(
+    (p: Product) => {
+      const q = searchQuery.trim().toLowerCase();
+      if (q) {
+        const hay = `${p.name} ${p.description || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (activeCategoryId !== "all" && p.category?.id !== activeCategoryId) {
+        return false;
+      }
+      if (availabilityFilter === "available" && isSoldOut(p)) return false;
+      if (availabilityFilter === "soldout" && !isSoldOut(p)) return false;
+      return true;
+    },
+    [searchQuery, activeCategoryId, availabilityFilter]
+  );
+
+  const hasActiveFilters =
+    searchQuery.trim() !== "" ||
+    activeCategoryId !== "all" ||
+    quickView !== "all" ||
+    availabilityFilter !== "all";
+
   const sections = useMemo(() => {
     const list: { id: string; name: string; products: Product[] }[] = [];
     const indexById = new Map<string, number>();
@@ -1256,6 +1326,31 @@ function MenuContent() {
     0
   );
 
+  // Filtered sections: the marketing sections (Rekomendasi / Terlaris) stay
+  // visible only in the default "Semua" view without an active search; the
+  // category sections always respect search/category/availability.
+  const recVisible =
+    quickView === "all" && searchQuery.trim() === ""
+      ? recommended.filter(matchesFilters)
+      : [];
+  const bestVisible =
+    quickView === "all" && searchQuery.trim() === ""
+      ? bestSellers.filter(matchesFilters)
+      : [];
+  const quickProducts =
+    quickView === "best"
+      ? bestSellers.filter(matchesFilters)
+      : quickView === "recommended"
+        ? recommended.filter(matchesFilters)
+        : [];
+
+  const resetFilters = () => {
+    setSearchQuery("");
+    setActiveCategoryId("all");
+    setQuickView("all");
+    setAvailabilityFilter("all");
+  };
+
   return (
     <div>
       {/* Restaurant Header — website branding (logo + site name) */}
@@ -1297,6 +1392,124 @@ function MenuContent() {
         </div>
       )}
 
+      {/* F5 — Filter bar: search, category, quick views (Rekomendasi /
+          Terlaris), Tersedia / Sold Out. Filtering stays client-side over the
+          branch-scoped menu; the server decides availability per branch. */}
+      <div className="space-y-2.5">
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Cari produk..."
+            className="w-full border border-gray-200 rounded-full pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent bg-white"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              aria-label="Bersihkan pencarian"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Quick views + availability */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
+          <button
+            onClick={() => setQuickView("all")}
+            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
+              quickView === "all"
+                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
+            }`}
+          >
+            Semua
+          </button>
+          <button
+            onClick={() => setQuickView("recommended")}
+            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
+              quickView === "recommended"
+                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
+            }`}
+          >
+            ⭐ Rekomendasi
+          </button>
+          <button
+            onClick={() => setQuickView("best")}
+            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
+              quickView === "best"
+                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
+            }`}
+          >
+            🔥 Terlaris
+          </button>
+          <span className="w-px h-5 bg-gray-200 flex-shrink-0" />
+          <button
+            onClick={() => setAvailabilityFilter("all")}
+            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
+              availabilityFilter === "all"
+                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
+            }`}
+          >
+            Tersedia &amp; Habis
+          </button>
+          <button
+            onClick={() => setAvailabilityFilter("available")}
+            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
+              availabilityFilter === "available"
+                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
+            }`}
+          >
+            Tersedia
+          </button>
+          <button
+            onClick={() => setAvailabilityFilter("soldout")}
+            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
+              availabilityFilter === "soldout"
+                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
+            }`}
+          >
+            Habis
+          </button>
+        </div>
+
+        {/* Category chips */}
+        <div className="flex gap-2 overflow-x-auto pb-0.5">
+          <button
+            onClick={() => setActiveCategoryId("all")}
+            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors ${
+              activeCategoryId === "all"
+                ? "bg-gray-900 text-white border-gray-900"
+                : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
+            }`}
+          >
+            Semua Kategori
+          </button>
+          {categories.map((cat) => (
+            <button
+              key={cat.id}
+              onClick={() => setActiveCategoryId(cat.id)}
+              className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors ${
+                activeCategoryId === cat.id
+                  ? "bg-gray-900 text-white border-gray-900"
+                  : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
+              }`}
+            >
+              {cat.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Promo — F3: tenant-scoped promos; claim requires login. */}
       {restaurant && (
         <PromoSection
@@ -1308,8 +1521,9 @@ function MenuContent() {
       )}
 
       {/* Rekomendasi — F4: personalized (login) or popular products,
-          rendered with the same ProductCard as the category sections. */}
-      {recommended.length > 0 && (
+          rendered with the same ProductCard as the category sections. Hidden
+          while a search or a quick view (Terlaris/Rekomendasi) is active. */}
+      {recVisible.length > 0 && (
         <section aria-label="Rekomendasi">
           <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-3 sm:mb-4 flex items-center gap-1.5">
             <span aria-hidden>⭐</span>
@@ -1318,7 +1532,7 @@ function MenuContent() {
               : "Produk Populer"}
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 mb-8 sm:mb-10">
-            {recommended.map((product) => (
+            {recVisible.map((product) => (
               <ProductCard
                 key={product.id}
                 product={product}
@@ -1338,15 +1552,16 @@ function MenuContent() {
       )}
 
       {/* Terlaris — F4: real sales (PAID orders), separate section, placed
-          right after Rekomendasi and before the category sections. */}
-      {bestSellers.length > 0 && (
+          right after Rekomendasi and before the category sections. Hidden
+          while a search or a quick view is active. */}
+      {bestVisible.length > 0 && (
         <section aria-label="Terlaris">
           <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-3 sm:mb-4 flex items-center gap-1.5">
             <span aria-hidden>🔥</span>
             Terlaris
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 mb-8 sm:mb-10">
-            {bestSellers.map((product) => (
+            {bestVisible.map((product) => (
               <ProductCard
                 key={product.id}
                 product={product}
@@ -1365,8 +1580,40 @@ function MenuContent() {
         </section>
       )}
 
-      {/* Products grouped by category */}
-      {products.length === 0 ? (
+      {/* Products — quick view (Terlaris / Rekomendasi) or category sections */}
+      {quickView !== "all" ? (
+        quickProducts.length === 0 ? (
+          <NoResults hasFilters={hasActiveFilters} onReset={resetFilters} />
+        ) : (
+          <section aria-label={quickView === "best" ? "Terlaris" : "Rekomendasi"}>
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-3 sm:mb-4 flex items-center gap-1.5">
+              <span aria-hidden>{quickView === "best" ? "🔥" : "⭐"}</span>
+              {quickView === "best" ? "Terlaris" : "Rekomendasi"}
+            </h2>
+            <div
+              className={`grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4 ${
+                totalCartItems > 0 ? "pb-24" : "pb-6"
+              }`}
+            >
+              {quickProducts.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  quantity={getItemQuantity(product.id)}
+                  onAdd={() => handleAdd(product)}
+                  onCustomize={() => {
+                    setEditingCartItemIndex(null);
+                    setCustomizingProduct(product);
+                  }}
+                  onEdit={() => handleEditFromMenu(product)}
+                  onIncrease={() => handleIncrease(product)}
+                  onDecrease={() => handleDecrease(product)}
+                />
+              ))}
+            </div>
+          </section>
+        )
+      ) : products.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mb-3">
             <UtensilsCrossed className="h-6 w-6 text-gray-300" />
@@ -1375,34 +1622,40 @@ function MenuContent() {
             Menu belum tersedia
           </p>
         </div>
-      ) : (
+      ) : sections.some((s) => s.products.some(matchesFilters)) ? (
         <div
           className={`flex flex-col gap-8 sm:gap-10 ${
             totalCartItems > 0 ? "pb-24" : "pb-6"
           }`}
         >
-          {sections.map((section) => (
-            <section key={section.id} aria-label={section.name}>
-              <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-3 sm:mb-4">
-                {section.name}
-              </h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-                {section.products.map((product) => (
-                  <ProductCard
-                    key={product.id}
-                    product={product}
-                    quantity={getItemQuantity(product.id)}
-                    onAdd={() => handleAdd(product)}
-                    onCustomize={() => { setEditingCartItemIndex(null); setCustomizingProduct(product); }}
-                    onEdit={() => handleEditFromMenu(product)}
-                    onIncrease={() => handleIncrease(product)}
-                    onDecrease={() => handleDecrease(product)}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+          {sections.map((section) => {
+            const visible = section.products.filter(matchesFilters);
+            if (visible.length === 0) return null;
+            return (
+              <section key={section.id} aria-label={section.name}>
+                <h2 className="text-lg sm:text-xl font-bold text-gray-900 mb-3 sm:mb-4">
+                  {section.name}
+                </h2>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
+                  {visible.map((product) => (
+                    <ProductCard
+                      key={product.id}
+                      product={product}
+                      quantity={getItemQuantity(product.id)}
+                      onAdd={() => handleAdd(product)}
+                      onCustomize={() => { setEditingCartItemIndex(null); setCustomizingProduct(product); }}
+                      onEdit={() => handleEditFromMenu(product)}
+                      onIncrease={() => handleIncrease(product)}
+                      onDecrease={() => handleDecrease(product)}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
         </div>
+      ) : (
+        <NoResults hasFilters={hasActiveFilters} onReset={resetFilters} />
       )}
 
       {/* Floating Cart Bar */}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { paymentService, type Payment } from "@/services/payment.service";
-import { ExternalLink, Banknote, Loader2, RefreshCw, AlertCircle } from "lucide-react";
+import { ExternalLink, Banknote, Loader2, RefreshCw, AlertCircle, QrCode } from "lucide-react";
 import { toast } from "sonner";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
@@ -98,33 +99,10 @@ export default function PaymentsPage() {
     }
   };
 
-  // Repayment: create/reuse QRIS payment for eligible FAILED/EXPIRED
-  // (and stale/expired PENDING) QRIS payments from the Payment Dashboard.
-  const handleRepayment = async (payment: Payment) => {
-    setMarkingId(payment.id);
-    try {
-      const result = await paymentService.createKasirQrisPayment(
-        payment.order.orderNumber
-      );
-      if (result.kind === "kasir_existing") {
-        toast.info(
-          "Pembayaran kasir sudah tercatat. Silakan tandai sebagai lunas."
-        );
-        await handleMarkPaid(result.payment);
-      } else {
-        toast.success("QRIS baru berhasil dibuat untuk pembayaran ulang.");
-        await loadPayments(true);
-      }
-    } catch (error) {
-      console.error("Failed to create repayment payment:", error);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const msg = (error as any)?.response?.data?.message;
-      toast.error(msg || "Gagal membuat pembayaran ulang");
-    } finally {
-      setMarkingId(null);
-    }
-  };
-
+  // Repayment: the Payment Dashboard's "Bayar" / "Repayment" actions now
+  // navigate to the dedicated QRIS page (/admin/payments/[orderNumber]/qris)
+  // which creates or REUSES the QRIS payment and shows the QR with polling.
+  // No payment is created from this list — no duplicate intents from here.
   return (
     <div className="space-y-6">
       <div>
@@ -212,7 +190,29 @@ export default function PaymentsPage() {
                     <p className="font-medium whitespace-nowrap">
                       Rp{Number(payment.amount).toLocaleString("id-ID")}
                     </p>
-                    {payment.paymentUrl &&
+                    {/* QRIS payments (PENDING / FAILED / EXPIRED) open the
+                        dedicated QRIS repayment page — it reuses the existing
+                        createKasirQrisPayment engine (reuse PENDING, retry
+                        FAILED/EXPIRED, never duplicate PAID). */}
+                    {payment.method === "QRIS" &&
+                      payment.status !== "PAID" &&
+                      payment.status !== "UNPAID" && (
+                        <Link
+                          href={`/admin/payments/${payment.order.orderNumber}/qris`}
+                        >
+                          <Button variant="outline" size="sm">
+                            {payment.status === "PENDING" ? (
+                              <QrCode className="h-4 w-4 mr-1" />
+                            ) : (
+                              <RefreshCw className="h-4 w-4 mr-1" />
+                            )}
+                            {payment.status === "PENDING" ? "Bayar" : "Repayment"}
+                          </Button>
+                        </Link>
+                      )}
+                    {/* Legacy VA payments keep the external gateway redirect. */}
+                    {payment.method !== "QRIS" &&
+                      payment.paymentUrl &&
                       payment.status !== "PAID" &&
                       payment.status !== "FAILED" && (
                         <Button
@@ -242,38 +242,7 @@ export default function PaymentsPage() {
                           Tandai Dibayar
                         </Button>
                       )}
-                    {payment.status === "FAILED" && payment.method === "QRIS" && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="border-red-300 text-red-600 hover:bg-red-50"
-                        disabled={markingId === payment.id}
-                        onClick={() => handleRepayment(payment)}
-                      >
-                        {markingId === payment.id ? (
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-4 w-4 mr-1" />
-                        )}
-                        Repayment
-                      </Button>
-                    )}
-                    {payment.status === "EXPIRED" && payment.method === "QRIS" && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="border-orange-300 text-orange-600 hover:bg-orange-50"
-                        disabled={markingId === payment.id}
-                        onClick={() => handleRepayment(payment)}
-                      >
-                        {markingId === payment.id ? (
-                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                        ) : (
-                          <RefreshCw className="h-4 w-4 mr-1" />
-                        )}
-                        Repayment
-                      </Button>
-                    )}
+
                   </div>
                 </div>
               ))}
