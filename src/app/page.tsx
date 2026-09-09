@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Building2, Check, Loader2, MapPin } from "lucide-react";
 import api from "@/lib/axios";
 import { CartProvider, useCart } from "@/hooks/use-cart";
+import { BrandingProvider, useBranding } from "@/hooks/use-branding";
 
 // ============================================================
 // "/" — client-side routing + branch control point (replaces the
@@ -32,6 +33,7 @@ function HomeRedirect() {
     customerBranch,
     clearCustomerBranch,
   } = useCart();
+  const { applyBranding } = useBranding();
   const [failed, retry] = useReducer((x: number) => x + 1, 0);
   const [error, setError] = useState(false);
   const [branchValid, setBranchValid] = useState<boolean | null>(null);
@@ -63,6 +65,18 @@ function HomeRedirect() {
           params: { restaurantId: customerBranch.restaurantId },
         });
         if (cancelled) return;
+        // Apply the restaurant's branding so the landing view (and the
+        // /pilih-cabang → /menu chain) is already on-theme.
+        const branding = res.data?.data?.restaurant?.branding;
+        if (branding) {
+          applyBranding({
+            siteName: branding.siteName,
+            logoUrl: branding.logoUrl,
+            primaryColor: branding.primaryColor,
+            secondaryColor: branding.secondaryColor,
+            accentColor: branding.accentColor,
+          });
+        }
         const list: {
           id: string;
           code: string;
@@ -184,7 +198,9 @@ function HomeRedirect() {
 export default function HomePage() {
   return (
     <CartProvider>
-      <HomeRedirect />
+      <BrandingProvider>
+        <HomeRedirect />
+      </BrandingProvider>
     </CartProvider>
   );
 }

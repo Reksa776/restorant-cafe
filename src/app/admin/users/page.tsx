@@ -160,10 +160,16 @@ export default function UsersPage() {
   const assignmentLabel = (user: StaffUser) => {
     const ids = branchAssignments[user.id];
     if (!ids || ids.length === 0) return "Semua Cabang";
+    // NEVER render a database id in the UI: when the branch row is missing
+    // (e.g. the user was assigned to a branch that was later deleted), fall
+    // back to the branch code if available, else a generic label.
     return ids
-      .map(
-        (id) => branches.find((b) => b.id === id)?.name ?? id.slice(0, 8)
-      )
+      .map((id) => {
+        const branch = branches.find((b) => b.id === id);
+        if (branch?.name) return branch.name;
+        if (branch?.code) return branch.code;
+        return "Cabang tidak ditemukan";
+      })
       .join(", ");
   };
 

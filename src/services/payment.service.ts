@@ -45,6 +45,12 @@ export interface Payment {
     orderNumber: string;
     grandTotal: string;
   };
+  /** Branch name/code for "Semua Cabang" views — the database id is never rendered. */
+  branch?: {
+    id: string;
+    name: string;
+    code: string;
+  } | null;
   transactions?: PaymentTransaction[];
 }
 

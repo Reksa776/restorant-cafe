@@ -1087,6 +1087,11 @@ export class OrderService {
         include: {
           customer: true,
           table: true,
+          // Branch name/code so the UI can label orders when the admin views
+          // "Semua Cabang" — never the raw database id.
+          branch: {
+            select: { id: true, name: true, code: true },
+          },
           items: {
             include: {
               product: true,
@@ -1143,6 +1148,9 @@ export class OrderService {
       include: {
         customer: true,
         table: true,
+        branch: {
+          select: { id: true, name: true, code: true },
+        },
         restaurant: {
           select: {
             name: true,
@@ -1202,6 +1210,9 @@ export class OrderService {
       include: {
         customer: true,
         table: true,
+        branch: {
+          select: { id: true, name: true, code: true },
+        },
         restaurant: {
           select: {
             name: true,

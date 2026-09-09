@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { resolveBranding } from "@/services/branding/branding.service";
 
 /**
  * GET /api/public/branches[?restaurantId=xxx]
@@ -25,7 +26,19 @@ export async function GET(request: NextRequest) {
     if (restaurantId) {
       restaurant = await prisma.restaurant.findFirst({
         where: { id: restaurantId, isActive: true },
-        select: { id: true },
+        select: {
+          id: true,
+          name: true,
+          settings: {
+            select: {
+              siteName: true,
+              logoUrl: true,
+              primaryColor: true,
+              secondaryColor: true,
+              accentColor: true,
+            },
+          },
+        },
       });
       if (!restaurant) {
         throw new AppError("Restaurant not found", 404, "NOT_FOUND");
@@ -33,7 +46,19 @@ export async function GET(request: NextRequest) {
     } else {
       restaurant = await prisma.restaurant.findFirst({
         where: { isActive: true },
-        select: { id: true },
+        select: {
+          id: true,
+          name: true,
+          settings: {
+            select: {
+              siteName: true,
+              logoUrl: true,
+              primaryColor: true,
+              secondaryColor: true,
+              accentColor: true,
+            },
+          },
+        },
       });
       if (!restaurant) {
         throw new AppError("Restaurant not found", 404, "NOT_FOUND");
@@ -55,6 +80,10 @@ export async function GET(request: NextRequest) {
     return successResponse({
       restaurant: {
         id: restaurant.id,
+        name: restaurant.name,
+        // Website branding with safe defaults — only public-safe fields
+        // (siteName/logoUrl/colors), never internal settings or secrets.
+        branding: resolveBranding(restaurant.name, restaurant.settings),
       },
       branches,
     });

@@ -287,12 +287,16 @@ export function BarcodePaymentFlow({
       const result = await paymentService.createKasirQrisPayment(
         order.orderNumber
       );
+      // The kasir QRIS engine now supersedes any stale UNPAID KASIR row and
+      // always returns a QRIS intent (pending_existing / qris_created). A
+      // QRIS selection must NEVER open the cash form — even defensively, a
+      // kasir_existing result is surfaced as an error, not as "collect cash".
       if (result.kind === "kasir_existing") {
         setPendingPayment(null);
-        setPayStatus("cash-form");
-        toast.info(
-          "Pembayaran kasir sudah tercatat. Silakan masukkan uang diterima."
+        setErrorMsg(
+          "Pembayaran kasir sudah tercatat — silakan pilih Cash atau muat ulang."
         );
+        setPayStatus("error");
         return;
       }
       // Single authoritative state update — both a freshly created QRIS and a

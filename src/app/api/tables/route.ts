@@ -37,9 +37,14 @@ export async function POST(request: NextRequest) {
       throw new ValidationError("Table number and name are required");
     }
 
-    // A branch-scoped admin creates the table in their branch (their context
-    // is authoritative); an admin with all-branch access may pass an explicit
-    // branchId in the body, validated against the restaurant below.
+    // Branch resolution for writes:
+    // - Branch-scoped users MUST write into an authorized branch
+    //   (effectiveWriteBranchId rejects ambiguous/no-context cases).
+    // - Unrestricted admins writing from the Tables page do NOT send a body
+    //   branchId, but may have an active branch selection (x-branch-id
+    //   header, already server-validated) — the table must be created in
+    //   THAT branch, not silently branch-less. An explicit body branchId
+    //   (when sent) is validated against the restaurant/assignments below.
     let targetBranch: string | null;
     if (ctx.branchScoped) {
       targetBranch = effectiveWriteBranchId(ctx);
@@ -48,7 +53,9 @@ export async function POST(request: NextRequest) {
       if (bodyBranchId) {
         await assertBranchInScope(ctx, bodyBranchId);
       }
-      targetBranch = bodyBranchId;
+      // effectiveWriteBranchId honors the validated header branch first
+      // (same rule every other write endpoint uses), then the body value.
+      targetBranch = effectiveWriteBranchId(ctx, bodyBranchId);
     }
 
     const table = await tableService.createTable(

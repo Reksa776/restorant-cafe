@@ -266,6 +266,8 @@ export default function DashboardPage() {
                     <p className="text-sm text-gray-500">
                       {order.customer.name || "Guest"}
                       {order.table && ` • Meja ${order.table.number}`}
+                      {order.branch &&
+                        ` • ${order.branch.name || order.branch.code}`}
                     </p>
                   </div>
                   <div className="text-right">

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Building2, Loader2, MapPin, RotateCw } from "lucide-react";
 import api from "@/lib/axios";
 import { useCart } from "@/hooks/use-cart";
+import { useBranding } from "@/hooks/use-branding";
 import { normalizeApiError } from "@/lib/api-error-handler";
 import { toast } from "sonner";
 
@@ -32,6 +33,7 @@ type LoadState = "loading" | "success" | "empty" | "error";
 export default function PilihCabangPage() {
   const router = useRouter();
   const { isHydrated, tableContext, setCustomerBranch } = useCart();
+  const { applyBranding } = useBranding();
   const [branches, setBranches] = useState<BranchCard[]>([]);
   const [state, setState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState<string>("");
@@ -57,6 +59,21 @@ export default function PilihCabangPage() {
       const rid: string = res.data?.data?.restaurant?.id || "";
       const list: BranchCard[] = res.data?.data?.branches || [];
       restaurantIdRef.current = rid;
+
+      // This is the first screen a first-time customer lands on — apply the
+      // restaurant's website branding (logo/site name/colors) from the
+      // branches response so the header + page are already on-theme before
+      // the customer ever reaches /menu.
+      const branding = res.data?.data?.restaurant?.branding;
+      if (branding) {
+        applyBranding({
+          siteName: branding.siteName,
+          logoUrl: branding.logoUrl,
+          primaryColor: branding.primaryColor,
+          secondaryColor: branding.secondaryColor,
+          accentColor: branding.accentColor,
+        });
+      }
       if (list.length === 0) {
         setState("empty");
         return;
@@ -78,7 +95,9 @@ export default function PilihCabangPage() {
       setErrorMessage(message);
       setState("error");
     }
-  }, []);
+    // applyBranding is stable (useCallback in BrandingProvider) — safe to
+    // list; it never retriggers this callback.
+  }, [applyBranding]);
 
   useEffect(() => {
     if (!isHydrated) return;

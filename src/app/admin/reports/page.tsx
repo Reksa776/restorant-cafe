@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useUserRole } from "@/hooks/use-user-role";
+import { useBranchContext } from "@/hooks/use-branch-context";
 import {
   reportService,
   type ReportPeriod,
@@ -63,6 +64,7 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function ReportsPage() {
   const { role } = useUserRole();
+  const { isLoading: branchCtxLoading } = useBranchContext();
   const [period, setPeriod] = useState<ReportPeriod>("today");
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(todayStr());
@@ -93,9 +95,12 @@ export default function ReportsPage() {
   );
 
   useEffect(() => {
+    // Wait for branch context so a stale admin_branch_id is cleared before
+    // firing the scoped report request (Main Outlet cashier 403 root cause).
+    if (branchCtxLoading) return;
     loadReport(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period]);
+  }, [period, branchCtxLoading]);
 
   const handleExport = async () => {
     setIsExporting(true);

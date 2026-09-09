@@ -405,6 +405,7 @@ export default function ShiftsPage() {
           <thead>
             <tr className="text-left text-xs text-muted-foreground border-b">
               <th className="px-4 py-2">Shift</th>
+              {isAdmin && <th className="px-4 py-2">Cabang</th>}
               <th className="px-4 py-2">{isAdmin ? "Kasir" : "Dibuka"}</th>
               <th className="px-4 py-2 text-right">Kas Awal</th>
               <th className="px-4 py-2 text-right">Ekspektasi</th>
@@ -420,6 +421,13 @@ export default function ShiftsPage() {
                 <td className="px-4 py-2 font-mono font-medium">
                   {s.shiftNumber}
                 </td>
+                {isAdmin && (
+                  <td className="px-4 py-2">
+                    <span className="font-medium text-blue-700">
+                      {s.branch?.name || s.branch?.code || "—"}
+                    </span>
+                  </td>
+                )}
                 <td className="px-4 py-2">
                   {isAdmin ? s.user?.name || "—" : fmtTime(s.openedAt)}
                 </td>
@@ -471,7 +479,7 @@ export default function ShiftsPage() {
             {(isAdmin ? allShifts : myShifts).length === 0 && (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={isAdmin ? 9 : 8}
                   className="px-4 py-10 text-center text-muted-foreground"
                 >
                   Belum ada data shift

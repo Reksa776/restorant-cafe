@@ -21,6 +21,12 @@ export interface CashierShift {
   createdAt: string;
   updatedAt: string;
   user?: { id: string; name: string; email?: string };
+  /** Branch name/code for "Semua Cabang" views — the database id is never rendered. */
+  branch?: {
+    id: string;
+    name: string;
+    code: string;
+  } | null;
   payments?: Array<{ id: string; amount: string; paidAt?: string | null }>;
   overrides?: Array<ShiftOverride>;
   _count?: { payments?: number };

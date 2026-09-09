@@ -1488,8 +1488,8 @@ function MenuContent() {
             onClick={() => setActiveCategoryId("all")}
             className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors ${
               activeCategoryId === "all"
-                ? "bg-gray-900 text-white border-gray-900"
-                : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
+                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
             }`}
           >
             Semua Kategori
@@ -1500,8 +1500,8 @@ function MenuContent() {
               onClick={() => setActiveCategoryId(cat.id)}
               className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors ${
                 activeCategoryId === cat.id
-                  ? "bg-gray-900 text-white border-gray-900"
-                  : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
+                  ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                  : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
               }`}
             >
               {cat.name}

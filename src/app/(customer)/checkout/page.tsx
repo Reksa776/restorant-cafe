@@ -497,7 +497,7 @@ export default function CheckoutPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Link href="/cart" className="text-gray-500 hover:text-black">
+        <Link href="/cart" className="text-gray-500 hover:text-brand-primary">
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <h1 className="text-2xl font-bold">Checkout</h1>
@@ -580,8 +580,8 @@ export default function CheckoutPage() {
                   }
                   className={`p-3 rounded-lg border-2 text-center transition-colors ${
                     orderType === type.value
-                      ? "border-black bg-gray-50"
-                      : "border-gray-200 hover:border-gray-300"
+                      ? "border-brand-primary bg-brand-secondary"
+                      : "border-gray-200 hover:border-brand-accent"
                   }`}
                 >
                   <span className="text-2xl block mb-1">{type.icon}</span>
@@ -732,7 +732,7 @@ export default function CheckoutPage() {
                   type="button"
                   onClick={() => checkVoucher(manualCode)}
                   disabled={isCheckingVoucher}
-                  className="flex-shrink-0 rounded-lg bg-gray-900 text-white px-3 py-2 text-sm font-medium disabled:opacity-50"
+                  className="flex-shrink-0 rounded-lg bg-brand-primary text-brand-primary-foreground px-3 py-2 text-sm font-medium disabled:opacity-50"
                 >
                   {isCheckingVoucher ? "Cek..." : "Cek Voucher"}
                 </button>

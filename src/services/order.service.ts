@@ -46,6 +46,15 @@ export interface Order {
     name: string;
   };
   /**
+   * Branch name/code so the admin UI can label the order's branch when
+   * viewing "Semua Cabang" — the database id is never rendered.
+   */
+  branch?: {
+    id: string;
+    name: string;
+    code: string;
+  } | null;
+  /**
    * Restaurant header for the print bill — included on admin order detail
    * endpoints (name/address/phone + branding logo/site name). Null on the
    * public/legacy shapes that intentionally do not carry it.

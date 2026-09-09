@@ -18,6 +18,7 @@ import {
   Truck,
   CreditCard,
   Banknote,
+  Store,
 } from "lucide-react";
 import type { Order } from "@/services/order.service";
 
@@ -217,6 +218,15 @@ export function OrderCard({
           {order.visitorCount && (
             <Badge variant="outline" className="text-[11px]">
               {order.visitorCount} orang
+            </Badge>
+          )}
+          {order.branch && (
+            <Badge
+              variant="outline"
+              className="text-[11px] font-medium text-blue-700 border-blue-200 bg-blue-50"
+            >
+              <Store className="h-3 w-3 mr-1" />
+              {order.branch.name || order.branch.code}
             </Badge>
           )}
           {isCashierUnpaid && (

@@ -10,10 +10,12 @@ import {
 } from "@/services/customer.service";
 import { Search, Users, ShoppingCart, DollarSign } from "lucide-react";
 import { toast } from "sonner";
+import { useBranchContext } from "@/hooks/use-branch-context";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 
 export default function CustomersPage() {
+  const { isLoading: branchCtxLoading } = useBranchContext();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -34,8 +36,12 @@ export default function CustomersPage() {
   };
 
   useEffect(() => {
+    // Wait for branch context so a stale admin_branch_id is cleared before
+    // firing the (branch-aware) customers request — a leftover branch from a
+    // previous session would otherwise 403 a scoped user.
+    if (branchCtxLoading) return;
     loadCustomers();
-  }, []);
+  }, [branchCtxLoading]);
 
   // Realtime: a new customer (e.g. from a QR-table order) appears without
   // refresh. Active search text is preserved (state in the closure).

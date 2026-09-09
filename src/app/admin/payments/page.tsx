@@ -181,6 +181,15 @@ export default function PaymentsPage() {
                           ? "QRIS"
                           : payment.method || "N/A"}{" "}
                       • {payment.provider || "—"}
+                      {payment.branch && (
+                        <>
+                          {" "}
+                          •{" "}
+                          <span className="font-medium text-blue-700">
+                            {payment.branch.name || payment.branch.code}
+                          </span>
+                        </>
+                      )}
                     </p>
                     <p className="text-sm text-gray-400">
                       {new Date(payment.createdAt).toLocaleString("id-ID")}

@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { LogIn, LogOut, ShoppingCart } from "lucide-react";
 import { CartProvider, useCart } from "@/hooks/use-cart";
 import { BrandingProvider, useBranding } from "@/hooks/use-branding";
+import { BrandingSync } from "@/components/customer/branding-sync";
 import {
   CustomerAuthProvider,
   useCustomerAuth,
@@ -133,6 +134,10 @@ export default function CustomerLayout({
     <CartProvider>
       <BrandingProvider>
         <CustomerAuthProvider>
+          {/* Applies the restaurant's website branding as soon as the
+              persisted restaurantId is known — covers hard refreshes on
+              /cart, /checkout, /payment/*, /order/* and /pilih-cabang. */}
+          <BrandingSync />
           <div className="min-h-screen bg-gray-50">
             <CustomerHeader />
             <main className="max-w-4xl mx-auto px-3 pt-3">{children}</main>

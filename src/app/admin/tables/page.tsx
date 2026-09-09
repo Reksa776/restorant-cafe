@@ -26,6 +26,7 @@ import {
   type RestaurantTable,
 } from "@/services/table.service";
 import { cn } from "@/lib/utils";
+import { useBranchContext } from "@/hooks/use-branch-context";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import {
@@ -82,6 +83,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 export default function TablesPage() {
+  const { isLoading: branchCtxLoading } = useBranchContext();
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -120,8 +122,11 @@ export default function TablesPage() {
   };
 
   useEffect(() => {
+    // Wait for branch context so a stale admin_branch_id is cleared before
+    // firing the scoped tables request (Main Outlet cashier 403 root cause).
+    if (branchCtxLoading) return;
     loadTables();
-  }, []);
+  }, [branchCtxLoading]);
 
   // Realtime: table status/CRUD changes (e.g. an order occupying/freeing a
   // table, or another admin) → refresh cards without a page reload.

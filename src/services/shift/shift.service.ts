@@ -322,6 +322,9 @@ export class ShiftService {
       },
       include: {
         user: { select: { id: true, name: true, email: true } },
+        // Branch name/code so the admin can tell shifts apart when viewing
+        // "Semua Cabang" — never the raw database id.
+        branch: { select: { id: true, name: true, code: true } },
         overrides: { orderBy: { createdAt: "desc" } },
         _count: {
           select: { payments: { where: { status: "PAID", method: "KASIR" } } },

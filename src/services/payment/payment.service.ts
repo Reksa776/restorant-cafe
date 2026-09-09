@@ -140,8 +140,14 @@ export class PaymentService {
           if (existingCashier.status === "PAID") {
             throw new ConflictError("Order already paid");
           }
-          // Idempotent retry: the UNPAID KASIR row is already recorded.
-          return { payment: existingCashier, kind: "kasir_existing" } as const;
+          if (existingCashier.status === "UNPAID") {
+            // Idempotent retry: the live UNPAID KASIR row is already
+            // recorded — never a duplicate.
+            return { payment: existingCashier, kind: "kasir_existing" } as const;
+          }
+          // A CANCELLED/FAILED/EXPIRED KASIR row is not a live intent (e.g.
+          // it was superseded when the cashier chose QRIS) — fall through and
+          // record a fresh UNPAID row below.
         }
 
         const cashierPayment = await tx.payment.create({
@@ -574,6 +580,18 @@ export class PaymentService {
       };
     }
 
+    // Order-level duplicate protection: a stale UNPAID KASIR row on an order
+    // already settled through another channel (e.g. a QRIS webhook marked the
+    // order PAID) must never be collectable a second time.
+    if (payment.order?.paymentStatus === "PAID") {
+      return {
+        payment,
+        alreadyPaid: true,
+        orderAdvanced: false,
+        audit: { amountDue, amountReceived, changeAmount },
+      };
+    }
+
     // Was this KASIR row the fallback after a QRIS attempt on the same order?
     // (history check — the QRIS row itself is never modified)
     const priorQrisCount = await prisma.payment.count({
@@ -831,6 +849,11 @@ export class PaymentService {
               grandTotal: true,
             },
           },
+          // Branch name/code so the UI can label payments when the admin views
+          // "Semua Cabang" — never the raw database id.
+          branch: {
+            select: { id: true, name: true, code: true },
+          },
         },
         orderBy: { createdAt: "desc" },
         skip,
@@ -1080,20 +1103,31 @@ export class PaymentService {
 
     const now = new Date();
 
-    // Handle existing UNPAID KASIR row - return it (kasir can collect cash)
+    // An existing UNPAID KASIR row is a CASH context — never a QRIS one.
+    // This function is only invoked from an explicit QRIS selection, so a
+    // stale cash intent must NOT hijack the flow into collecting cash: it is
+    // superseded (guarded cancel so a concurrent flip cannot be overwritten)
+    // and the QRIS flow proceeds. The engine already permits a QRIS intent on
+    // top of a cash row (the KASIR conflict check in createPayment is
+    // QRIS-exempt), so this only enforces the "one live intent" invariant.
     const existingCashier = order.payments.find(
       (p) => p.method === "KASIR" && p.status === "UNPAID"
     );
     if (existingCashier) {
-      return {
-        payment: existingCashier,
-        kind: "kasir_existing" as const,
-        message: "Cash payment already recorded for this order",
-      };
+      await prisma.payment.updateMany({
+        where: { id: existingCashier.id, status: "UNPAID" },
+        data: { status: "CANCELLED" },
+      });
+      // Mirror the cancel into the in-memory copy so the reuse checks below
+      // never treat the superseded cash row as a live intent.
+      existingCashier.status = "CANCELLED";
     }
 
-    // Handle existing PENDING/FAILED/EXPIRED QRIS or VA payment
-    const latestPayment = order.payments[0];
+    // Handle existing PENDING/FAILED/EXPIRED QRIS or VA payment (the
+    // superseded cash row above is excluded from the live-intent search).
+    const latestPayment =
+      order.payments.find((p) => p.id !== existingCashier?.id) ||
+      order.payments[0];
     if (latestPayment) {
       // If PENDING and not expired, return it (QR still valid)
       if (

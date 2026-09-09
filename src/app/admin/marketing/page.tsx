@@ -13,12 +13,11 @@ import {
   BadgePercent,
   Store,
 } from "lucide-react";
-import { toast } from "sonner";
-import {
-  promoService,
+import { toast } from "sonner";import { promoService,
   type AdminPromo,
 } from "@/services/promo.service";
 import { branchService, type Branch } from "@/services/branch.service";
+import { useBranchContext } from "@/hooks/use-branch-context";
 
 // ============================================================
 // Marketing (ADMIN) — create/manage tenant-scoped promos (F3).
@@ -58,6 +57,7 @@ const emptyForm: FormState = {
 };
 
 export default function MarketingPage() {
+  const { isLoading: branchCtxLoading } = useBranchContext();
   const [promos, setPromos] = useState<AdminPromo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,8 +81,11 @@ export default function MarketingPage() {
   }, []);
 
   useEffect(() => {
+    // Wait for branch context so a stale admin_branch_id is cleared before
+    // firing the (branch-aware) promos request.
+    if (branchCtxLoading) return;
     loadPromos(true);
-  }, [loadPromos]);
+  }, [loadPromos, branchCtxLoading]);
 
   useEffect(() => {
     branchService.getBranches().then(setBranches).catch(() => setBranches([]));
