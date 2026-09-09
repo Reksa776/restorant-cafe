@@ -76,6 +76,12 @@ export class PaymentService {
     // second gets a ConflictError. The intent row is created FIRST (before
     // the gateway call) so the lock window stays tiny — no network I/O is
     // ever performed inside the transaction.
+    //
+    // This transaction is ALSO the serialization point for method switches:
+    // KASIR supersedes live online intents (QRIS → CASH) and an explicit
+    // QRIS intent supersedes the live UNPAID KASIR row (CASH → QRIS). Every
+    // supersede is a guarded updateMany, so a racing webhook or a concurrent
+    // markCashierPaymentPaid can never be overwritten.
     // ============================================================
     const intent = await prisma.$transaction(async (tx) => {
       // Lock the order row (MySQL FOR UPDATE) to serialize per-order intents.
@@ -106,7 +112,10 @@ export class PaymentService {
         );
       }
 
-      // PAID is always terminal — an order can never be paid twice.
+      // PAID is always terminal — an order can never be paid twice. This
+      // covers ANY method (online QRIS/VA webhook PAID and KASIR cash PAID
+      // alike) — the second pay attempt on a settled order is always
+      // rejected under the same per-order row lock.
       const paidPayment = await tx.payment.findFirst({
         where: {
           orderId,
@@ -151,6 +160,10 @@ export class PaymentService {
 
         if (existingCashier) {
           if (existingCashier.status === "PAID") {
+            // Defense in depth: the any-method PAID check at the top of the
+            // transaction already rejects a settled order — this duplicate
+            // guard is intentionally kept so the KASIR branch alone can never
+            // double-settle even if the top check is ever reordered.
             throw new ConflictError("Order already paid");
           }
           if (existingCashier.status === "UNPAID") {
@@ -188,7 +201,11 @@ export class PaymentService {
       // Gateway payment — QRIS (DINE-IN) or VA (legacy TAKEAWAY/DELIVERY)
       // ------------------------------------------------------------
       // A DINE-IN order that chose cashier first must not silently create a
-      // different payment intent on top of the UNPAID KASIR row.
+      // different payment intent on top of the UNPAID KASIR row — EXCEPT when
+      // an explicit QRIS intent is requested (isQris): the cashier may switch
+      // from CASH back to QRIS (CASH → Kembali → QRIS), so the live UNPAID
+      // KASIR row is superseded here (guarded cancel inside the same locked
+      // transaction — history is kept, never deleted).
       if (!isQris) {
         const cashierUnpaid = await tx.payment.findFirst({
           where: {
@@ -203,11 +220,40 @@ export class PaymentService {
             "Pembayaran di kasir sudah dicatat untuk pesanan ini"
           );
         }
+      } else {
+        // Explicit QRIS intent supersedes a live UNPAID KASIR row (the reverse
+        // switch). Guarded updateMany: only a row still UNPAID flips, so a
+        // concurrent markCashierPaymentPaid (UNPAID → PAID) can never be
+        // overwritten by this cancel. History is preserved.
+        await tx.payment.updateMany({
+          where: {
+            orderId,
+            method: "KASIR",
+            status: "UNPAID",
+          },
+          data: { status: "CANCELLED" },
+        });
       }
 
-      // Create the PENDING intent atomically (providerRef filled after the
-      // gateway call). If the gateway later fails this row is marked FAILED,
-      // keeping the retry semantics (a FAILED/EXPIRED payment may be retried).
+      // Idempotent intent: an explicit QRIS request (or the orderId VA path)
+      // that finds a LIVE PENDING QRIS row returns it instead of stacking a
+      // second collectable intent. Two sequential QRIS clicks (e.g. the
+      // customer page retried while the first was still valid) can never
+      // create two live QRIS intents on the same order. (Double-click races
+      // are serialized by the order row lock above.)
+      if (isQris) {
+        const liveQris = await tx.payment.findFirst({
+          where: {
+            orderId,
+            method: "QRIS",
+            status: "PENDING",
+          },
+        });
+        if (liveQris) {
+          return { payment: liveQris, kind: "kasir_existing" } as const;
+        }
+      }
+
       const pending = await tx.payment.create({
         data: {
           restaurantId: lockedOrder.restaurantId,
@@ -223,8 +269,25 @@ export class PaymentService {
         },
       });
 
-      await tx.order.update({
-        where: { id: lockedOrder.id },
+      // Mirror PENDING onto the order ONLY while the order still reflects a
+      // superseded/live-intent state this intent replaced. Ownership check:
+      // - UNPAID  → this QRIS intent legitimately replaced a CASH intent (the
+      //   reverse switch) — safe to mirror.
+      // - PENDING → mirror the QRIS state (the superseded QRIS rows were just
+      //   cancelled inside this transaction).
+      // - FAILED/EXPIRED/CANCELLED → this intent is the RETRY after a failed
+      //   gateway attempt (the service marks intent FAILED and mirrors
+      //   FAILED/EXPIRED on gateway error) — the fresh intent legitimately
+      //   replaces that mirror.
+      // - PAID    → a concurrent QRIS webhook PAID this order while the QRIS
+      //   intent was being created — the payment row above was created anyway
+      //   (loss: a cancelled PENDING orphan, no money movement), but the order
+      //   is NEVER dragged back from PAID. Terminal PAID wins.
+      await tx.order.updateMany({
+        where: {
+          id: lockedOrder.id,
+          paymentStatus: { not: "PAID" },
+        },
         data: { paymentStatus: "PENDING" },
       });
 
@@ -477,9 +540,11 @@ export class PaymentService {
       });
 
       // A new live payment intent exists again → mirror it on the order row
-      // (same convention as createPayment with an explicit method).
-      await tx.order.update({
-        where: { id: order.id },
+      // (same convention as createPayment with an explicit method). Guarded:
+      // a PAID order (a webhook that won the race) is terminal and is never
+      // dragged back to UNPAID.
+      await tx.order.updateMany({
+        where: { id: order.id, paymentStatus: { not: "PAID" } },
         data: { paymentStatus: "UNPAID" },
       });
 
@@ -672,9 +737,23 @@ export class PaymentService {
         return { alreadyPaid: true, orderAdvanced: false };
       }
 
-      // Mirror payment status on the order row.
-      await tx.order.update({
-        where: { id: payment.orderId },
+      // Mirror payment status on the order row — guarded: the order mirror
+      // must never overwrite a concurrent authoritative writer. Ownership
+      // check mirrors the webhook handler: this collection only claims the
+      // order when the order still reflects THIS intent (UNPAID — the state
+      // this KASIR row set) or a superseded live-online state (PENDING/FAILED
+      // /EXPIRED from a QRIS attempt the cashier is now settling in cash). A
+      // CANCELLED mirror never exists, and PAID (a QRIS webhook that won the
+      // race) is terminal — this write cannot resurrect or double-mirror it.
+      // The guarded updateMany makes the whole claim atomic with the row flip
+      // above under the same transaction.
+      await tx.order.updateMany({
+        where: {
+          id: payment.orderId,
+          paymentStatus: {
+            in: ["UNPAID", "PENDING", "FAILED", "EXPIRED"],
+          },
+        },
         data: { paymentStatus: "PAID" },
       });
 
@@ -1178,23 +1257,20 @@ export class PaymentService {
 
     const now = new Date();
 
-    // An existing UNPAID KASIR row is a CASH context — never a QRIS one.
-    // This function is only invoked from an explicit QRIS selection, so a
-    // stale cash intent must NOT hijack the flow into collecting cash: it is
-    // superseded (guarded cancel so a concurrent flip cannot be overwritten)
-    // and the QRIS flow proceeds. The engine already permits a QRIS intent on
-    // top of a cash row (the KASIR conflict check in createPayment is
-    // QRIS-exempt), so this only enforces the "one live intent" invariant.
+    // A live UNPAID KASIR row (CASH chosen earlier) is superseded by the
+    // explicit QRIS selection — the guarded cancel now happens ATOMICALLY
+    // inside createPayment under the same FOR UPDATE order lock, so a
+    // concurrent markCashierPaymentPaid (UNPAID → PAID) can never be
+    // overwritten by this switch, and a concurrent webhook mirror cannot
+    // straddle the supersede. (Pre-cancelled here before, outside the lock —
+    // that window is gone.) Nothing to do in this pre-read beyond keeping the
+    // in-memory copy consistent for the reuse checks below.
     const existingCashier = order.payments.find(
       (p) => p.method === "KASIR" && p.status === "UNPAID"
     );
     if (existingCashier) {
-      await prisma.payment.updateMany({
-        where: { id: existingCashier.id, status: "UNPAID" },
-        data: { status: "CANCELLED" },
-      });
-      // Mirror the cancel into the in-memory copy so the reuse checks below
-      // never treat the superseded cash row as a live intent.
+      // Mirror the pending supersede into the in-memory copy so the reuse
+      // checks below never treat the cash row as a live QRIS intent.
       existingCashier.status = "CANCELLED";
     }
 

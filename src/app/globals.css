@@ -72,14 +72,21 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
+  /* shadcn --primary/--secondary/--accent follow the website branding tokens
+     (hex values are valid colors for oklch-consuming properties too — CSS
+     custom properties bypass color-space coercion). So the shared UI kit
+     (Button default variant, Select, Switch, etc.) used across the admin,
+     dashboard and kasir shells follows the restaurant's brand colors without
+     any component-level changes. Semantic colors (green/red/amber) are NOT
+     derived from these and stay untouched. */
+  --primary: var(--brand-primary);
+  --primary-foreground: var(--brand-primary-foreground);
+  --secondary: var(--brand-secondary);
+  --secondary-foreground: var(--brand-secondary-foreground);
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --accent: var(--brand-accent);
+  --accent-foreground: var(--brand-accent-foreground);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);

@@ -21,7 +21,6 @@ import {
   ScanLine,
   Clock,
 } from "lucide-react";
-import { toast } from "sonner";
 import { OrderScanner } from "@/components/admin/order-scanner";
 import { paymentService, type Payment } from "@/services/payment.service";
 import { orderService, type Order } from "@/services/order.service";
@@ -314,10 +313,25 @@ export function BarcodePaymentFlow({
       return;
     } catch (error) {
       console.error("Cash payment failed:", error);
+      // Race guard: between the fresh snapshot above and mark-paid, the order
+      // may have been settled by another actor (parallel tab, QRIS webhook
+      // that won the race). The server blocks the double pay — surface the
+      // "paid" state instead of an error.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const status = (error as any)?.response?.status;
       const message =
         error instanceof Error
           ? error.message
           : "Gagal memproses pembayaran cash.";
+      if (
+        status === 409 ||
+        /already paid|sudah dibayar|sudah lunas|already completed/i.test(message)
+      ) {
+        setPayStatus("paid");
+        setErrorMsg(null);
+        onPaymentCompleted?.(order.id, order.orderNumber);
+        return;
+      }
       setErrorMsg(message);
       setPayStatus("error");
     } finally {
@@ -368,10 +382,22 @@ export function BarcodePaymentFlow({
       setPayStatus("qris-ready");
     } catch (error) {
       console.error("QRIS creation failed:", error);
-      const message =
+      // Race guard: the order may have been settled (CASH collected in a
+      // parallel tab, or a webhook) between the fresh snapshot and the intent
+      // creation — the server rejects with "Order already paid". Surface the
+      // paid state, never a new intent and never an error screen.
+      const rawMessage =
         error instanceof Error
           ? error.message
           : "Gagal membuat pembayaran QRIS.";
+      if (/already paid|sudah dibayar|sudah lunas/i.test(rawMessage)) {
+        setPendingPayment(null);
+        setPayStatus("paid");
+        setErrorMsg(null);
+        onPaymentCompleted?.(order.id, order.orderNumber);
+        return;
+      }
+      const message = rawMessage;
       setErrorMsg(message);
       setPayStatus("error");
     } finally {

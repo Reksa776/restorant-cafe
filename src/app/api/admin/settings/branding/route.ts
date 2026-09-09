@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin } from "@/lib/auth-helpers";
+import { requireRoles } from "@/lib/auth-helpers";
 import {
   getBranding,
   updateBranding,
@@ -11,14 +11,19 @@ import {
 
 /**
  * GET /api/admin/settings/branding
- * ADMIN-only. Returns the current restaurant's branding configuration with
- * safe fallbacks (siteName → Restaurant.name, colors → default palette):
+ * Authenticated staff endpoint (ADMIN + CASHIER — the KASIR shell applies the
+ * same restaurant branding as the ADMIN shell through AdminBrandingProvider).
+ * Returns the CURRENT restaurant's branding configuration with safe fallbacks
+ * (siteName → Restaurant.name, colors → default palette):
  *
  *   { success, message, data: { restaurantName, branding: {...} } }
+ *
+ * Tenant isolation: restaurantId is ALWAYS derived from the authenticated
+ * session (requireRoles → requireRestaurantContext) — never from the client.
  */
 export async function GET() {
   try {
-    const { restaurantId } = await requireAdmin();
+    const { restaurantId } = await requireRoles(["ADMIN", "CASHIER"]);
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: restaurantId },
@@ -47,7 +52,7 @@ export async function GET() {
  */
 export async function PUT(request: NextRequest) {
   try {
-    const { restaurantId } = await requireAdmin();
+    const { restaurantId } = await requireRoles(["ADMIN"], undefined);
 
     const body = (await request.json().catch(() => null)) as
       | (UpdateBrandingInput & Record<string, unknown>)

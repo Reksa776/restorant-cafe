@@ -265,7 +265,7 @@ export function KasirQrisScreen({
   if (status === "creating") {
     return (
       <div className="text-center py-10">
-        <Loader2 className="h-8 w-8 mx-auto animate-spin text-blue-500" />
+        <Loader2 className="h-8 w-8 mx-auto animate-spin text-brand-primary" />
         <p className="text-sm text-muted-foreground mt-3">
           Membuat / memeriksa pembayaran QRIS...
         </p>

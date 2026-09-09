@@ -69,7 +69,7 @@ const ORDER_TYPE_CONFIG: Record<
   DINE_IN: {
     label: "Dine In",
     icon: UtensilsCrossed,
-    color: "text-blue-600",
+    color: "text-brand-primary",
   },
   TAKEAWAY: {
     label: "Takeaway",
@@ -326,7 +326,7 @@ export function OrderCard({
           {hiddenItemsCount > 0 && (
             <button
               onClick={() => onDetail(order)}
-              className="text-xs text-blue-600 hover:underline"
+              className="text-xs text-brand-primary hover:underline"
             >
               + {hiddenItemsCount} item lainnya
             </button>

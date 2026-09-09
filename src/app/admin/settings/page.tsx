@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,6 +20,10 @@ import {
   normalizeBrandingColor,
 } from "@/lib/branding";
 import { useBranding } from "@/hooks/use-branding";
+
+// Same key as use-admin-branding.tsx — cross-tab sync channel only (storage
+// event). The database (RestaurantSettings) remains the source of truth.
+const ADMIN_BRANDING_STORAGE_KEY = "admin.branding.latest";
 
 // ============================================================
 // Website Branding — Admin Settings
@@ -153,6 +157,7 @@ function BrandingPreview({
   siteName,
   logoUrl,
   logoFile,
+  formLogoBlobUrl,
   primaryColor,
   secondaryColor,
   accentColor,
@@ -160,39 +165,18 @@ function BrandingPreview({
   siteName: string;
   logoUrl: string | null;
   logoFile: File | null;
+  /** Object URL for `logoFile`, owned by the parent (created in its onChange
+      event handler, revoked there / on unmount) — no effect-state juggling
+      inside the preview component. */
+  formLogoBlobUrl: string | null;
   primaryColor: string;
   secondaryColor: string;
   accentColor: string;
 }) {
   const [broken, setBroken] = useState(false);
-  const blobUrlRef = useRef<string | null>(null);
-  const prevFileRef = useRef<File | null>(null);
 
-  // Keep exactly one object URL per selected file (revoke on change/unmount).
-  useEffect(() => {
-    if (logoFile !== prevFileRef.current) {
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
-      blobUrlRef.current = logoFile ? URL.createObjectURL(logoFile) : null;
-      prevFileRef.current = logoFile;
-      setBroken(false);
-    }
-    return () => {
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-        blobUrlRef.current = null;
-      }
-    };
-  }, [logoFile]);
-
-  // Preview source: selected file > saved logo > none.
-  const previewUrl = useMemo(() => {
-    if (logoFile) return blobUrlRef.current;
-    return logoUrl;
-  }, [logoFile, logoUrl]);
+  // Preview source: selected file (parent-owned object URL) > saved logo > none.
+  const previewUrl = logoFile ? formLogoBlobUrl : logoUrl;
 
   const validPrimary = BRANDING_COLOR_REGEX.test(primaryColor);
   const validSecondary = BRANDING_COLOR_REGEX.test(secondaryColor);
@@ -295,8 +279,17 @@ export default function SettingsPage() {
     }
   }, []);
 
+  // Initial branding load — the setState calls all happen inside the async
+  // loadBranding continuation (never synchronously in the effect body).
   useEffect(() => {
-    loadBranding();
+    let cancelled = false;
+    (async () => {
+      await Promise.resolve();
+      if (!cancelled) void loadBranding();
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [loadBranding]);
 
   const handleSave = async () => {
@@ -357,13 +350,26 @@ export default function SettingsPage() {
         // through the existing BrandingProvider context — no reload, no
         // rebuild, no second theme system. Customer pages pick the new
         // branding up on their next load via their existing sync.
-        applyBranding({
+        const savedBranding = {
           siteName: b.siteName,
           logoUrl: b.logoUrl,
           primaryColor: b.primaryColor,
           secondaryColor: b.secondaryColor,
           accentColor: b.accentColor,
-        });
+        };
+        applyBranding(savedBranding);
+        // Sync every OTHER open tab (kasir/admin/dashboard share this
+        // provider) via the storage event — no polling; localStorage is only
+        // a sync channel, RestaurantSettings stays the source of truth.
+        try {
+          localStorage.setItem(
+            ADMIN_BRANDING_STORAGE_KEY,
+            JSON.stringify(savedBranding)
+          );
+        } catch {
+          // Storage unavailable (private mode/quota) — tabs still converge on
+          // their next load through the provider's initial fetch.
+        }
       }
       toast.success("Branding website berhasil disimpan");
     } catch (error) {
@@ -577,6 +583,7 @@ export default function SettingsPage() {
                   siteName={siteName}
                   logoUrl={logoPreviewUrl}
                   logoFile={logoFile}
+                  formLogoBlobUrl={formLogoBlobUrl}
                   primaryColor={colors.primaryColor}
                   secondaryColor={colors.secondaryColor}
                   accentColor={colors.accentColor}

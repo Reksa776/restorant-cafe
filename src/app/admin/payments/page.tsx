@@ -185,7 +185,7 @@ export default function PaymentsPage() {
                         <>
                           {" "}
                           •{" "}
-                          <span className="font-medium text-blue-700">
+                          <span className="font-medium text-brand-primary">
                             {payment.branch.name || payment.branch.code}
                           </span>
                         </>
