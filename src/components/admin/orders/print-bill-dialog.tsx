@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { Printer } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -83,8 +84,11 @@ function parseCustomizations(
 
 /** Paper width applied to the bill body (screen + print share the same box). */
 function paperWidthClass(paper: PaperFormat): string {
-  if (paper === "thermal58") return "w-full sm:w-[52mm]";
-  if (paper === "thermal80") return "w-full sm:w-[72mm]";
+  // Thermal tickets are fixed-physical-width — keep the paper width on every
+  // viewport so a small-screen (mobile) preview stays honest about the actual
+  // printed size instead of collapsing to the full container width.
+  if (paper === "thermal58") return "mx-auto w-[52mm] max-w-[52mm]";
+  if (paper === "thermal80") return "mx-auto w-[72mm] max-w-[72mm]";
   return "w-full sm:max-w-[190mm]";
 }
 
@@ -542,11 +546,51 @@ export function PrintBillDialog({
       }))
     );
 
+  const billBody =
+    mode === "all" ? (
+      <div
+        className={`bill-inner mx-auto bg-white text-gray-900 ${paperWidthClass(
+          paper
+        )} px-1 py-2 text-[13px] leading-relaxed`}
+      >
+        <FullBill
+          order={order}
+          siteName={siteName}
+          logoUrl={logoUrl}
+          restAddress={restAddress}
+          restPhone={restPhone}
+        />
+      </div>
+    ) : (
+      <div className="print:block">
+        {tickets.map(({ item, key }, index) => (
+          <div
+            key={key}
+            className={`bill-inner mx-auto bg-white text-gray-900 ${paperWidthClass(
+              paper
+            )} px-1 py-2 text-[13px] leading-relaxed ${
+              index < tickets.length - 1 ? "print:break-after-page" : ""
+            }`}
+          >
+            <ProductTicket
+              item={item}
+              order={order}
+              siteName={siteName}
+              logoUrl={logoUrl}
+              restAddress={restAddress}
+              restPhone={restPhone}
+            />
+          </div>
+        ))}
+      </div>
+    );
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-2xl">
         {/* Toolbar (never printed) */}
-        <div className="print:hidden flex flex-wrap items-center justify-between gap-3">
+        <div className="print:hidden flex flex-wrap items-center justify-between gap-3 shrink-0">
           <div className="flex items-center gap-2">
             {MODE_OPTIONS.map((opt) => (
               <button
@@ -587,58 +631,41 @@ export function PrintBillDialog({
 
         {/* Hint (never printed) */}
         {mode === "perProduct" && (
-          <p className="print:hidden text-xs text-gray-500">
+          <p className="print:hidden text-xs text-gray-500 shrink-0">
             {tickets.length} ticket akan dicetak — 1 halaman per unit produk
             (Qty 1 per ticket).
           </p>
         )}
 
         {/* ==================================================
-            BILL — the only thing visible when printing.
-            Each per-product ticket is its own printed page.
+            BILL — screen preview (scrollable, the only visible copy
+            on screen). A duplicate is rendered into #print-root at
+            the top of <body> for actual printing — see below.
             ================================================== */}
-        <div id="bill-print-root" className="print:absolute print:inset-0 print:w-full">
-          {mode === "all" ? (
-            <div
-              className={`bill-inner mx-auto bg-white text-gray-900 ${paperWidthClass(
-                paper
-              )} px-1 py-2 text-[13px] leading-relaxed`}
-            >
-              <FullBill
-                order={order}
-                siteName={siteName}
-                logoUrl={logoUrl}
-                restAddress={restAddress}
-                restPhone={restPhone}
-              />
-            </div>
-          ) : (
-            <div className="print:block">
-              {tickets.map(({ item, key }, index) => (
-                <div
-                  key={key}
-                  className={`bill-inner mx-auto bg-white text-gray-900 ${paperWidthClass(
-                    paper
-                  )} px-1 py-2 text-[13px] leading-relaxed ${
-                    index < tickets.length - 1
-                      ? "print:break-after-page"
-                      : ""
-                  }`}
-                >
-                  <ProductTicket
-                    item={item}
-                    order={order}
-                    siteName={siteName}
-                    logoUrl={logoUrl}
-                    restAddress={restAddress}
-                    restPhone={restPhone}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
+        <div
+          id="bill-print-root"
+          className="min-h-0 flex-1 overflow-y-auto print:overflow-visible"
+        >
+          {billBody}
         </div>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+
+      {/* ==================================================
+          PRINT COPY — portal straight to <body>, hidden on screen.
+          In print media every other <body> child is display:none, so
+          this copy sits in NORMAL FLOW at the top of the page and
+          paginates naturally (A4 multi-page, or one page per ticket).
+          This avoids the fragile absolute/visibility math against a
+          centered print containing-block that clipped the left half
+          of the bill (Chrome print emulation quirk).
+          ================================================== */}
+      {createPortal(
+        <div id="print-root" className="hidden">
+          {billBody}
+        </div>,
+        document.body
+      )}
+    </>
   );
 }

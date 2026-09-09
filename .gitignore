@@ -17,3 +17,8 @@ npm-debug.log*
 
 # Local E2E browser screenshots (test artifacts only)
 /shots/
+
+# Local audit/verification harnesses (test-only, kept locally, never committed)
+/ui-audit.mjs
+/phase33-harness.ts
+/prod-verification.mjs

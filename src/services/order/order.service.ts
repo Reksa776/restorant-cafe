@@ -195,6 +195,46 @@ export class OrderService {
     // Create product map for quick lookup
     const productMap = new Map(products.map((p) => [p.id, p]));
 
+    // Stock validation: aggregate quantities per product across all line
+    // items (same product may appear multiple times with different
+    // customizations) and verify against BranchProduct.stock.
+    // A product WITHOUT a BranchProduct row is stock-unmanaged (legacy
+    // "available by default") and remains purchasable; an existing row with
+    // stock 0 is strictly sold out.
+    if (branchId) {
+      const qtyByProduct = new Map<string, number>();
+      for (const item of input.items) {
+        qtyByProduct.set(
+          item.productId,
+          (qtyByProduct.get(item.productId) || 0) + item.quantity
+        );
+      }
+      const branchStockRows = await prisma.branchProduct.findMany({
+        where: {
+          branchId,
+          productId: { in: uniqueProductIds },
+        },
+        select: { productId: true, stock: true },
+      });
+      const stockMap = new Map(branchStockRows.map((r) => [r.productId, r.stock]));
+      for (const [pid, qty] of qtyByProduct) {
+        const stock = stockMap.get(pid);
+        if (stock === undefined) continue; // no stock row = unmanaged
+        if (stock <= 0) {
+          const p = productMap.get(pid);
+          throw new ValidationError(
+            `Produk ${p?.name || pid} sudah habis`
+          );
+        }
+        if (stock < qty) {
+          const p = productMap.get(pid);
+          throw new ValidationError(
+            `Stok ${p?.name || pid} tidak mencukupi (tersisa ${stock}, diminta ${qty})`
+          );
+        }
+      }
+    }
+
     // Calculate prices (always from database, never from input)
     let subtotal = 0;
     const orderItems = input.items.map((item) => {
@@ -441,6 +481,46 @@ export class OrderService {
 
     // Create product map for quick lookup
     const productMap = new Map(products.map((p) => [p.id, p]));
+
+    // Stock validation: aggregate quantities per product across all line
+    // items and verify against BranchProduct.stock. Only enforced when
+    // the branch is known (QR table context provides it). A product
+    // WITHOUT a BranchProduct row is stock-unmanaged (legacy default,
+    // available) and stays purchasable; an existing row with stock 0 is
+    // strictly sold out.
+    if (resolvedBranchId) {
+      const qtyByProduct = new Map<string, number>();
+      for (const item of input.items) {
+        qtyByProduct.set(
+          item.productId,
+          (qtyByProduct.get(item.productId) || 0) + item.quantity
+        );
+      }
+      const branchStockRows = await prisma.branchProduct.findMany({
+        where: {
+          branchId: resolvedBranchId,
+          productId: { in: uniqueProductIds },
+        },
+        select: { productId: true, stock: true },
+      });
+      const stockMap = new Map(branchStockRows.map((r) => [r.productId, r.stock]));
+      for (const [pid, qty] of qtyByProduct) {
+        const stock = stockMap.get(pid);
+        if (stock === undefined) continue; // no stock row = unmanaged
+        if (stock <= 0) {
+          const p = productMap.get(pid);
+          throw new ValidationError(
+            `Produk ${p?.name || pid} sudah habis`
+          );
+        }
+        if (stock < qty) {
+          const p = productMap.get(pid);
+          throw new ValidationError(
+            `Stok ${p?.name || pid} tidak mencukupi (tersisa ${stock}, diminta ${qty})`
+          );
+        }
+      }
+    }
 
     // Calculate prices (always from database, never from input)
     let subtotal = 0;
@@ -1132,9 +1212,10 @@ export class OrderService {
     // (only from the status we validated above), so two concurrent or
     // double-clicked requests cannot both write the same transition — the
     // loser gets a ConflictError instead of a duplicate history row (LOW-7).
-    const updatedOrder = await prisma.$transaction(async (tx) => {
-      const updated = await tx.order.updateMany({
-        where: { id, status: order.status },
+    const updatedOrder = await prisma.$transaction(
+      async (tx) => {
+        const updated = await tx.order.updateMany({
+          where: { id, status: order.status },
         data: {
           status: input.status as "PENDING" | "CONFIRMED" | "PROCESSING" | "READY" | "COMPLETED" | "CANCELLED",
         },
@@ -1172,6 +1253,51 @@ export class OrderService {
         },
       });
 
+      // Stock deduction on COMPLETED — only when transitioning FROM a
+      // non-COMPLETED status (idempotency: COMPLETED→COMPLETED is a no-op).
+      // Uses atomic conditional UPDATE to prevent negative stock under
+      // concurrent access. The order must have a branchId for
+      // BranchProduct to be resolved; legacy orders without a branch
+      // skip stock deduction (no branch to deduct from).
+      if (
+        order.status !== "COMPLETED" &&
+        input.status === "COMPLETED" &&
+        order.branchId
+      ) {
+        // Aggregate quantity per product across order items
+        const freshItems = await tx.orderItem.findMany({
+          where: { orderId: id },
+          select: { productId: true, quantity: true },
+        });
+        const qtyByProduct = new Map<string, number>();
+        for (const item of freshItems) {
+          qtyByProduct.set(
+            item.productId,
+            (qtyByProduct.get(item.productId) || 0) + item.quantity
+          );
+        }
+
+        for (const [pid, qty] of qtyByProduct) {
+          // Atomic conditional deduction: stock must be >= requested qty.
+          // If two COMPLETED requests race, the loser hits 0 affected rows.
+          const result = await tx.branchProduct.updateMany({
+            where: {
+              branchId: order.branchId,
+              productId: pid,
+              stock: { gte: qty },
+            },
+            data: {
+              stock: { decrement: qty },
+            },
+          });
+          if (result.count === 0) {
+            throw new ConflictError(
+              `Stok produk tidak mencukupi — pesanan tidak dapat diselesaikan`
+            );
+          }
+        }
+      }
+
       // Free table when order is completed or cancelled
       if (
         (input.status === "COMPLETED" || input.status === "CANCELLED") &&
@@ -1184,7 +1310,9 @@ export class OrderService {
       }
 
       return fresh;
-    });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted }
+    );
 
     // ============================================================
     // WhatsApp notification trigger on READY status

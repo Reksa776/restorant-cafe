@@ -56,6 +56,13 @@ export const CreateCustomerOrderSchema = z.object({
    * field is a client hint only, never trusted blindly.
    */
   restaurantId: z.string().optional(),
+  /**
+   * Branch scope for tableless (TAKEAWAY/DELIVERY or picked-branch) orders.
+   * A client hint only — the server resolves it to a real ACTIVE branch
+   * that belongs to the resolved restaurant and compares the two; table
+   * context always overrides this value.
+   */
+  branchCode: z.string().trim().min(1).max(50).optional(),
   visitorCount: z.number().int().min(1).max(100).optional(),
   notes: z.string().optional(),
   items: z

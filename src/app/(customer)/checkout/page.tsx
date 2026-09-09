@@ -17,6 +17,7 @@ import {
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { useCustomerAuth } from "@/hooks/use-customer-auth";
+import { getErrorMessage } from "@/lib/api-error-handler";
 
 // ============================================================
 // Types
@@ -96,6 +97,7 @@ export default function CheckoutPage() {
     clearCart,
     tableContext,
     clearTableContext,
+    customerBranch,
   } = useCart();
 
   const { customer, isHydrated } = useCustomerAuth();
@@ -146,7 +148,10 @@ export default function CheckoutPage() {
         const res = await api.get("/public/promos", {
           params: {
             restaurantId,
-            branchCode: tableContext?.branchCode || undefined,
+            branchCode:
+              tableContext?.branchCode ??
+              customerBranch?.branchCode ??
+              undefined,
           },
         });
         const all = (res.data.data.promos || []) as Array<
@@ -157,7 +162,7 @@ export default function CheckoutPage() {
         setClaimedPromos([]);
       }
     })();
-  }, [isHydrated, customer, restaurantId]);
+  }, [isHydrated, customer, restaurantId, customerBranch]);
 
   /**
    * Run the non-mutating server-side voucher preview (F2). Requires login;
@@ -184,7 +189,8 @@ export default function CheckoutPage() {
         subtotal,
         // Branch scope from the table the customer is ordering at, so
         // branch-only promos validate correctly.
-        branchCode: tableContext?.branchCode || undefined,
+        branchCode:
+          tableContext?.branchCode ?? customerBranch?.branchCode ?? undefined,
       });
       setVoucherPreview(res.data.data as VoucherPreview);
     } catch (err) {
@@ -324,6 +330,12 @@ export default function CheckoutPage() {
         // Send the tenant so tableless (TAKEAWAY/DELIVERY) guest orders are
         // never resolved to a different active restaurant.
         restaurantId,
+        // Branch scope: QR table wins; otherwise the branch the customer
+        // picked (or explicitly left unset for legacy no-branch flows).
+        branchCode:
+          tableContext?.branchCode ??
+          customerBranch?.branchCode ??
+          undefined,
         tableId: tableContext?.tableId || (orderType === "DINE_IN" ? tableId : undefined),
         visitorCount: tableContext?.visitorCount || undefined,
         notes: notes.trim() || undefined,
@@ -390,8 +402,9 @@ export default function CheckoutPage() {
       }
     } catch (error: unknown) {
       setStep("form");
-      const message =
-        error instanceof Error ? error.message : "Gagal membuat pesanan";
+      // Prefer the server's message (e.g. "Produk sudah habis / stok tidak
+      // mencukupi") so stale-cart stock failures are clear to the customer.
+      const message = getErrorMessage(error) || "Gagal membuat pesanan";
       toast.error(message);
     } finally {
       setIsSubmitting(false);

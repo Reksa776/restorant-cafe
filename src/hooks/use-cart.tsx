@@ -55,6 +55,19 @@ export interface TableContext {
   branchCode?: string | null;
 }
 
+/**
+ * Customer-level branch selection (no table). Persisted when the customer
+ * picks a branch on /pilih-cabang. Distinct from `tableContext` (QR table)
+ * and from `admin_branch_id` (staff context). QR table context always wins
+ * over this generic selection.
+ */
+export interface CustomerBranchContext {
+  restaurantId: string;
+  branchId: string;
+  branchCode: string;
+  branchName: string;
+}
+
 export interface CartContextType {
   items: CartItem[];
   isHydrated: boolean;
@@ -98,6 +111,9 @@ export interface CartContextType {
   tableContext: TableContext | null;
   setTableContext: (ctx: TableContext) => void;
   clearTableContext: () => void;
+  customerBranch: CustomerBranchContext | null;
+  setCustomerBranch: (ctx: CustomerBranchContext) => void;
+  clearCustomerBranch: () => void;
   hasCustomizations: (index: number) => boolean;
 }
 
@@ -108,6 +124,7 @@ export interface CartContextType {
 const CART_STORAGE_KEY = "restaurant_cart";
 const RESTAURANT_STORAGE_KEY = "restaurant_id";
 const TABLE_CONTEXT_STORAGE_KEY = "table_context";
+const CUSTOMER_BRANCH_STORAGE_KEY = "customer_branch_context";
 const TAX_RATE = 0.1; // 10%
 const SERVICE_CHARGE_RATE = 0.05; // 5%
 
@@ -230,6 +247,42 @@ function saveTableContextToStorage(ctx: TableContext | null): void {
   }
 }
 
+function loadCustomerBranchFromStorage(): CustomerBranchContext | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(CUSTOMER_BRANCH_STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as CustomerBranchContext;
+    // Basic shape validation — a corrupted/partial record is ignored
+    // (it will be re-validated server-side by the / branch routing).
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      typeof parsed.restaurantId === "string" &&
+      typeof parsed.branchId === "string" &&
+      typeof parsed.branchCode === "string"
+    ) {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCustomerBranchToStorage(ctx: CustomerBranchContext | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (ctx) {
+      localStorage.setItem(CUSTOMER_BRANCH_STORAGE_KEY, JSON.stringify(ctx));
+    } else {
+      localStorage.removeItem(CUSTOMER_BRANCH_STORAGE_KEY);
+    }
+  } catch {
+    // fail silently
+  }
+}
+
 // ============================================================
 // Configuration Key for Merging
 // ============================================================
@@ -283,6 +336,8 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const [restaurantId, setRestaurantIdState] = useState<string | null>(null);
   const [isHydrated, setIsHydrated] = useState(false);
   const [tableContext, setTableContextState] = useState<TableContext | null>(null);
+  const [customerBranch, setCustomerBranchState] =
+    useState<CustomerBranchContext | null>(null);
   const hydrationRef = useRef(false);
 
   // Hydrate from localStorage AFTER mount (client-side only).
@@ -306,6 +361,11 @@ export function CartProvider({ children }: { children: ReactNode }) {
       setTableContextState(storedTableContext);
     }
 
+    const storedCustomerBranch = loadCustomerBranchFromStorage();
+    if (storedCustomerBranch) {
+      setCustomerBranchState(storedCustomerBranch);
+    }
+
     setIsHydrated(true);
   }, []);
 
@@ -320,6 +380,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
     if (!isHydrated) return;
     saveTableContextToStorage(tableContext);
   }, [tableContext, isHydrated]);
+
+  // Persist customer branch context to localStorage
+  useEffect(() => {
+    if (!isHydrated) return;
+    saveCustomerBranchToStorage(customerBranch);
+  }, [customerBranch, isHydrated]);
 
   // Multi-tab synchronization via storage event.
   useEffect(() => {
@@ -358,6 +424,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
           // ignore
         }
       }
+      if (event.key === CUSTOMER_BRANCH_STORAGE_KEY) {
+        if (!event.newValue) {
+          setCustomerBranchState(null);
+          return;
+        }
+        try {
+          setCustomerBranchState(JSON.parse(event.newValue));
+        } catch {
+          // ignore
+        }
+      }
     }
 
     window.addEventListener("storage", handleStorageChange);
@@ -379,6 +456,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const clearTableContext = useCallback(() => {
     setTableContextState(null);
     saveTableContextToStorage(null);
+  }, []);
+
+  // Customer branch selection (generic — no table)
+  const setCustomerBranch = useCallback((ctx: CustomerBranchContext) => {
+    setCustomerBranchState(ctx);
+    saveCustomerBranchToStorage(ctx);
+  }, []);
+
+  const clearCustomerBranch = useCallback(() => {
+    setCustomerBranchState(null);
+    saveCustomerBranchToStorage(null);
   }, []);
 
   // Simple add (no customization) — for products without option groups
@@ -573,6 +661,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
         tableContext,
         setTableContext,
         clearTableContext,
+        customerBranch,
+        setCustomerBranch,
+        clearCustomerBranch,
         hasCustomizations,
       }}
     >

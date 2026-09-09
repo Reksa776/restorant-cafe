@@ -156,28 +156,29 @@
 }
 
 /* ============================================================
-   Print Bill — isolate #bill-print-root when printing.
-   The dialog chrome is visibility:hidden; only the bill is printed.
-   The bill is pure client-side (window.print()) and never mutates
-   order/payment state. Paper size (A4 / 58mm / 80mm) is chosen in
-   the dialog; the physical paper is picked in the browser dialog.
+   Print Bill — dedicated print copy (#print-root).
+   PrintBillDialog portals a duplicate of the current bill to the
+   top of <body>. In print media every other <body> child is hidden
+   (display:none, so no layout/click space is consumed), leaving the
+   bill in NORMAL FLOW at page 1 top-left, where Chrome paginates it
+   naturally:
+     - A4 "Print All" spans multiple pages with no clipping.
+     - "Print Per Product" tickets each force break-after-page.
+   The screen preview stays untouched; this copy is hidden on screen.
+   Do NOT merge this into visibility-based or absolute-positioned
+   schemes — the centered print containing-block clips the left half
+   of an absolutely-positioned bill (Chrome print emulation), which
+   broke the previous implementation.
    ============================================================ */
 @media print {
-  body * {
-    visibility: hidden;
+  body > *:not(#print-root) {
+    display: none !important;
   }
-  #bill-print-root,
-  #bill-print-root * {
-    visibility: visible;
+  #print-root {
+    display: block !important;
   }
-  #bill-print-root {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    margin: 0;
-    padding: 0;
-  }
-  #bill-print-root .bill-inner {
-    max-width: none;
+  #print-root .bill-inner {
+    box-shadow: none;
+    border: none;
   }
 }

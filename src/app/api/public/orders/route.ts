@@ -90,6 +90,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Resolve a client-hinted branchCode only when the table did not already
+    // pin the branch. The code must map to an ACTIVE branch that belongs to
+    // the resolved restaurant — never trusted blindly.
+    if (!branchId && input.branchCode) {
+      const { prisma } = await import("@/lib/prisma");
+      const branch = await prisma.branch.findFirst({
+        where: {
+          restaurantId,
+          code: input.branchCode,
+          isActive: true,
+        },
+        select: { id: true },
+      });
+      // A branchCode that does not resolve is an explicit conflict — do not
+      // silently fall back to a legacy no-branch order.
+      if (!branch) {
+        throw new ValidationError("Cabang yang dipilih tidak valid atau tidak aktif");
+      }
+      branchId = branch.id;
+    }
+
     // Create order. The verified customer session (httpOnly cookie) is only
     // used when a promoCode is present — guest checkout stays anonymous.
     const order = await orderService.createCustomerOrder(

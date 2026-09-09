@@ -90,6 +90,9 @@ async function loadProducts(
         ...p,
         // Effective branch price (priceOverride ?? product.price).
         price: bp?.priceOverride != null ? bp.priceOverride : p.price,
+        // Per-branch stock. null = stock not tracked (no branch context or
+        // no BranchProduct row). 0 = sold out (page hides / blocks buying).
+        stock: bp?.stock ?? null,
       };
     });
 }
@@ -456,6 +459,7 @@ export class RecommendationService {
         return {
           ...p,
           price: bp?.priceOverride != null ? bp.priceOverride : p.price,
+          stock: bp?.stock ?? null,
         };
       });
   }

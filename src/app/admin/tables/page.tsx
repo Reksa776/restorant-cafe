@@ -412,7 +412,7 @@ export default function TablesPage() {
                 : "Tambahkan meja baru"}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
             <div>
               <Label htmlFor="tableNumber">Nomor Meja</Label>
               <Input
@@ -471,69 +471,71 @@ export default function TablesPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex flex-col items-center gap-3">
-            <div className="rounded-xl border border-gray-200 bg-white p-3">
-              {qrCode ? (
-                <img
-                  src={qrCode}
-                  alt={`QR Code Meja ${qrTable?.number ?? ""}`}
-                  className="w-52 h-52"
-                />
-              ) : (
-                <div className="w-52 h-52 flex items-center justify-center">
-                  <Loader2 className="h-8 w-8 animate-spin text-gray-300" />
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="flex flex-col items-center gap-3">
+              <div className="rounded-xl border border-gray-200 bg-white p-3">
+                {qrCode ? (
+                  <img
+                    src={qrCode}
+                    alt={`QR Code Meja ${qrTable?.number ?? ""}`}
+                    className="w-52 h-52"
+                  />
+                ) : (
+                  <div className="w-52 h-52 flex items-center justify-center">
+                    <Loader2 className="h-8 w-8 animate-spin text-gray-300" />
+                  </div>
+                )}
+              </div>
+
+              {/* Customer link */}
+              {qrTable && (
+                <div className="w-full flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <Link2 className="h-4 w-4 text-gray-400 flex-shrink-0" />
+                  <span
+                    className="text-xs text-gray-600 font-mono truncate flex-1"
+                    title={customerUrl(qrTable)}
+                  >
+                    {customerUrl(qrTable)}
+                  </span>
+                  <button
+                    onClick={() => handleCopyLink(qrTable)}
+                    className="text-xs font-medium text-gray-700 hover:text-black flex items-center gap-1 flex-shrink-0"
+                  >
+                    <Copy className="h-3 w-3" />
+                    Copy
+                  </button>
                 </div>
               )}
             </div>
 
-            {/* Customer link */}
-            {qrTable && (
-              <div className="w-full flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-                <Link2 className="h-4 w-4 text-gray-400 flex-shrink-0" />
-                <span
-                  className="text-xs text-gray-600 font-mono truncate flex-1"
-                  title={customerUrl(qrTable)}
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {qrTable && (
+                <a
+                  href={customerUrl(qrTable)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={cn(buttonVariants({ variant: "outline" }), "w-full")}
                 >
-                  {customerUrl(qrTable)}
-                </span>
-                <button
-                  onClick={() => handleCopyLink(qrTable)}
-                  className="text-xs font-medium text-gray-700 hover:text-black flex items-center gap-1 flex-shrink-0"
-                >
-                  <Copy className="h-3 w-3" />
-                  Copy
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            {qrTable && (
-              <a
-                href={customerUrl(qrTable)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className={cn(buttonVariants({ variant: "outline" }), "w-full")}
-              >
-                <ExternalLink className="h-4 w-4 mr-1.5" />
-                Buka Link
-              </a>
-            )}
-            {qrTable && (
-              <Button variant="outline" onClick={() => handleCopyLink(qrTable)}>
-                <Copy className="h-4 w-4 mr-1.5" />
-                Copy Link
+                  <ExternalLink className="h-4 w-4 mr-1.5" />
+                  Buka Link
+                </a>
+              )}
+              {qrTable && (
+                <Button variant="outline" onClick={() => handleCopyLink(qrTable)}>
+                  <Copy className="h-4 w-4 mr-1.5" />
+                  Copy Link
+                </Button>
+              )}
+              {qrCode && (
+                <Button variant="default" onClick={handleDownloadQr}>
+                  <Download className="h-4 w-4 mr-1.5" />
+                  Download QR
+                </Button>
+              )}
+              <Button variant="outline" onClick={() => setIsQrDialogOpen(false)}>
+                Tutup
               </Button>
-            )}
-            {qrCode && (
-              <Button variant="default" onClick={handleDownloadQr}>
-                <Download className="h-4 w-4 mr-1.5" />
-                Download QR
-              </Button>
-            )}
-            <Button variant="outline" onClick={() => setIsQrDialogOpen(false)}>
-              Tutup
-            </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

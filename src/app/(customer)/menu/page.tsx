@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState, useCallback, useMemo, useRef } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCart } from "@/hooks/use-cart";
 import Link from "next/link";
 import { Plus, Minus, ShoppingCart, UtensilsCrossed, X } from "lucide-react";
@@ -57,6 +57,8 @@ interface Product {
   category: { id: string; name: string };
   optionGroups: OptionGroup[];
   addons: Addon[];
+  /** Per-branch stock. null = stock not tracked (no branch context). */
+  stock?: number | null;
 }
 
 interface RestaurantInfo {
@@ -88,6 +90,7 @@ function normalizeProduct(p: Product): Product {
   return {
     ...p,
     price: Number(p.price) || 0,
+    stock: p.stock != null ? Number(p.stock) : null,
     optionGroups: (p.optionGroups || []).map((g) => ({
       ...g,
       options: (g.options || []).map((o) => ({
@@ -124,6 +127,15 @@ function hasCustomization(product: Product): boolean {
   );
 
   return hasActiveGroup || hasActiveAddon;
+}
+
+/**
+ * Whether a product is out of stock at the selected branch.
+ * Only applies when a branch context provides stock (stock != null).
+ * Business meaning: isAvailable = manual disable; stock = 0 inventory habis.
+ */
+function isSoldOut(product: Product): boolean {
+  return product.stock != null && product.stock <= 0;
 }
 
 // ============================================================
@@ -575,13 +587,21 @@ function ProductCard({
   onDecrease: () => void;
 }) {
   const needsCustomization = hasCustomization(product);
+  const soldOut = isSoldOut(product);
 
   return (
-    <div className="bg-white rounded-xl overflow-hidden flex flex-col">
+    <div className="bg-white rounded-xl overflow-hidden flex flex-col relative">
       {/* Image — only when available; 4:3, object-cover, top corners rounded */}
       {product.imageUrl && (
         <div className="relative w-full aspect-[4/3] bg-gray-100 overflow-hidden flex-shrink-0">
           <SafeMenuImage url={product.imageUrl} alt={product.name} />
+          {soldOut && (
+            <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
+              <span className="bg-black/70 text-white text-xs sm:text-sm font-bold px-3 py-1.5 rounded-md uppercase tracking-wider">
+                Habis
+              </span>
+            </div>
+          )}
         </div>
       )}
 
@@ -589,6 +609,11 @@ function ProductCard({
       <div className="p-3 sm:p-4 flex flex-col flex-1 min-w-0">
         <h3 className="text-sm sm:text-base font-semibold leading-snug line-clamp-2 text-gray-900">
           {product.name}
+          {soldOut && !product.imageUrl && (
+            <span className="ml-1.5 align-middle inline-block bg-gray-800 text-white text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider">
+              Habis
+            </span>
+          )}
         </h3>
         {product.description && (
           <p className="text-xs sm:text-sm text-gray-400 mt-1 leading-relaxed line-clamp-2">
@@ -603,7 +628,16 @@ function ProductCard({
           </p>
 
           <div className="mt-2 sm:mt-2.5">
-            {quantity === 0 ? (
+            {soldOut ? (
+              <button
+                type="button"
+                disabled
+                aria-label={`${product.name} habis`}
+                className="w-full min-h-10 rounded-lg bg-gray-100 text-gray-400 text-xs sm:text-sm font-medium px-3 cursor-not-allowed"
+              >
+                Habis
+              </button>
+            ) : quantity === 0 ? (
               needsCustomization ? (
                 <button
                   onClick={onCustomize}
@@ -682,6 +716,7 @@ function ProductCard({
 // ============================================================
 
 function MenuContent() {
+  const router = useRouter();
   const {
     addItem,
     addCustomizedItem,
@@ -694,6 +729,8 @@ function MenuContent() {
     setRestaurantId,
     tableContext,
     clearTableContext,
+    customerBranch,
+    clearCustomerBranch,
   } = useCart();
   const { applyBranding } = useBranding();
   const { customer, isHydrated: authHydrated } = useCustomerAuth();
@@ -746,6 +783,14 @@ function MenuContent() {
           const status = (error as { response?: { status?: number } })?.response
             ?.status;
           if (status !== 404) throw error;
+          // Stale saved context. Determine whether it came from a table
+          // (QR) or a generic customer branch selection and recover per
+          // source — never silently fall back to a different branch.
+          if (customerBranch && !tableContext) {
+            clearCustomerBranch();
+            router.replace("/pilih-cabang");
+            return;
+          }
           // Stale QR/table context (restaurant not found / inactive).
           staleContextSkipRef.current = true;
           clearTableContext();
@@ -776,7 +821,7 @@ function MenuContent() {
       const menuRes = await api.get("/public/menu", {
         params: {
           restaurantId: restaurantData.id,
-          branchCode: tableContext?.branchCode || undefined,
+          branchCode: tableContext?.branchCode ?? customerBranch?.branchCode ?? undefined,
         },
       });
       setCategories(menuRes.data.data.categories);
@@ -794,7 +839,7 @@ function MenuContent() {
           params: {
             restaurantId: restaurantData.id,
             limit: 8,
-            branchCode: tableContext?.branchCode || undefined,
+            branchCode: tableContext?.branchCode ?? customerBranch?.branchCode ?? undefined,
           },
         });
         const recProducts: Product[] = (
@@ -817,7 +862,7 @@ function MenuContent() {
               restaurantId: restaurantData.id,
               limit: 8,
               excludeIds: exclIds,
-              branchCode: tableContext?.branchCode || undefined,
+              branchCode: tableContext?.branchCode ?? customerBranch?.branchCode ?? undefined,
             },
           });
           setBestSellers(
@@ -834,11 +879,25 @@ function MenuContent() {
       }
     } catch (error) {
       console.error("Failed to load menu:", error);
+      // A 404 /public/menu with a saved (tableless) branch context means the
+      // customer's branch was deactivated/removed — clear it and re-ask
+      // instead of showing a misleading generic error or a stale menu.
+      const status = (error as { response?: { status?: number } })?.response
+        ?.status;
+      if (status === 404 && customerBranch && !tableContext) {
+        clearCustomerBranch();
+        router.replace("/pilih-cabang");
+        return;
+      }
+      if (status === 404 && !tableContext && !customerBranch) {
+        toast.error("Cabang tidak tersedia");
+        return;
+      }
       toast.error("Gagal memuat menu");
     } finally {
       setIsLoading(false);
     }
-  }, [clearTableContext, tableContext]);
+  }, [clearTableContext, tableContext, customerBranch, clearCustomerBranch, router]);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -850,10 +909,10 @@ function MenuContent() {
         staleContextSkipRef.current = false;
         return;
       }
-      loadMenu(tableContext?.restaurantId ?? null);
+      loadMenu(tableContext?.restaurantId ?? customerBranch?.restaurantId ?? null);
     }, 0);
     return () => clearTimeout(timer);
-  }, [isHydrated, tableContext, loadMenu]);
+  }, [isHydrated, tableContext, customerBranch, loadMenu]);
 
   // Re-personalize recommendations after login/logout (cookie is sent
   // automatically; the server re-validates the session + restaurant scope).
@@ -945,6 +1004,10 @@ function MenuContent() {
   };
 
   const handleAdd = (product: Product) => {
+    if (isSoldOut(product)) {
+      toast.error(`${product.name} sudah habis`);
+      return;
+    }
     // Defensive: never direct-add a product that needs customization
     if (hasCustomization(product)) {
       setEditingCartItemIndex(null);
@@ -962,6 +1025,12 @@ function MenuContent() {
   };
 
   const handleCustomizeAdd = (product: Product, state: CustomizationState) => {
+    if (isSoldOut(product)) {
+      toast.error(`${product.name} sudah habis`);
+      setCustomizingProduct(null);
+      setEditingCartItemIndex(null);
+      return;
+    }
     // Build selections array (prices are numbers — Prisma Decimal is coerced on load)
     const selections = product.optionGroups
       .map((group) => {
@@ -1076,6 +1145,10 @@ function MenuContent() {
   };
 
   const handleIncrease = (product: Product) => {
+    if (isSoldOut(product)) {
+      toast.error(`${product.name} sudah habis`);
+      return;
+    }
     const isCustomizable = hasCustomization(product);
     // For customizable products, any item with this productId is customized
     const idx = isCustomizable
@@ -1204,7 +1277,9 @@ function MenuContent() {
       {restaurant && (
         <PromoSection
           restaurantId={restaurant.id}
-          branchCode={tableContext?.branchCode}
+          branchCode={
+            tableContext?.branchCode ?? customerBranch?.branchCode ?? undefined
+          }
         />
       )}
 

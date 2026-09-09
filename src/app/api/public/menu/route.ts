@@ -115,6 +115,7 @@ export async function GET(request: NextRequest) {
       // Apply per-branch availability + price override resolution:
       //   availability = branchProduct.isAvailable ?? product.isAvailable
       //   price        = branchProduct.priceOverride ?? product.price
+      //   stock        = branchProduct.stock (0 = SOLD OUT)
       products: products
         .filter((p) => {
           if (!branchId) return true;
@@ -135,6 +136,7 @@ export async function GET(request: NextRequest) {
             optionGroups: p.optionGroups,
             addons: p.addons,
             isPriceOverride: bp?.priceOverride != null ? true : false,
+            stock: bp?.stock ?? null,
           };
         }),
     });
