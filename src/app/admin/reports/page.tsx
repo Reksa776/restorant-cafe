@@ -2,6 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -14,6 +21,7 @@ import {
   ShoppingCart,
   Package,
   TrendingUp,
+  Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useUserRole } from "@/hooks/use-user-role";
@@ -23,6 +31,8 @@ import {
   type ReportPeriod,
   type SalesReport,
 } from "@/services/report.service";
+import { ReportSubNav } from "@/components/admin/reports/report-nav";
+import { ReportBranchFilter } from "@/components/admin/reports/report-branch-filter";
 
 // ============================================================
 // Sales Report / Rekapitulasi Penjualan
@@ -58,6 +68,30 @@ const TYPE_LABEL: Record<string, string> = {
   DELIVERY: "Delivery",
 };
 
+const ORDER_TYPE_OPTIONS = [
+  { value: "all", label: "Semua Tipe" },
+  { value: "DINE_IN", label: "Dine In" },
+  { value: "TAKEAWAY", label: "Takeaway" },
+  { value: "DELIVERY", label: "Delivery" },
+];
+
+const PAYMENT_METHOD_OPTIONS = [
+  { value: "all", label: "Semua Metode" },
+  { value: "KASIR", label: "Cash (Kasir)" },
+  { value: "QRIS", label: "QRIS" },
+];
+
+const PAYMENT_STATUS_OPTIONS = [
+  { value: "all", label: "Semua Status" },
+  { value: "PAID", label: "Lunas" },
+  { value: "PENDING", label: "Pending" },
+  { value: "FAILED", label: "Gagal" },
+  { value: "EXPIRED", label: "Kedaluwarsa" },
+  { value: "UNPAID", label: "Belum Dibayar" },
+  { value: "REFUNDED", label: "Refund" },
+  { value: "CANCELLED", label: "Dibatalkan" },
+];
+
 const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -68,6 +102,9 @@ export default function ReportsPage() {
   const [period, setPeriod] = useState<ReportPeriod>("today");
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(todayStr());
+  const [orderTypeFilter, setOrderTypeFilter] = useState("all");
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [report, setReport] = useState<SalesReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -82,6 +119,10 @@ export default function ReportsPage() {
           period,
           startDate: period === "custom" ? startDate : undefined,
           endDate: period === "custom" ? endDate : undefined,
+          orderType: orderTypeFilter === "all" ? undefined : orderTypeFilter,
+          paymentMethod:
+            paymentMethodFilter === "all" ? undefined : paymentMethodFilter,
+          status: statusFilter === "all" ? undefined : statusFilter,
         });
         setReport(data);
       } catch (err) {
@@ -91,16 +132,14 @@ export default function ReportsPage() {
         setIsLoading(false);
       }
     },
-    [period, startDate, endDate]
+    [period, startDate, endDate, orderTypeFilter, paymentMethodFilter, statusFilter]
   );
 
   useEffect(() => {
-    // Wait for branch context so a stale admin_branch_id is cleared before
-    // firing the scoped report request (Main Outlet cashier 403 root cause).
     if (branchCtxLoading) return;
     loadReport(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, branchCtxLoading]);
+  }, [period, branchCtxLoading, orderTypeFilter, paymentMethodFilter, statusFilter]);
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -110,6 +149,10 @@ export default function ReportsPage() {
         params.set("startDate", startDate);
         params.set("endDate", endDate);
       }
+      if (orderTypeFilter !== "all") params.set("orderType", orderTypeFilter);
+      if (paymentMethodFilter !== "all") params.set("paymentMethod", paymentMethodFilter);
+      if (statusFilter !== "all") params.set("status", statusFilter);
+
       const res = await fetch(`/api/reports/sales/export?${params.toString()}`, {
         credentials: "same-origin",
       });
@@ -143,6 +186,7 @@ export default function ReportsPage() {
       { label: "Item Terjual", value: `${s.totalItemsSold}`, icon: Package },
       { label: "Rata-rata Order", value: rupiah(s.averageOrderValue), icon: Banknote },
       { label: "Total Diskon", value: rupiah(s.totalDiscount), icon: Banknote },
+      { label: "Total Refund", value: rupiah(s.totalRefund), icon: Undo2 },
       { label: "Total Pajak", value: rupiah(s.totalTax), icon: Landmark },
       { label: "Service Charge", value: rupiah(s.totalServiceCharge), icon: Landmark },
       { label: "Net Sales", value: rupiah(s.netSales), icon: TrendingUp },
@@ -179,7 +223,9 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* Period filter */}
+      <ReportSubNav />
+
+      {/* Period + filter bar */}
       <Card>
         <CardContent className="pt-6 space-y-4">
           <div className="flex flex-wrap items-center gap-2">
@@ -198,6 +244,7 @@ export default function ReportsPage() {
               </button>
             ))}
           </div>
+
           {period === "custom" && (
             <div className="flex flex-wrap items-center gap-3">
               <label className="text-sm text-gray-600">Dari</label>
@@ -219,6 +266,63 @@ export default function ReportsPage() {
               </Button>
             </div>
           )}
+
+          {/* Filter row: Branch | Tipe | Pembayaran | Status */}
+          <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-gray-100">
+            <ReportBranchFilter />
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Tipe</span>
+              <Select value={orderTypeFilter} onValueChange={(v) => v !== null && setOrderTypeFilter(v)}>
+                <SelectTrigger className="w-[150px] text-sm h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ORDER_TYPE_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Pembayaran</span>
+              <Select
+                value={paymentMethodFilter}
+                onValueChange={(v) => v !== null && setPaymentMethodFilter(v)}
+              >
+                <SelectTrigger className="w-[150px] text-sm h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_METHOD_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">Status</span>
+              <Select value={statusFilter} onValueChange={(v) => v !== null && setStatusFilter(v)}>
+                <SelectTrigger className="w-[150px] text-sm h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAYMENT_STATUS_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           {report && (
             <p className="text-xs text-gray-500">
               Periode:{" "}
@@ -243,8 +347,8 @@ export default function ReportsPage() {
         </div>
       ) : !report ? null : (
         <div className="space-y-6">
-          {/* Summary */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {/* Summary — 3×3 grid (9 cards) */}
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {summaryCards.map((card) => (
               <Card key={card.label}>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

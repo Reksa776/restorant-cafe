@@ -17,25 +17,20 @@ import {
 } from "@/lib/auth-helpers";
 
 // ============================================================
-// GET /api/reports/sales
-//   ?period=today|yesterday|week|month|custom&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
-//   &orderType=DINE_IN|TAKEAWAY|DELIVERY&paymentMethod=KASIR|QRIS&status=PAID|...
-//   &branchId=<id>
+// GET /api/reports/products
+//   ?period=...&startDate=...&endDate=...
+//   &branchId=<id>&categoryId=<id>&productId=<id>&status=PAID|...
+//   &sortBy=qty|revenue|gross
 //
-// ADMIN or CASHIER, restaurant-scoped (restaurantId from the session — never
-// from the query string). Branch is resolved server-side: an explicit
-// branchId param is validated against the user's assignments (it becomes the
-// sole read scope); otherwise the x-branch-id header hint + the user's branch
-// assignments apply. Revenue metrics always use the PAID subset; a non-PAID
-// status filter shows activity counts but never books non-paid as sales.
+// Product report aggregated from OrderItem (historical transaction source).
+// ADMIN or CASHIER, restaurant-scoped. Revenue always PAID-only. Unsold list
+// reflects the current active catalog; historical sold rows keep showing even
+// if a product is now inactive.
 // ============================================================
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-
-    // The explicit branchId filters the report; validated by
-    // requireRoles/requireRestaurantContext. Falls back to the header hint.
     const branchIdParam = searchParams.get("branchId") || undefined;
     const ctx = await requireRoles(
       ["ADMIN", "CASHIER"],
@@ -52,6 +47,11 @@ export async function GET(request: NextRequest) {
     const orderTypeRaw = searchParams.get("orderType");
     const paymentMethodRaw = searchParams.get("paymentMethod");
     const statusRaw = searchParams.get("status");
+    const categoryId = searchParams.get("categoryId") || null;
+    const productId = searchParams.get("productId") || null;
+    const sortByRaw = searchParams.get("sortBy");
+    const sortBy =
+      sortByRaw === "revenue" || sortByRaw === "gross" ? "revenue" : "qty";
 
     const filters: ReportFilters = {
       orderType: REPORT_ORDER_TYPES.includes(orderTypeRaw as never)
@@ -66,27 +66,26 @@ export async function GET(request: NextRequest) {
       branchId: branchIdParam ?? null,
     };
 
-    // Explicit branch param wins over the header; otherwise authorized
-    // branches (validated header / assignments / all-branch default).
     const branchFilters = branchIdParam
       ? [branchIdParam]
       : authorizedBranches(ctx);
 
-    const report = await reportService.getSalesReport(
-      ctx.restaurantId,
-      period,
+    const report = await reportService.getProductReport(ctx.restaurantId, period, {
       startDate,
       endDate,
       branchFilters,
-      filters
-    );
+      filters,
+      categoryId,
+      productId,
+      sortBy,
+    });
 
     return successResponse(report);
   } catch (error) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.code, error.statusCode);
     }
-    console.error("Error fetching sales report:", error);
-    return errorResponse("Failed to fetch sales report", "INTERNAL_ERROR", 500);
+    console.error("Error fetching product report:", error);
+    return errorResponse("Failed to fetch product report", "INTERNAL_ERROR", 500);
   }
 }
