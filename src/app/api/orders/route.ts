@@ -3,7 +3,7 @@ import { orderService } from "@/services/order/order.service";
 import { CreateOrderSchema, GetOrdersSchema } from "@/services/order/order.types";
 import { successResponse, createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireRoles, branchHintFrom, authorizedBranches, assertBranchInScope, effectiveWriteBranchId } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches, assertBranchInScope, effectiveWriteBranchId, requireOpenShift } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
@@ -53,6 +53,13 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) {
       throw new ValidationError(parsed.error.message);
     }
+
+    // A CASHIER may only create an order under an OPEN shift — rejected with
+    // SHIFT_NOT_OPEN BEFORE any write, so no order row, no payment row and no
+    // stock movement exist when the transaction is denied. Admin bypasses.
+    // The branch comes from effectiveWriteBranchId (session + authorized
+    // branch context) — never trusted from the client body.
+    await requireOpenShift(ctx, effectiveWriteBranchId(ctx));
 
     const order = await orderService.createOrder(
       parsed.data,

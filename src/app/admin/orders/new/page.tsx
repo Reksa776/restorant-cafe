@@ -30,6 +30,8 @@ import type { Order } from "@/services/order.service";
 import { paymentService } from "@/services/payment.service";
 import { customerService } from "@/services/customer.service";
 import { KasirQrisScreen } from "@/components/admin/orders/kasir-qris-screen";
+import { isShiftNotOpen } from "@/lib/api-error-handler";
+import { notifyShiftNotOpen } from "@/lib/notify-shift";
 
 // ============================================================
 // Types
@@ -733,6 +735,14 @@ export default function KasirManualOrderPage() {
     } catch (error) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = (error as any)?.response?.data?.message;
+      // A cashier without an open shift is blocked BEFORE the order is
+      // created (POST /api/orders enforces SHIFT_NOT_OPEN), so no order row,
+      // payment row or stock change exists. Surface the actionable shift
+      // notification instead of a generic error.
+      if (isShiftNotOpen(error)) {
+        notifyShiftNotOpen(msg);
+        return;
+      }
       toast.error(typeof msg === "string" && msg ? msg : "Gagal membuat pesanan");
     } finally {
       setSubmitting(false);
@@ -763,6 +773,10 @@ export default function KasirManualOrderPage() {
     } catch (error) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = (error as any)?.response?.data?.message;
+      if (isShiftNotOpen(error)) {
+        notifyShiftNotOpen(msg);
+        return;
+      }
       toast.error(typeof msg === "string" && msg ? msg : "Gagal memproses pembayaran kasir");
     } finally {
       setSubmitting(false);

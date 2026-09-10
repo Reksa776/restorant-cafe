@@ -45,6 +45,24 @@ export class ConflictError extends AppError {
   }
 }
 
+/**
+ * The acting user is a CASHIER and has no OPEN shift for the branch the
+ * transaction would be written to. Keep this distinct from the generic
+ * CONFLICT code so the frontend can show "Shift belum dibuka" with a
+ * "Buka Shift" action instead of a generic error. 409 matches the previous
+ * inline ConflictError status so no existing client depends on a different
+ * HTTP code for this failure.
+ */
+export class ShiftNotOpenError extends AppError {
+  constructor(
+    message: string =
+      "Shift belum dibuka. Silakan buka shift terlebih dahulu untuk memproses transaksi."
+  ) {
+    super(message, 409, "SHIFT_NOT_OPEN");
+    this.name = "ShiftNotOpenError";
+  }
+}
+
 export class PaymentError extends AppError {
   constructor(message: string = "Payment failed") {
     super(message, 422, "PAYMENT_ERROR");

@@ -49,6 +49,27 @@ export function getErrorMessage(error: unknown): string | null {
   return err?.response?.data?.message ?? null;
 }
 
+/**
+ * The semantic error code from the standard `{ success, message, error }`
+ * envelope (`response.data.error`), e.g. "SHIFT_NOT_OPEN", "ALREADY_PAID",
+ * "FORBIDDEN". Returns null when the error has no server envelope.
+ */
+export function getErrorCode(error: unknown): string | null {
+  const err = error as {
+    response?: { data?: { error?: string } };
+  };
+  return err?.response?.data?.error ?? null;
+}
+
+/**
+ * True when the backend rejected the operation because the acting CASHIER has
+ * no OPEN shift for the target branch. Drives the "Shift belum dibuka" toast
+ * with a "Buka Shift" action instead of a generic error.
+ */
+export function isShiftNotOpen(error: unknown): boolean {
+  return getErrorCode(error) === "SHIFT_NOT_OPEN";
+}
+
 /** True when the error is a 403 authorization failure (hard, non-retryable). */
 export function isForbidden(error: unknown): boolean {
   return getErrorStatus(error) === 403;

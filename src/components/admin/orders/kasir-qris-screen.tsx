@@ -14,6 +14,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { paymentService, type Payment } from "@/services/payment.service";
+import { isShiftNotOpen } from "@/lib/api-error-handler";
+import { notifyShiftNotOpen } from "@/lib/notify-shift";
 
 // Polling cadence matches the customer payment page + barcode flow (4s).
 // Same existing payment-status infrastructure — no new polling engine.
@@ -95,6 +97,15 @@ export function KasirQrisScreen({
       }
     } catch (error) {
       const msg = errorMessage(error);
+      // A kasir-initiated QRIS intent (including repayment) requires an open
+      // shift — SHIFT_NOT_OPEN shows the shift notification with a "Buka
+      // Shift" action, never a generic error.
+      if (isShiftNotOpen(error)) {
+        setErrorMsg(null);
+        notifyShiftNotOpen(msg);
+        setStatus("error");
+        return;
+      }
       // An already-PAID order must never produce a new payment — the server
       // rejects it with "Order already paid". Surface it as the paid state.
       if (/already paid|sudah dibayar|sudah lunas/i.test(msg)) {

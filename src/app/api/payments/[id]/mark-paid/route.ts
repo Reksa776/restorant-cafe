@@ -61,9 +61,13 @@ export async function POST(
       authorizedBranches(ctx)
     );
 
-    // A second attempt on an already-PAID payment is blocked explicitly.
+    // A second attempt on an already-PAID payment is blocked explicitly. The
+    // ALREADY_PAID code (distinct from the generic CONFLICT used by workflow
+    // conflicts such as a missing cashier shift) lets clients show "paid"
+    // ONLY for a genuinely settled payment — never for a failed collection
+    // that left the database UNPAID.
     if (result.alreadyPaid) {
-      return errorResponse("Payment already completed", "CONFLICT", 409);
+      return errorResponse("Payment already completed", "ALREADY_PAID", 409);
     }
 
     return successResponse(

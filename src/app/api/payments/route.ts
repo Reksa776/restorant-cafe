@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { paymentService } from "@/services/payment/payment.service";
 import { successResponse, createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
-import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
+import { requireRoles, branchHintFrom, authorizedBranches, effectiveWriteBranchId, requireOpenShift } from "@/lib/auth-helpers";
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,6 +34,12 @@ export async function POST(request: NextRequest) {
     const branchId = branchHintFrom(request);
     const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const body = await request.json();
+
+    // A CASHIER may only create a payment (KASIR cash intent, kasir QRIS once
+    // open shift, or kasir VA) under an OPEN shift. Rejected with
+    // SHIFT_NOT_OPEN BEFORE any payment/order write. Admin bypasses. The
+    // branch is resolved server-side (session + authorized branch context).
+    await requireOpenShift(ctx, effectiveWriteBranchId(ctx));
 
     // Optional explicit payment intent on this admin route: "QRIS" (kasir
     // QRIS) or "KASIR" (kasir cash). Absent = legacy gateway flow.

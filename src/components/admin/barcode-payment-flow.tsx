@@ -24,6 +24,8 @@ import {
 import { OrderScanner } from "@/components/admin/order-scanner";
 import { paymentService, type Payment } from "@/services/payment.service";
 import { orderService, type Order } from "@/services/order.service";
+import { isShiftNotOpen } from "@/lib/api-error-handler";
+import { notifyShiftNotOpen } from "@/lib/notify-shift";
 
 // The barcode flow uses the exported domain types as the source of truth:
 // - Order from the order service (its payments rows are the shared Payment
@@ -315,17 +317,36 @@ export function BarcodePaymentFlow({
       console.error("Cash payment failed:", error);
       // Race guard: between the fresh snapshot above and mark-paid, the order
       // may have been settled by another actor (parallel tab, QRIS webhook
-      // that won the race). The server blocks the double pay — surface the
-      // "paid" state instead of an error.
+      // that won the race). The server blocks the double pay.
+      //
+      // ONLY a genuinely ALREADY-SETTLED order/payment is surfaced as "paid".
+      // Every other conflict — most importantly the cashier's missing open
+      // shift (409 SHIFT_NOT_OPEN), but also a cancelled order or a duplicate
+      // cash-intent guard — is an honest error that MUST NOT flip the UI to
+      // "Order sudah dibayar" while the database still says UNPAID. The server
+      // message is authoritative.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const status = (error as any)?.response?.status;
+      const resp = (error as any)?.response;
+      const code = resp?.data?.error;
       const message =
-        error instanceof Error
-          ? error.message
-          : "Gagal memproses pembayaran cash.";
+        typeof resp?.data?.message === "string" && resp.data.message
+          ? resp.data.message
+          : error instanceof Error
+            ? error.message
+            : "Gagal memproses pembayaran cash.";
+      if (isShiftNotOpen(error)) {
+        // No open shift for this branch — clear, actionable notification on a
+        // stable server code (never a generic 409). The cash form stays so the
+        // cashier can retry once a shift is opened.
+        setErrorMsg(null);
+        notifyShiftNotOpen(message);
+        return;
+      }
       if (
-        status === 409 ||
-        /already paid|sudah dibayar|sudah lunas|already completed/i.test(message)
+        code === "ALREADY_PAID" ||
+        /already paid|already completed|sudah dibayar|sudah lunas/i.test(
+          message
+        )
       ) {
         setPayStatus("paid");
         setErrorMsg(null);
@@ -385,12 +406,29 @@ export function BarcodePaymentFlow({
       // Race guard: the order may have been settled (CASH collected in a
       // parallel tab, or a webhook) between the fresh snapshot and the intent
       // creation — the server rejects with "Order already paid". Surface the
-      // paid state, never a new intent and never an error screen.
+      // paid state, never a new intent and never an error screen. Only the
+      // already-settled signals qualify — any other server error (e.g. a
+      // cancelled order) is shown honestly with its real message.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const qrisResp = (error as any)?.response;
       const rawMessage =
-        error instanceof Error
-          ? error.message
-          : "Gagal membuat pembayaran QRIS.";
-      if (/already paid|sudah dibayar|sudah lunas/i.test(rawMessage)) {
+        typeof qrisResp?.data?.message === "string" && qrisResp.data.message
+          ? qrisResp.data.message
+          : error instanceof Error
+            ? error.message
+            : "Gagal membuat pembayaran QRIS.";
+      if (isShiftNotOpen(error)) {
+        // No open shift for this branch — actionable shift notification
+        // instead of a generic 409. Stay on the QRIS choice so the cashier can
+        // retry after opening a shift.
+        setErrorMsg(null);
+        notifyShiftNotOpen(rawMessage);
+        return;
+      }
+      if (
+        qrisResp?.data?.error === "ALREADY_PAID" ||
+        /already paid|sudah dibayar|sudah lunas/i.test(rawMessage)
+      ) {
         setPendingPayment(null);
         setPayStatus("paid");
         setErrorMsg(null);

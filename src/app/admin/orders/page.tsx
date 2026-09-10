@@ -13,8 +13,10 @@ import { useBranchContext } from "@/hooks/use-branch-context";
 import {
   normalizeApiError,
   isUnauthorized,
+  isShiftNotOpen,
   type NormalizedApiError,
 } from "@/lib/api-error-handler";
+import { notifyShiftNotOpen } from "@/lib/notify-shift";
 import { Button } from "@/components/ui/button";
 import { OrderSummary } from "@/components/admin/orders/order-summary";
 import { OrderFilters } from "@/components/admin/orders/order-filters";
@@ -192,6 +194,12 @@ export default function OrdersPage() {
       setSelectedOrder(fresh);
     } catch (err) {
       console.error("Failed to mark cashier payment paid:", err);
+      // Missing open shift is the actionable "Shift belum dibuka" toast, not a
+      // generic failure. The payment stays UNPAID in the DB.
+      if (isShiftNotOpen(err)) {
+        notifyShiftNotOpen();
+        return;
+      }
       toast.error("Gagal menandai pembayaran kasir");
     } finally {
       setIsUpdating(false);

@@ -21,8 +21,10 @@ import { useBranchContext } from "@/hooks/use-branch-context";
 import {
   normalizeApiError,
   isUnauthorized,
+  isShiftNotOpen,
   type NormalizedApiError,
 } from "@/lib/api-error-handler";
+import { notifyShiftNotOpen } from "@/lib/notify-shift";
 
 const statusColors: Record<string, string> = {
   UNPAID: "bg-gray-100 text-gray-800",
@@ -93,6 +95,12 @@ export default function PaymentsPage() {
       await loadPayments(true);
     } catch (error) {
       console.error("Failed to mark cashier payment paid:", error);
+      // Missing open shift is the actionable "Shift belum dibuka" toast, not a
+      // generic failure. The payment stays UNPAID in the DB.
+      if (isShiftNotOpen(error)) {
+        notifyShiftNotOpen();
+        return;
+      }
       toast.error("Gagal menandai pembayaran kasir");
     } finally {
       setMarkingId(null);

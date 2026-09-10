@@ -4,6 +4,7 @@ import {
   PaymentError,
   ConflictError,
   ValidationError,
+  ShiftNotOpenError,
 } from "@/lib/errors";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
@@ -702,7 +703,9 @@ export class PaymentService {
           },
         });
         if (!openShift) {
-          throw new ConflictError(
+          // Distinct SHIFT_NOT_OPEN code so the frontend shows "Shift belum
+          // dibuka" + a "Buka Shift" action instead of a generic 409.
+          throw new ShiftNotOpenError(
             "Kasir harus membuka shift terlebih dahulu sebelum menerima pembayaran"
           );
         }

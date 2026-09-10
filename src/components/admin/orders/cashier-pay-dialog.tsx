@@ -16,6 +16,8 @@ import { Banknote, CheckCircle2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { paymentService } from "@/services/payment.service";
 import type { Order } from "@/services/order.service";
+import { isShiftNotOpen } from "@/lib/api-error-handler";
+import { notifyShiftNotOpen } from "@/lib/notify-shift";
 
 const rupiah = (n: number) => `Rp${n.toLocaleString("id-ID")}`;
 
@@ -145,8 +147,26 @@ export function CashierPayDialog({
       );
     } catch (error) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const msg = (error as any)?.response?.data?.message;
-      if ((error as { response?: { status?: number } })?.response?.status === 409) {
+      const res = (error as any)?.response;
+      const msg = res?.data?.message;
+      const code = res?.data?.error;
+      // Missing open shift is its own clear notification with a "Buka Shift"
+      // CTA — never a generic conflict. The dialog stays open so the cashier
+      // can retry after opening a shift.
+      if (isShiftNotOpen(error)) {
+        notifyShiftNotOpen(msg);
+        return;
+      }
+      // Only a genuinely ALREADY-SETTLED payment/order is reported as
+      // "already completed" — any other conflict (e.g. a cancelled order)
+      // shows its real server message instead of a misleading success line.
+      if (
+        code === "ALREADY_PAID" ||
+        (res?.status === 409 &&
+          /already completed|already paid|sudah dibayar|sudah lunas/i.test(
+            typeof msg === "string" ? msg : ""
+          ))
+      ) {
         toast.error("Payment already completed");
         onOpenChange(false);
         return;

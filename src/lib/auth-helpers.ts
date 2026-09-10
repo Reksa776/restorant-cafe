@@ -4,6 +4,7 @@ import {
   UnauthorizedError,
   ForbiddenError,
   ValidationError,
+  ShiftNotOpenError,
 } from "@/lib/errors";
 
 // ============================================================
@@ -244,6 +245,56 @@ export async function assertBranchInScope(
   if (!branch) {
     throw new ForbiddenError("Cabang tidak ditemukan");
   }
+}
+
+/**
+ * Primitive shift guard for a user + branch (no AuthenticatedContext needed).
+ *
+ * Throws ShiftNotOpenError when the user has no OPEN shift for the branch.
+ * Scoped by restaurantId + userId + branch (when given) — server-authoritative,
+ * never trusting the client. Reuses the existing shift service lookup so this
+ * is the ONE place a "shift must be open" decision is made.
+ */
+export async function requireOpenShiftForUser(
+  restaurantId: string,
+  userId: string,
+  branchId?: string | null
+): Promise<void> {
+  const { shiftService } = await import("@/services/shift/shift.service");
+  const openShift = await shiftService.getMyOpenShift(
+    restaurantId,
+    userId,
+    branchId ? [branchId] : undefined
+  );
+  if (!openShift) {
+    throw new ShiftNotOpenError();
+  }
+}
+
+/**
+ * Central shift guard for kasir transactions.
+ *
+ * - ADMIN never requires a shift (existing business rule: admins keep the
+ *   unlinked quick-mark behaviour — see paymentService.markCashierPaymentPaid).
+ * - CASHIER must have an OPEN shift for the branch the transaction targets.
+ * - The target branch is resolved SERVER-SIDE via effectiveWriteBranchId
+ *   (header branch / single assignment), never from an unvalidated client id.
+ *
+ * Call this at the TOP of every backend route that runs a kasir
+ * order/transaction (create order, create payment, mark paid). Throwing
+ * ShiftNotOpenError lets the route mapper emit `code: SHIFT_NOT_OPEN` so the
+ * frontend can translate it into a "Shift belum dibuka" notification.
+ */
+export async function requireOpenShift(
+  ctx: AuthenticatedContext,
+  branchId?: string | null
+): Promise<void> {
+  if (ctx.role === "ADMIN") return;
+  await requireOpenShiftForUser(
+    ctx.restaurantId,
+    ctx.userId,
+    branchId ?? effectiveWriteBranchId(ctx)
+  );
 }
 
 /**
