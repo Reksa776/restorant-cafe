@@ -22,6 +22,7 @@ import {
   Menu,
   X,
   Boxes,
+  Receipt,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
@@ -47,6 +48,7 @@ const navigation: NavItem[] = [
   { name: "Orders", href: "/admin/orders", icon: ShoppingCart, roles: ["ADMIN", "CASHIER"] },
   { name: "Payments", href: "/admin/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
   { name: "Shifts", href: "/admin/shifts", icon: Clock, roles: ["ADMIN", "CASHIER"] },
+  { name: "Riwayat Penjualan", href: "/admin/cashier/sales", icon: Receipt, roles: ["ADMIN", "CASHIER"] },
   { name: "Reports", href: "/admin/reports", icon: BarChart3, roles: ["ADMIN", "CASHIER"] },
   { name: "Marketing", href: "/admin/marketing", icon: Megaphone, roles: ["ADMIN"] },
   { name: "Users", href: "/admin/users", icon: Users, roles: ["ADMIN"] },
