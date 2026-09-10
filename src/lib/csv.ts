@@ -7,10 +7,24 @@
 // - CRLF (Windows) line endings for maximum spreadsheet compatibility
 // ============================================================
 
-/** Escape a single CSV field per RFC 4180. Null/undefined → empty cell. */
+/**
+ * Escape a single CSV field per RFC 4180. Null/undefined → empty cell.
+ *
+ * Formula-injection guard: a TEXT cell that starts with `=`, `+`, `-`, `@`
+ * (or tab/CR) is prefixed with a single quote so Excel/LibreOffice never
+ * evaluates it as a formula. Numeric cells are passed as JS numbers and are
+ * never touched, so negative values survive unchanged.
+ */
 export function csvCell(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return "";
   const str = String(value);
+  // Guard spreadsheet-formula injection on text fields only.
+  if (typeof value === "string" && /^[=+\-@\t\r]/.test(str)) {
+    const guarded = `'${str}`;
+    return /[",\n\r]/.test(guarded)
+      ? `"${guarded.replace(/"/g, '""')}"`
+      : guarded;
+  }
   // Quote when the value contains a comma, quote, or newline.
   if (/[",\n\r]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;

@@ -224,9 +224,30 @@ export function AdminRealtimeProvider({
     };
     document.addEventListener("visibilitychange", onVisibility);
 
+    // A hard navigation / tab close must proactively release the SSE. React
+    // does NOT run effect cleanup when the browser tears the document down, so
+    // without this the previous page's EventSource socket can stay open and
+    // pin one of the browser's per-origin connection slots — after a handful
+    // of full-page navigations the app becomes unreachable (every request
+    // queued behind the stale streams).
+    const onPageHide = () => disconnect();
+    // Restored from the back/forward cache: the page was never re-mounted, so
+    // re-open the stream that pagehide closed.
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted && mountedRef.current && !esRef.current) {
+        attemptRef.current = 0;
+        updateStatus("connecting");
+        connectRef.current();
+      }
+    };
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
+
     return () => {
       mountedRef.current = false;
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
       clearTimers();
       disconnect();
       // Drop all subscriptions when the shell unmounts.

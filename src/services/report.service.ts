@@ -184,6 +184,117 @@ export interface PaymentReport {
   };
 }
 
+export type PurchaseReportStatus = "DRAFT" | "RECEIVED" | "CANCELLED";
+
+export interface PurchaseReport {
+  period: ReportPeriod;
+  range: { start: string; end: string };
+  filters: {
+    branchId: string | null;
+    supplierId: string | null;
+    status: string | null;
+  };
+  summary: {
+    totalPurchases: number;
+    totalValue: number;
+    totalReceived: number;
+    totalCancelled: number;
+    totalItemsPurchased: number;
+    totalQuantity: number;
+  };
+  items: Array<{
+    id: string;
+    date: string;
+    supplierName: string | null;
+    branchCode: string | null;
+    branchName: string | null;
+    status: string;
+    itemCount: number;
+    totalQuantity: number;
+    total: number;
+    createdBy: string | null;
+    receivedAt: string | null;
+  }>;
+  productBreakdown: Array<{
+    productId: string;
+    name: string | null;
+    quantityPurchased: number;
+    totalCost: number;
+    averageUnitCost: number;
+    numberOfPurchases: number;
+  }>;
+  supplierBreakdown: Array<{
+    supplierId: string;
+    name: string | null;
+    numberOfPurchases: number;
+    quantity: number;
+    totalValue: number;
+  }>;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface InventoryReport {
+  period: ReportPeriod;
+  range: { start: string; end: string };
+  filters: {
+    branchId: string | null;
+    productId: string | null;
+    categoryId: string | null;
+    type: string | null;
+  };
+  summary: {
+    totalStock: number;
+    stockIn: number;
+    stockOut: number;
+    adjustment: number;
+    movements: number;
+  };
+  items: Array<{
+    id: string;
+    date: string;
+    branchId: string;
+    branchCode: string | null;
+    branchName: string | null;
+    productId: string;
+    productName: string | null;
+    type: "IN" | "OUT" | "ADJUSTMENT";
+    quantity: number;
+    balanceAfter: number;
+    refType: string | null;
+    refId: string | null;
+    reason: string | null;
+    userId: string | null;
+    userName: string | null;
+  }>;
+  productStockSummary: Array<{
+    branchId: string;
+    productId: string;
+    productName: string | null;
+    currentStock: number;
+    stockIn: number;
+    stockOut: number;
+    adjustment: number;
+    lastMovement: string | null;
+  }>;
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+  stockPagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
 export interface MultiOutletReport {
   period: ReportPeriod;
   range: { start: string; end: string };
@@ -300,6 +411,35 @@ export const reportService = {
     branchId?: string;
   }): Promise<MultiOutletReport> {
     const response = await api.get("/reports/multi-outlet", { params });
+    return response.data.data;
+  },
+
+  async getPurchaseReport(params?: {
+    period?: ReportPeriod;
+    startDate?: string;
+    endDate?: string;
+    branchId?: string;
+    supplierId?: string;
+    status?: PurchaseReportStatus;
+    page?: number;
+    limit?: number;
+  }): Promise<PurchaseReport> {
+    const response = await api.get("/reports/purchases", { params });
+    return response.data.data;
+  },
+
+  async getInventoryReport(params?: {
+    period?: ReportPeriod;
+    startDate?: string;
+    endDate?: string;
+    branchId?: string;
+    productId?: string;
+    categoryId?: string;
+    type?: "IN" | "OUT" | "ADJUSTMENT";
+    page?: number;
+    limit?: number;
+  }): Promise<InventoryReport> {
+    const response = await api.get("/reports/inventory", { params });
     return response.data.data;
   },
 };

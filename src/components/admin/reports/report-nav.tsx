@@ -14,6 +14,8 @@ import { useUserRole } from "@/hooks/use-user-role";
 const REPORTS = [
   { href: "/admin/reports", label: "Penjualan" },
   { href: "/admin/reports/products", label: "Produk" },
+  { href: "/admin/reports/purchases", label: "Pembelian" },
+  { href: "/admin/reports/inventory", label: "Inventory" },
   { href: "/admin/reports/shift-sales", label: "Per Shift" },
   { href: "/admin/reports/payments", label: "Pembayaran" },
   { href: "/admin/reports/multi-outlet", label: "Multi Outlet", adminOnly: true },

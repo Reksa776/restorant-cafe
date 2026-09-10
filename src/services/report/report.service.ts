@@ -43,6 +43,9 @@ export const REPORT_PAYMENT_STATUSES = [
   "CANCELLED",
 ] as const;
 
+export const REPORT_PURCHASE_STATUSES = ["DRAFT", "RECEIVED", "CANCELLED"] as const;
+export const REPORT_STOCK_MOVEMENT_TYPES = ["IN", "OUT", "ADJUSTMENT"] as const;
+
 export interface ReportRange {
   start: Date;
   end: Date;
@@ -216,6 +219,496 @@ function orderFragment(
 }
 
 export class ReportService {
+  // ============================================================
+  // WAVE 6 — LAPORAN PEMBELIAN
+  // ============================================================
+
+  /**
+   * Purchase report (purchase VALUE/quantity/status — never COGS, never
+   * profit). Aggregations are server-side (Prisma aggregate + SQL GROUP BY).
+   *
+   * Semantics:
+   *  - DRAFT   = planned purchase, NOT stock in.
+   *  - RECEIVED = goods actually received (StockMovement IN applied).
+   *  - CANCELLED = aborted draft, never received stock.
+   *  - "Total Purchase Value" is the purchase value of the scoped set — it
+   *    is NOT labelled profit/expense/COGS (accounting does not exist yet).
+   *  - "Created By" is only available for RECEIVED purchases (via the
+   *    PURCHASE_RECEIVE stock movement's userId); the Purchase model does not
+   *    store a creator, so DRAFT/CANCELLED rows report null.
+   */
+  async getPurchaseReport(
+    restaurantId: string,
+    period: ReportPeriod,
+    opts?: {
+      startDate?: string;
+      endDate?: string;
+      branchFilters?: string[] | null;
+      filters?: {
+        branchId?: string | null;
+        supplierId?: string | null;
+        status?: "DRAFT" | "RECEIVED" | "CANCELLED" | null;
+      };
+      pagination?: ReportPagination;
+    }
+  ) {
+    const range = resolveReportRange(period, opts?.startDate, opts?.endDate);
+    const branchFilters = opts?.branchFilters;
+    const { branchId, supplierId, status } = opts?.filters || {};
+
+    const page = Math.max(1, opts?.pagination?.page ?? 1);
+    // The UI route clamps its page size to 100 before calling; the CSV export
+    // legitimately requests a larger bounded page so the download is complete.
+    // Keep a hard service-level ceiling so no caller can request unbounded data.
+    const limit = Math.min(5000, Math.max(1, opts?.pagination?.limit ?? 50));
+    const skip = (page - 1) * limit;
+
+    // baseWhere excludes the status filter so received/cancelled counts can
+    // be narrowed consistently below (with a status filter, the summary only
+    // counts that status — matching the sales-report filter semantics).
+    const baseWhere: Prisma.PurchaseWhereInput = {
+      restaurantId,
+      ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
+      ...(branchId ? { branchId } : {}),
+      ...(supplierId ? { supplierId } : {}),
+      createdAt: { gte: range.start, lte: range.end },
+    };
+    const where: Prisma.PurchaseWhereInput = {
+      ...baseWhere,
+      ...(status ? { status } : {}),
+    };
+
+    // Qualified branch fragment for raw SQL on the `p` alias.
+    const pBranchSql =
+      branchFilters?.length
+        ? Prisma.sql`AND p.\`branchId\` IN (${Prisma.join([...branchFilters])})`
+        : Prisma.empty;
+
+    const [agg, receivedCountAll, cancelledCountAll, itemAgg, detailRows, productRows, supplierRows] =
+      await Promise.all([
+        prisma.purchase.aggregate({
+          where,
+          _count: { _all: true },
+          _sum: { total: true },
+        }),
+        prisma.purchase.count({ where: { ...baseWhere, status: "RECEIVED" } }),
+        prisma.purchase.count({ where: { ...baseWhere, status: "CANCELLED" } }),
+        prisma.purchaseItem.aggregate({
+          where: { purchase: { is: where } },
+          _count: { _all: true },
+          _sum: { quantity: true },
+        }),
+        // Purchase detail rows (bounded + paginated). One grouped query —
+        // item count + total quantity per purchase, never per-row lookups.
+        prisma.$queryRaw<
+          Array<{
+            id: string;
+            status: string;
+            total: number | bigint | string;
+            receivedAt: Date | null;
+            createdAt: Date;
+            supplierName: string | null;
+            branchCode: string | null;
+            branchName: string | null;
+            itemCount: number | bigint;
+            totalQty: number | bigint | string;
+          }>
+        >`
+          SELECT p.\`id\` AS id,
+                 p.\`status\` AS status,
+                 p.\`total\` AS total,
+                 p.\`receivedAt\` AS receivedAt,
+                 p.\`createdAt\` AS createdAt,
+                 s.\`name\` AS supplierName,
+                 b.\`code\` AS branchCode,
+                 b.\`name\` AS branchName,
+                 COUNT(pi.\`id\`) AS itemCount,
+                 COALESCE(SUM(pi.\`quantity\`), 0) AS totalQty
+          FROM \`purchase\` p
+          JOIN \`supplier\` s ON s.\`id\` = p.\`supplierId\`
+          JOIN \`branch\` b ON b.\`id\` = p.\`branchId\`
+          LEFT JOIN \`purchaseitem\` pi ON pi.\`purchaseId\` = p.\`id\`
+          WHERE p.\`restaurantId\` = ${restaurantId}
+            AND p.\`createdAt\` >= ${range.start}
+            AND p.\`createdAt\` <= ${range.end}
+            ${pBranchSql}
+            ${branchId ? Prisma.sql`AND p.\`branchId\` = ${branchId}` : Prisma.empty}
+            ${supplierId ? Prisma.sql`AND p.\`supplierId\` = ${supplierId}` : Prisma.empty}
+            ${status ? Prisma.sql`AND p.\`status\` = ${status}` : Prisma.empty}
+          GROUP BY p.\`id\`, p.\`status\`, p.\`total\`, p.\`receivedAt\`, p.\`createdAt\`,
+                   s.\`name\`, b.\`code\`, b.\`name\`
+          ORDER BY p.\`createdAt\` DESC
+          LIMIT ${limit} OFFSET ${skip}
+        `,
+        // Product breakdown — quantity/cost per product over the SAME scoped
+        // set (a status filter narrows it; with none, DRAFT/CANCELLED
+        // purchases are still reported as "purchased quantity", never as
+        // received stock — the inventory report owns stock semantics).
+        prisma.$queryRaw<
+          Array<{
+            productId: string;
+            purchases: number | bigint;
+            qty: number | bigint | string;
+            totalCost: number | bigint | string;
+            avgUnitCost: number | bigint | string;
+          }>
+        >`
+          SELECT pi.\`productId\` AS productId,
+                 COUNT(DISTINCT pi.\`purchaseId\`) AS purchases,
+                 COALESCE(SUM(pi.\`quantity\`), 0) AS qty,
+                 COALESCE(SUM(pi.\`lineTotal\`), 0) AS totalCost,
+                 COALESCE(AVG(pi.\`unitCost\`), 0) AS avgUnitCost
+          FROM \`purchaseitem\` pi
+          JOIN \`purchase\` p ON p.\`id\` = pi.\`purchaseId\`
+          WHERE p.\`restaurantId\` = ${restaurantId}
+            AND p.\`createdAt\` >= ${range.start}
+            AND p.\`createdAt\` <= ${range.end}
+            ${pBranchSql}
+            ${branchId ? Prisma.sql`AND p.\`branchId\` = ${branchId}` : Prisma.empty}
+            ${supplierId ? Prisma.sql`AND p.\`supplierId\` = ${supplierId}` : Prisma.empty}
+            ${status ? Prisma.sql`AND p.\`status\` = ${status}` : Prisma.empty}
+          GROUP BY pi.\`productId\`
+          ORDER BY totalCost DESC
+        `,
+        // Supplier breakdown — per-supplier totals over the scoped set.
+        prisma.$queryRaw<
+          Array<{
+            supplierId: string;
+            supplierName: string | null;
+            purchases: number | bigint;
+            qty: number | bigint | string;
+            totalValue: number | bigint | string;
+          }>
+        >`
+          SELECT s.\`id\` AS supplierId,
+                 s.\`name\` AS supplierName,
+                 COUNT(DISTINCT p.\`id\`) AS purchases,
+                 COALESCE(SUM(pi.qty), 0) AS qty,
+                 COALESCE(SUM(p.\`total\`), 0) AS totalValue
+          FROM \`purchase\` p
+          JOIN \`supplier\` s ON s.\`id\` = p.\`supplierId\`
+          LEFT JOIN (
+            SELECT \`purchaseId\` AS purchaseId, SUM(\`quantity\`) AS qty
+            FROM \`purchaseitem\` GROUP BY \`purchaseId\`
+          ) pi ON pi.purchaseId = p.\`id\`
+          WHERE p.\`restaurantId\` = ${restaurantId}
+            AND p.\`createdAt\` >= ${range.start}
+            AND p.\`createdAt\` <= ${range.end}
+            ${pBranchSql}
+            ${branchId ? Prisma.sql`AND p.\`branchId\` = ${branchId}` : Prisma.empty}
+            ${supplierId ? Prisma.sql`AND p.\`supplierId\` = ${supplierId}` : Prisma.empty}
+            ${status ? Prisma.sql`AND p.\`status\` = ${status}` : Prisma.empty}
+          GROUP BY s.\`id\`, s.\`name\`
+          ORDER BY totalValue DESC
+        `,
+      ]);
+
+    // Created-by resolution: RECEIVED purchases expose the receiving user via
+    // their PURCHASE_RECEIVE movements (one lookup, no N+1).
+    const detailIds = detailRows.map((r) => r.id as string);
+    const receiveMoves =
+      detailIds.length > 0
+        ? await prisma.stockMovement.findMany({
+            where: { refType: "PURCHASE_RECEIVE", refId: { in: detailIds } },
+            select: { refId: true, user: { select: { name: true } } },
+          })
+        : [];
+    const createdByMap = new Map<string, string | null>();
+    for (const m of receiveMoves) {
+      if (m.refId) createdByMap.set(m.refId, m.user?.name ?? null);
+    }
+
+    const productIds = productRows.map((r) => r.productId as string).filter(Boolean);
+    const productMeta =
+      productIds.length > 0
+        ? await prisma.product.findMany({
+            where: { id: { in: productIds }, restaurantId },
+            select: { id: true, name: true },
+          })
+        : [];
+    const productNameMap = new Map(productMeta.map((p) => [p.id, p.name]));
+
+    const total = Number(agg._count._all);
+    // A status filter narrows the summary to that status only (never mixes
+    // other statuses into the filtered view).
+    const receivedCount =
+      status === "RECEIVED" ? total : status ? 0 : receivedCountAll;
+    const cancelledCount =
+      status === "CANCELLED" ? total : status ? 0 : cancelledCountAll;
+    return {
+      period,
+      range: {
+        start: range.start.toISOString(),
+        end: range.end.toISOString(),
+      },
+      filters: {
+        branchId: branchId ?? null,
+        supplierId: supplierId ?? null,
+        status: status ?? null,
+      },
+      summary: {
+        totalPurchases: total,
+        totalValue: num(agg._sum.total),
+        totalReceived: receivedCount,
+        totalCancelled: cancelledCount,
+        totalItemsPurchased: Number(itemAgg._count._all),
+        totalQuantity: num(itemAgg._sum.quantity),
+      },
+      items: detailRows.map((r) => ({
+        id: r.id as string,
+        date: (r.createdAt as Date).toISOString(),
+        supplierName: r.supplierName ?? null,
+        branchCode: r.branchCode ?? null,
+        branchName: r.branchName ?? null,
+        status: r.status as string,
+        itemCount: Number(r.itemCount),
+        totalQuantity: num(r.totalQty),
+        total: num(r.total),
+        createdBy: createdByMap.get(r.id as string) ?? null,
+        receivedAt: r.receivedAt ? (r.receivedAt as Date).toISOString() : null,
+      })),
+      productBreakdown: productRows.map((r) => ({
+        productId: r.productId as string,
+        name: productNameMap.get(r.productId as string) ?? null,
+        quantityPurchased: num(r.qty),
+        totalCost: num(r.totalCost),
+        averageUnitCost: num(r.avgUnitCost),
+        numberOfPurchases: Number(r.purchases),
+      })),
+      supplierBreakdown: supplierRows.map((r) => ({
+        supplierId: r.supplierId as string,
+        name: r.supplierName ?? null,
+        numberOfPurchases: Number(r.purchases),
+        quantity: num(r.qty),
+        totalValue: num(r.totalValue),
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // ============================================================
+  // WAVE 6 — LAPORAN INVENTORY / STOK
+  // ============================================================
+
+  /**
+   * Inventory report — movement history + product stock summary.
+   *
+   * Current stock ALWAYS comes from BranchProduct.stock (never recomputed
+   * from the ledger); the ledger (StockMovement) supplies the in/out/
+   * adjustment activity within the selected range + balanceAfter history.
+   * Opening this report NEVER creates movements or mutates stock.
+   *
+   * Movement table is paginated/bounded. All aggregation is server-side.
+   */
+  async getInventoryReport(
+    restaurantId: string,
+    period: ReportPeriod,
+    opts?: {
+      startDate?: string;
+      endDate?: string;
+      branchFilters?: string[] | null;
+      filters?: {
+        branchId?: string | null;
+        productId?: string | null;
+        categoryId?: string | null;
+        type?: "IN" | "OUT" | "ADJUSTMENT" | null;
+      };
+      pagination?: ReportPagination;
+    }
+  ) {
+    const range = resolveReportRange(period, opts?.startDate, opts?.endDate);
+    const branchFilters = opts?.branchFilters;
+    const { branchId, productId, categoryId, type } = opts?.filters || {};
+
+    const page = Math.max(1, opts?.pagination?.page ?? 1);
+    // The UI route clamps its page size to 100 before calling; the CSV export
+    // legitimately requests a larger bounded page so the download is complete.
+    // Keep a hard service-level ceiling so no caller can request unbounded data.
+    const limit = Math.min(5000, Math.max(1, opts?.pagination?.limit ?? 50));
+    const skip = (page - 1) * limit;
+
+    const movementWhere: Prisma.StockMovementWhereInput = {
+      restaurantId,
+      ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
+      ...(branchId ? { branchId } : {}),
+      ...(productId ? { productId } : {}),
+      ...(categoryId ? { product: { categoryId } } : {}),
+      ...(type ? { type } : {}),
+      createdAt: { gte: range.start, lte: range.end },
+    };
+
+    // BranchProduct scope (current stock source of truth).
+    // BranchProduct has no restaurantId column — scope via the product join
+    // so a report can never leak stock across tenants.
+    const bpSql = Prisma.sql`
+      AND p.\`restaurantId\` = ${restaurantId}
+      ${branchFilters?.length ? Prisma.sql`AND bp.\`branchId\` IN (${Prisma.join([...branchFilters])})` : Prisma.empty}
+      ${branchId ? Prisma.sql`AND bp.\`branchId\` = ${branchId}` : Prisma.empty}
+      ${productId ? Prisma.sql`AND bp.\`productId\` = ${productId}` : Prisma.empty}
+      ${categoryId ? Prisma.sql`AND p.\`categoryId\` = ${categoryId}` : Prisma.empty}
+    `;
+
+    const [movementCount, totalStockRows, inAgg, outAgg, adjAgg, movementRows, productStockRows, productStockCountRows] =
+      await Promise.all([
+        prisma.stockMovement.count({ where: movementWhere }),
+        prisma.$queryRaw<Array<{ total: number | bigint | string }>>`
+          SELECT COALESCE(SUM(bp.\`stock\`), 0) AS total
+          FROM \`branchproduct\` bp
+          JOIN \`product\` p ON p.\`id\` = bp.\`productId\`
+          WHERE 1 = 1
+          ${bpSql}
+        `,
+        prisma.stockMovement.aggregate({
+          where: { ...movementWhere, type: "IN" },
+          _sum: { quantity: true },
+        }),
+        prisma.stockMovement.aggregate({
+          where: { ...movementWhere, type: "OUT" },
+          _sum: { quantity: true },
+        }),
+        prisma.stockMovement.aggregate({
+          where: { ...movementWhere, type: "ADJUSTMENT" },
+          _sum: { quantity: true },
+        }),
+        // Movement table (paginated).
+        prisma.stockMovement.findMany({
+          where: movementWhere,
+          include: {
+            branch: { select: { code: true, name: true } },
+            product: { select: { name: true } },
+            user: { select: { name: true } },
+          },
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: limit,
+        }),
+        // Product stock summary (paginated) — current stock from
+        // BranchProduct, in/out/adjustment from the ledger within range.
+        prisma.$queryRaw<
+          Array<{
+            branchId: string;
+            productId: string;
+            stock: number | bigint;
+            stockIn: number | bigint | string;
+            stockOut: number | bigint | string;
+            adjustment: number | bigint | string;
+            lastMovement: Date | null;
+          }>
+        >`
+          SELECT bp.\`branchId\` AS branchId,
+                 bp.\`productId\` AS productId,
+                 bp.\`stock\` AS stock,
+                 COALESCE(SUM(CASE WHEN sm.\`type\` = 'IN' THEN sm.\`quantity\` ELSE 0 END), 0) AS stockIn,
+                 COALESCE(SUM(CASE WHEN sm.\`type\` = 'OUT' THEN sm.\`quantity\` ELSE 0 END), 0) AS stockOut,
+                 COALESCE(SUM(CASE WHEN sm.\`type\` = 'ADJUSTMENT' THEN sm.\`quantity\` ELSE 0 END), 0) AS adjustment,
+                 MAX(sm.\`createdAt\`) AS lastMovement
+          FROM \`branchproduct\` bp
+          JOIN \`product\` p ON p.\`id\` = bp.\`productId\`
+          LEFT JOIN \`stockmovement\` sm
+            ON sm.\`branchId\` = bp.\`branchId\`
+           AND sm.\`productId\` = bp.\`productId\`
+           AND sm.\`restaurantId\` = ${restaurantId}
+           AND sm.\`createdAt\` >= ${range.start}
+           AND sm.\`createdAt\` <= ${range.end}
+           ${type ? Prisma.sql`AND sm.\`type\` = ${type}` : Prisma.empty}
+          WHERE 1 = 1
+          ${bpSql}
+          GROUP BY bp.\`branchId\`, bp.\`productId\`, bp.\`stock\`
+          ORDER BY bp.\`stock\` DESC
+          LIMIT ${limit} OFFSET ${skip}
+        `,
+        prisma.$queryRaw<Array<{ total: number | bigint }>>`
+          SELECT COUNT(*) AS total
+          FROM \`branchproduct\` bp
+          JOIN \`product\` p ON p.\`id\` = bp.\`productId\`
+          WHERE 1 = 1
+          ${bpSql}
+        `,
+      ]);
+
+    const stockTotal = Number(totalStockRows[0]?.total ?? 0);
+    const stockSummaryTotal = Number(productStockCountRows[0]?.total ?? 0);
+
+    // Hydrate product names for the stock summary rows.
+    const stockProductIds = [
+      ...new Set(productStockRows.map((r) => r.productId as string)),
+    ];
+    const stockProducts =
+      stockProductIds.length > 0
+        ? await prisma.product.findMany({
+            where: { id: { in: stockProductIds }, restaurantId },
+            select: { id: true, name: true },
+          })
+        : [];
+    const stockProductMap = new Map(stockProducts.map((p) => [p.id, p.name]));
+
+    return {
+      period,
+      range: {
+        start: range.start.toISOString(),
+        end: range.end.toISOString(),
+      },
+      filters: {
+        branchId: branchId ?? null,
+        productId: productId ?? null,
+        categoryId: categoryId ?? null,
+        type: type ?? null,
+      },
+      summary: {
+        // Current total stock (BranchProduct), NOT a ledger replay.
+        totalStock: stockTotal,
+        stockIn: num(inAgg._sum.quantity),
+        stockOut: num(outAgg._sum.quantity),
+        adjustment: num(adjAgg._sum.quantity),
+        movements: movementCount,
+      },
+      items: movementRows.map((m) => ({
+        id: m.id,
+        date: m.createdAt.toISOString(),
+        branchId: m.branchId,
+        branchCode: m.branch?.code ?? null,
+        branchName: m.branch?.name ?? null,
+        productId: m.productId,
+        productName: m.product?.name ?? null,
+        type: m.type,
+        quantity: m.quantity,
+        balanceAfter: m.balanceAfter,
+        refType: m.refType,
+        refId: m.refId,
+        reason: m.reason,
+        userId: m.userId,
+        userName: m.user?.name ?? null,
+      })),
+      productStockSummary: productStockRows.map((r) => ({
+        branchId: r.branchId as string,
+        productId: r.productId as string,
+        productName: stockProductMap.get(r.productId as string) ?? null,
+        currentStock: Number(r.stock),
+        stockIn: num(r.stockIn),
+        stockOut: num(r.stockOut),
+        adjustment: num(r.adjustment),
+        lastMovement: r.lastMovement ? (r.lastMovement as Date).toISOString() : null,
+      })),
+      pagination: {
+        page,
+        limit,
+        total: movementCount,
+        totalPages: Math.ceil(movementCount / limit),
+      },
+      stockPagination: {
+        page,
+        limit,
+        total: stockSummaryTotal,
+        totalPages: Math.ceil(stockSummaryTotal / limit),
+      },
+    };
+  }
+
   /**
    * Full sales report for the period. When `branchFilters` is set, only those
    * branches. `filters` (optional) narrows the reporting set by order type,
