@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useUserRole } from "@/hooks/use-user-role";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import {
@@ -10,6 +11,7 @@ import {
 } from "@/lib/api-error-handler";
 import {
   shiftService,
+  userService,
   type CashierShift,
   type ShiftOverride,
 } from "@/services/shift.service";
@@ -25,6 +27,10 @@ import {
   AlertTriangle,
   AlertCircle,
   RefreshCw,
+  Banknote,
+  Smartphone,
+  TrendingUp,
+  Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +45,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+type ShiftWithBreakdown = CashierShift & {
+  cashRevenue?: number;
+  qrisRevenue?: number;
+  totalRevenue?: number;
+  transactionCount?: number;
+};
+
 const rupiah = (n: number | string) =>
   `Rp${Number(n || 0).toLocaleString("id-ID")}`;
 
@@ -50,19 +63,43 @@ function fmtTime(iso?: string | null) {
   });
 }
 
+function fmtDuration(openedAt: string, closedAt?: string | null) {
+  const start = new Date(openedAt).getTime();
+  const end = closedAt ? new Date(closedAt).getTime() : Date.now();
+  const diffMs = Math.max(0, end - start);
+  const hours = Math.floor(diffMs / 3600000);
+  const minutes = Math.floor((diffMs % 3600000) / 60000);
+  if (hours === 0) return `${minutes}m`;
+  return `${hours}j ${minutes}m`;
+}
+
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
 export default function ShiftsPage() {
   const { role, isLoading: roleLoading } = useUserRole();
-  const { isLoading: branchCtxLoading } = useBranchContext();
+  const { isLoading: branchCtxLoading, branches } = useBranchContext();
   const isAdmin = role === "ADMIN";
 
   // Cashier drawer
-  const [activeShift, setActiveShift] = useState<CashierShift | null>(null);
-  const [myShifts, setMyShifts] = useState<CashierShift[]>([]);
+  const [activeShift, setActiveShift] = useState<ShiftWithBreakdown | null>(
+    null
+  );
+  const [myShifts, setMyShifts] = useState<ShiftWithBreakdown[]>([]);
   // Admin lists
-  const [allShifts, setAllShifts] = useState<CashierShift[]>([]);
+  const [allShifts, setAllShifts] = useState<ShiftWithBreakdown[]>([]);
   const [pendingOverrides, setPendingOverrides] = useState<ShiftOverride[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<NormalizedApiError | null>(null);
+
+  // Filters (admin only)
+  const [filterBranch, setFilterBranch] = useState("");
+  const [filterCashier, setFilterCashier] = useState("");
+  const [filterStatus, setFilterStatus] = useState<string>("");
+  const [filterStartDate, setFilterStartDate] = useState("");
+  const [filterEndDate, setFilterEndDate] = useState("");
+  const [cashiers, setCashiers] = useState<Array<{ id: string; name: string }>>(
+    []
+  );
 
   // Open/close dialogs
   const [openDialog, setOpenDialog] = useState(false);
@@ -72,7 +109,8 @@ export default function ShiftsPage() {
   const [submitting, setSubmitting] = useState(false);
 
   // Override flow
-  const [overrideTarget, setOverrideTarget] = useState<CashierShift | null>(null);
+  const [overrideTarget, setOverrideTarget] =
+    useState<ShiftWithBreakdown | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
   const [overrideProposed, setOverrideProposed] = useState("");
   const [overrideDialog, setOverrideDialog] = useState(false);
@@ -90,13 +128,21 @@ export default function ShiftsPage() {
 
   const load = useCallback(async () => {
     if (roleLoading || !role) return;
-    if (branchCtxLoading) return; // wait for branch context (stale-header guard)
+    if (branchCtxLoading) return;
     setLoading(true);
     setError(null);
     try {
       if (role === "ADMIN") {
+        const filters: Record<string, string> = {};
+        if (filterBranch) filters.branchId = filterBranch;
+        if (filterCashier) filters.userId = filterCashier;
+        if (filterStatus) filters.status = filterStatus;
+        if (filterStartDate) filters.startDate = filterStartDate;
+        if (filterEndDate) filters.endDate = filterEndDate;
         const [shiftsRes, pendingRes] = await Promise.all([
-          shiftService.listShifts(),
+          shiftService.listShifts(
+            Object.keys(filters).length ? filters : undefined
+          ),
           shiftService.listPendingApprovals(),
         ]);
         setAllShifts(shiftsRes.items);
@@ -106,21 +152,44 @@ export default function ShiftsPage() {
           shiftService.getActiveShift(),
           shiftService.listShifts(),
         ]);
-        setActiveShift(activeRes.shift);
+        setActiveShift(activeRes.shift as ShiftWithBreakdown | null);
         setMyShifts(listRes.items);
       }
     } catch (err) {
-      if (isUnauthorized(err)) return; // 401 handled by the axios interceptor
+      if (isUnauthorized(err)) return;
       console.error("Failed to load shifts:", err);
       setError(normalizeApiError(err));
     } finally {
       setLoading(false);
     }
-  }, [role, roleLoading, branchCtxLoading]);
+  }, [role, roleLoading, branchCtxLoading, filterBranch, filterCashier, filterStatus, filterStartDate, filterEndDate]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Admin cashier dropdown (authoritative user list, CASHIER role only).
+  useEffect(() => {
+    if (role !== "ADMIN") return;
+    let alive = true;
+    userService
+      .listUsers()
+      .then((res) => {
+        if (!alive) return;
+        setCashiers(
+          (res.items || [])
+            .filter((u) => u.role === "CASHIER")
+            .map((u) => ({ id: u.id, name: u.name }))
+        );
+      })
+      .catch(() => {
+        // The user list is only needed for the filter dropdown — the page
+        // still loads shifts even if it fails.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [role]);
 
   // Realtime: shift opens/closes/decisions refresh the page in place.
   useRealtimeListener(
@@ -136,6 +205,38 @@ export default function ShiftsPage() {
     ],
     () => load()
   );
+
+  // Admin summary stats
+  const summary = useMemo(() => {
+    const shifts = isAdmin ? allShifts : myShifts;
+    const openCount = shifts.filter((s) => s.status === "OPEN").length;
+    const totalCashiers = new Set(shifts.map((s) => s.userId)).size;
+    const today = todayStr();
+    const todayShifts = shifts.filter(
+      (s) => s.openedAt && s.openedAt.slice(0, 10) === today
+    );
+    const todayTransactions = todayShifts.reduce(
+      (sum, s) => sum + (s.transactionCount ?? 0),
+      0
+    );
+    const todayCash = todayShifts.reduce(
+      (sum, s) => sum + (s.cashRevenue ?? 0),
+      0
+    );
+    const todayQris = todayShifts.reduce(
+      (sum, s) => sum + (s.qrisRevenue ?? 0),
+      0
+    );
+    const todayRevenue = todayCash + todayQris;
+    return {
+      openCount,
+      totalCashiers,
+      todayTransactions,
+      todayCash,
+      todayQris,
+      todayRevenue,
+    };
+  }, [allShifts, myShifts, isAdmin]);
 
   const handleOpen = async () => {
     const amount = Number(openingCash);
@@ -234,6 +335,14 @@ export default function ShiftsPage() {
     }
   };
 
+  const clearFilters = () => {
+    setFilterBranch("");
+    setFilterCashier("");
+    setFilterStatus("");
+    setFilterStartDate("");
+    setFilterEndDate("");
+  };
+
   if (roleLoading || loading) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -247,7 +356,7 @@ export default function ShiftsPage() {
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold">
-            {isAdmin ? "Shift Kasir" : "Shift Saya"}
+            {isAdmin ? "Monitoring Shift" : "Shift Saya"}
           </h1>
         </div>
         <div className="flex flex-col items-center justify-center py-16 space-y-3 text-center">
@@ -260,7 +369,8 @@ export default function ShiftsPage() {
             </Button>
           ) : (
             <p className="text-xs text-gray-400">
-              Silakan pilih cabang yang sesuai dengan akun Anda, atau hubungi admin.
+              Silakan pilih cabang yang sesuai dengan akun Anda, atau hubungi
+              admin.
             </p>
           )}
         </div>
@@ -268,66 +378,210 @@ export default function ShiftsPage() {
     );
   }
 
+  const displayShifts = isAdmin ? allShifts : myShifts;
+
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">
-          {isAdmin ? "Shift Kasir" : "Shift Saya"}
+          {isAdmin ? "Monitoring Shift" : "Shift Saya"}
         </h1>
         <p className="text-muted-foreground">
           {isAdmin
-            ? "Kelola shift semua kasir dan setujui override"
+            ? "Pantau aktivitas shift kasir di semua cabang"
             : "Buka, tutup, dan pantau shift kasir Anda"}
         </p>
       </div>
 
-      {/* Cashier: current drawer status + actions */}
-      {!isAdmin && (
+      {/* Admin Summary Stats */}
+      {isAdmin && (
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border bg-card p-4">
+            <p className="text-xs text-muted-foreground">Shift Aktif</p>
+            <p className="text-2xl font-bold">{summary.openCount}</p>
+          </div>
+          <div className="rounded-xl border bg-card p-4">
+            <p className="text-xs text-muted-foreground">Total Kasir</p>
+            <p className="text-2xl font-bold">{summary.totalCashiers}</p>
+          </div>
+          <div className="rounded-xl border bg-card p-4">
+            <p className="text-xs text-muted-foreground">Transaksi Hari Ini</p>
+            <p className="text-2xl font-bold">{summary.todayTransactions}</p>
+          </div>
+          <div className="rounded-xl border bg-card p-4">
+            <p className="text-xs text-muted-foreground">Revenue Hari Ini</p>
+            <p className="text-2xl font-bold">{rupiah(summary.todayRevenue)}</p>
+            <div className="flex gap-2 mt-1 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <Banknote className="h-3 w-3" />
+                {rupiah(summary.todayCash)}
+              </span>
+              <span className="flex items-center gap-1">
+                <Smartphone className="h-3 w-3" />
+                {rupiah(summary.todayQris)}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Filter Bar */}
+      {isAdmin && (
         <div className="rounded-xl border bg-card p-4">
-          {activeShift ? (
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Wallet className="h-4 w-4 text-green-600" />
-                  <span className="font-mono font-semibold">
-                    {activeShift.shiftNumber}
-                  </span>
-                  <Badge className="bg-green-100 text-green-700 border-green-200">
-                    Buka
-                  </Badge>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Dibuka {fmtTime(activeShift.openedAt)} · Kas awal{" "}
-                  <span className="font-medium text-foreground">
-                    {rupiah(activeShift.openingCash)}
-                  </span>
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  className="bg-amber-600 hover:bg-amber-700"
-                  onClick={() => setOpenDialog(true)}
-                >
-                  Tutup Shift
-                </Button>
-              </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Cabang</Label>
+              <select
+                value={filterBranch}
+                onChange={(e) => setFilterBranch(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              >
+                <option value="">Semua Cabang</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({b.code})
+                  </option>
+                ))}
+              </select>
             </div>
-          ) : (
-            <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <Clock className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-medium">Belum ada shift aktif</span>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Buka shift sebelum menerima pembayaran kasir.
-                </p>
-              </div>
-              <Button onClick={() => setOpenDialog(true)} disabled={submitting}>
-                Buka Shift
+            <div className="space-y-1">
+              <Label className="text-xs">Kasir</Label>
+              <select
+                value={filterCashier}
+                onChange={(e) => setFilterCashier(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              >
+                <option value="">Semua Kasir</option>
+                {cashiers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Status</Label>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              >
+                <option value="">Semua</option>
+                <option value="OPEN">OPEN</option>
+                <option value="CLOSED">CLOSED</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Dari</Label>
+              <input
+                type="date"
+                value={filterStartDate}
+                onChange={(e) => setFilterStartDate(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Sampai</Label>
+              <input
+                type="date"
+                value={filterEndDate}
+                onChange={(e) => setFilterEndDate(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              />
+            </div>
+            {(filterStatus || filterStartDate || filterEndDate) && (
+              <Button variant="outline" size="sm" onClick={clearFilters}>
+                Reset
               </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Cashier: current drawer status + actions */}
+      {!isAdmin && activeShift && (
+        <div className="rounded-xl border bg-green-50 border-green-200 p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Wallet className="h-4 w-4 text-green-600" />
+            <span className="font-semibold text-green-900">Shift Aktif</span>
+            <Badge className="bg-green-100 text-green-700 border-green-200">
+              Buka
+            </Badge>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-3">
+            <div>
+              <p className="text-xs text-green-700">Shift</p>
+              <p className="font-mono font-semibold text-sm">
+                {activeShift.shiftNumber}
+              </p>
             </div>
-          )}
+            <div>
+              <p className="text-xs text-green-700">Dibuka</p>
+              <p className="text-sm">{fmtTime(activeShift.openedAt)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-green-700">Durasi</p>
+              <p className="text-sm font-medium">
+                {fmtDuration(activeShift.openedAt)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs text-green-700">Kas Awal</p>
+              <p className="text-sm font-medium">
+                {rupiah(activeShift.openingCash)}
+              </p>
+            </div>
+          </div>
+          <div className="flex gap-4 mb-3">
+            <div className="flex items-center gap-1 text-sm">
+              <Banknote className="h-3.5 w-3.5 text-green-600" />
+              <span className="text-muted-foreground">CASH</span>
+              <span className="font-medium">{rupiah(activeShift.cashRevenue ?? 0)}</span>
+            </div>
+            <div className="flex items-center gap-1 text-sm">
+              <Smartphone className="h-3.5 w-3.5 text-blue-600" />
+              <span className="text-muted-foreground">QRIS</span>
+              <span className="font-medium">{rupiah(activeShift.qrisRevenue ?? 0)}</span>
+            </div>
+            <div className="flex items-center gap-1 text-sm">
+              <TrendingUp className="h-3.5 w-3.5 text-purple-600" />
+              <span className="text-muted-foreground">Total</span>
+              <span className="font-bold">{rupiah(activeShift.totalRevenue ?? 0)}</span>
+            </div>
+            <div className="flex items-center gap-1 text-sm">
+              <span className="text-muted-foreground">Transaksi</span>
+              <span className="font-medium">{activeShift.transactionCount ?? 0}</span>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              className="bg-amber-600 hover:bg-amber-700"
+              onClick={() => setOpenDialog(true)}
+            >
+              Tutup Shift
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Cashier: no active shift */}
+      {!isAdmin && !activeShift && (
+        <div className="rounded-xl border bg-card p-4">
+          <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-muted-foreground" />
+                <span className="font-medium">Belum ada shift aktif</span>
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Buka shift sebelum menerima pembayaran kasir.
+              </p>
+            </div>
+            <Button onClick={() => setOpenDialog(true)} disabled={submitting}>
+              Buka Shift
+            </Button>
+          </div>
         </div>
       )}
 
@@ -404,52 +658,47 @@ export default function ShiftsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-muted-foreground border-b">
-              <th className="px-4 py-2">Shift</th>
-              {isAdmin && <th className="px-4 py-2">Cabang</th>}
-              <th className="px-4 py-2">{isAdmin ? "Kasir" : "Dibuka"}</th>
-              <th className="px-4 py-2 text-right">Kas Awal</th>
-              <th className="px-4 py-2 text-right">Ekspektasi</th>
-              <th className="px-4 py-2 text-right">Aktual</th>
-              <th className="px-4 py-2 text-right">Selisih</th>
-              <th className="px-4 py-2">Status</th>
-              {!isAdmin && <th className="px-4 py-2"></th>}
+              <th className="px-3 py-2">Shift</th>
+              {isAdmin && <th className="px-3 py-2">Cabang</th>}
+              {isAdmin && <th className="px-3 py-2">Kasir</th>}
+              <th className="px-3 py-2">Status</th>
+              <th className="px-3 py-2">Dibuka</th>
+              <th className="px-3 py-2">Ditutup</th>
+              <th className="px-3 py-2">Durasi</th>
+              <th className="px-3 py-2 text-right">Kas Awal</th>
+              <th className="px-3 py-2 text-right">CASH</th>
+              <th className="px-3 py-2 text-right">QRIS</th>
+              <th className="px-3 py-2 text-right">Total</th>
+              <th className="px-3 py-2 text-right">Selisih</th>
+              {!isAdmin && <th className="px-3 py-2"></th>}
             </tr>
           </thead>
           <tbody>
-            {(isAdmin ? allShifts : myShifts).map((s) => (
+            {displayShifts.map((s) => (
               <tr key={s.id} className="border-b last:border-0">
-                <td className="px-4 py-2 font-mono font-medium">
-                  {s.shiftNumber}
+                <td className="px-3 py-2 font-mono font-medium">
+                  <Link
+                    href={`/admin/shifts/${s.id}`}
+                    className="text-blue-600 hover:underline"
+                  >
+                    {s.shiftNumber}
+                  </Link>
                 </td>
                 {isAdmin && (
-                  <td className="px-4 py-2">
+                  <td className="px-3 py-2">
                     <span className="font-medium text-blue-700">
                       {s.branch?.name || s.branch?.code || "—"}
                     </span>
                   </td>
                 )}
-                <td className="px-4 py-2">
-                  {isAdmin ? s.user?.name || "—" : fmtTime(s.openedAt)}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {rupiah(s.openingCash)}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {s.expectedCash != null ? rupiah(s.expectedCash) : "—"}
-                </td>
-                <td className="px-4 py-2 text-right tabular-nums">
-                  {s.closingCash != null ? rupiah(s.closingCash) : "—"}
-                </td>
-                <td
-                  className={`px-4 py-2 text-right tabular-nums font-medium ${
-                    s.difference != null && Number(s.difference) !== 0
-                      ? "text-red-600"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {s.difference != null ? rupiah(s.difference) : "—"}
-                </td>
-                <td className="px-4 py-2">
+                {isAdmin && (
+                  <td className="px-3 py-2">
+                    <span className="font-medium">
+                      {s.user?.name || "—"}
+                    </span>
+                  </td>
+                )}
+                <td className="px-3 py-2">
                   {s.status === "OPEN" ? (
                     <Badge className="bg-green-100 text-green-700 border-green-200">
                       Buka
@@ -458,8 +707,44 @@ export default function ShiftsPage() {
                     <Badge className="bg-gray-100 text-gray-600">Tutup</Badge>
                   )}
                 </td>
+                <td className="px-3 py-2 text-xs">
+                  {fmtTime(s.openedAt)}
+                </td>
+                <td className="px-3 py-2 text-xs">
+                  {s.closedAt ? fmtTime(s.closedAt) : "—"}
+                </td>
+                <td className="px-3 py-2 text-xs tabular-nums">
+                  {fmtDuration(s.openedAt, s.closedAt)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  {rupiah(s.openingCash)}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <span className="flex items-center justify-end gap-1">
+                    <Banknote className="h-3 w-3 text-green-600" />
+                    {rupiah(s.cashRevenue ?? 0)}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums">
+                  <span className="flex items-center justify-end gap-1">
+                    <Smartphone className="h-3 w-3 text-blue-600" />
+                    {rupiah(s.qrisRevenue ?? 0)}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums font-medium">
+                  {rupiah(s.totalRevenue ?? 0)}
+                </td>
+                <td
+                  className={`px-3 py-2 text-right tabular-nums font-medium ${
+                    s.difference != null && Number(s.difference) !== 0
+                      ? "text-red-600"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {s.difference != null ? rupiah(s.difference) : "—"}
+                </td>
                 {!isAdmin && s.status === "CLOSED" && (
-                  <td className="px-4 py-2 text-right">
+                  <td className="px-3 py-2 text-right">
                     <Button
                       variant="outline"
                       size="sm"
@@ -476,10 +761,10 @@ export default function ShiftsPage() {
                 )}
               </tr>
             ))}
-            {(isAdmin ? allShifts : myShifts).length === 0 && (
+            {displayShifts.length === 0 && (
               <tr>
                 <td
-                  colSpan={isAdmin ? 9 : 8}
+                  colSpan={isAdmin ? 12 : 9}
                   className="px-4 py-10 text-center text-muted-foreground"
                 >
                   Belum ada data shift
@@ -530,10 +815,7 @@ export default function ShiftsPage() {
                   <span className="font-medium">
                     {rupiah(
                       Number(activeShift.openingCash) +
-                        (activeShift.payments || []).reduce(
-                          (s, p) => s + Number(p.amount),
-                          0
-                        )
+                        (activeShift.totalRevenue ?? 0)
                     )}
                   </span>
                 </p>
@@ -614,7 +896,9 @@ export default function ShiftsPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="override-cash">Kas Aktual yang Benar (Rp, opsional)</Label>
+              <Label htmlFor="override-cash">
+                Kas Aktual yang Benar (Rp, opsional)
+              </Label>
               <Input
                 id="override-cash"
                 inputMode="numeric"
@@ -632,10 +916,10 @@ export default function ShiftsPage() {
             >
               Batal
             </Button>
-            <Button onClick={submitOverride} disabled={submitting || !overrideReason.trim()}>
-              {submitting ? (
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-              ) : null}
+            <Button
+              onClick={submitOverride}
+              disabled={submitting || !overrideReason.trim()}
+            >
               Kirim Permintaan
             </Button>
           </DialogFooter>
@@ -672,7 +956,9 @@ export default function ShiftsPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="decision-note">Catatan Keputusan (opsional)</Label>
+              <Label htmlFor="decision-note">
+                Catatan Keputusan (opsional)
+              </Label>
               <Input
                 id="decision-note"
                 value={decisionNote}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -72,6 +72,7 @@ interface Product {
   optionGroups: OptionGroup[];
   addons: Addon[];
   stock: number | null;
+  hasBranchProduct: boolean;
 }
 
 interface TableRow {
@@ -121,6 +122,7 @@ function normalizeProduct(p: Product): Product {
     ...p,
     price: Number(p.price) || 0,
     stock: p.stock != null ? Number(p.stock) : null,
+    hasBranchProduct: !!p.hasBranchProduct,
     optionGroups: (p.optionGroups || []).map((g) => ({
       ...g,
       options: (g.options || []).map((o) => ({
@@ -146,6 +148,15 @@ function hasCustomization(product: Product): boolean {
 
 function isSoldOut(product: Product): boolean {
   return product.stock != null && product.stock <= 0;
+}
+
+/**
+ * Product has no BranchProduct row for the working branch → it is not yet
+ * curated/available for sale there. Only meaningful when a branch context is
+ * active (stock != null), which is always the case on this page.
+ */
+function isUnconfigured(product: Product): boolean {
+  return product.stock != null && !product.hasBranchProduct;
 }
 
 function unitPriceOf(line: CartLine): number {
@@ -182,6 +193,99 @@ function customizationLabel(line: CartLine): string {
   }
   if (line.notes) parts.push(`Catatan: ${line.notes}`);
   return parts.join(" · ");
+}
+
+// ============================================================
+// Admin cart persistence (per branch)
+//
+// The kasir cart is namespaced under `admin_cart_<branchId>` so each branch
+// keeps its own basket with prices snapshotted from that branch's menu at
+// add time. Branch switching reloads the page; on mount the active branch's
+// namespace is loaded, so carts are never mixed across branches.
+// localStorage is only a key namespace — authorization stays server-side.
+// ============================================================
+
+function isAdminCartSelection(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const s = value as Record<string, unknown>;
+  return (
+    typeof s.groupId === "string" &&
+    typeof s.groupName === "string" &&
+    typeof s.optionId === "string" &&
+    typeof s.optionName === "string" &&
+    typeof s.priceAdjustment === "number" &&
+    Number.isFinite(s.priceAdjustment)
+  );
+}
+
+function isAdminCartAddon(value: unknown): boolean {
+  if (!value || typeof value !== "object") return false;
+  const a = value as Record<string, unknown>;
+  return (
+    typeof a.addonId === "string" &&
+    typeof a.name === "string" &&
+    typeof a.price === "number" &&
+    Number.isFinite(a.price) &&
+    typeof a.quantity === "number" &&
+    Number.isInteger(a.quantity) &&
+    a.quantity > 0
+  );
+}
+
+function isValidAdminCartLine(item: unknown): item is CartLine {
+  if (!item || typeof item !== "object") return false;
+  const o = item as Record<string, unknown>;
+  if (
+    typeof o.key !== "string" ||
+    typeof o.productId !== "string" ||
+    typeof o.name !== "string" ||
+    typeof o.quantity !== "number" ||
+    !Number.isInteger(o.quantity) ||
+    o.quantity <= 0 ||
+    typeof o.basePrice !== "number" ||
+    !Number.isFinite(o.basePrice)
+  ) {
+    return false;
+  }
+  if (
+    o.selections !== undefined &&
+    (!Array.isArray(o.selections) || !o.selections.every(isAdminCartSelection))
+  ) {
+    return false;
+  }
+  if (
+    o.addons !== undefined &&
+    (!Array.isArray(o.addons) || !o.addons.every(isAdminCartAddon))
+  ) {
+    return false;
+  }
+  if (o.notes !== undefined && typeof o.notes !== "string") return false;
+  return true;
+}
+
+function adminCartKey(branchId: string): string {
+  return `admin_cart_${branchId}`;
+}
+
+function loadAdminCart(branchId: string): CartLine[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(adminCartKey(branchId));
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(isValidAdminCartLine) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveAdminCart(branchId: string, items: CartLine[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(adminCartKey(branchId), JSON.stringify(items));
+  } catch {
+    // Storage full/unavailable — the in-memory cart still works this visit.
+  }
 }
 
 // ============================================================
@@ -472,8 +576,11 @@ export default function KasirManualOrderPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeCategoryId, setActiveCategoryId] = useState<string>("all");
 
-  // Cart
+  // Cart (persisted per branch under `admin_cart_<branchId>`)
   const [cart, setCart] = useState<CartLine[]>([]);
+  const [cartHydrated, setCartHydrated] = useState(false);
+  const cartHydratedRef = useRef(false);
+  const cartBranchRef = useRef<string | null>(null);
 
   // Customization modal
   const [customizing, setCustomizing] = useState<{ product: Product; line?: CartLine } | null>(null);
@@ -499,6 +606,8 @@ export default function KasirManualOrderPage() {
       : branches.length === 1
         ? branches[0]
         : null;
+
+  const workingBranchId = workingBranch?.id ?? null;
 
   // ============================================================
   // Data loading — branch-scoped menu (reuses /api/public/menu so the kasir
@@ -563,6 +672,26 @@ export default function KasirManualOrderPage() {
     };
   }, [workingBranch]);
 
+  // Hydrate this branch's persisted cart exactly once, after branch context
+  // is ready. Branch switching reloads the whole page, so this always loads
+  // the namespace of the branch currently being viewed — carts never leak
+  // across branches.
+  useEffect(() => {
+    if (ctxLoading || !workingBranchId || cartHydratedRef.current) return;
+    cartHydratedRef.current = true;
+    const stored = loadAdminCart(workingBranchId);
+    setCart(stored);
+    cartBranchRef.current = workingBranchId;
+    setCartHydrated(true);
+  }, [ctxLoading, workingBranchId]);
+
+  // Persist every cart change to the active branch's namespace. Guarded by
+  // cartHydrated so the initial empty state never clobbers a stored cart.
+  useEffect(() => {
+    if (!cartHydrated || !workingBranchId) return;
+    saveAdminCart(workingBranchId, cart);
+  }, [cart, cartHydrated, workingBranchId]);
+
   // ============================================================
   // Cart operations
   // ============================================================
@@ -576,6 +705,10 @@ export default function KasirManualOrderPage() {
   );
 
   const addSimple = (product: Product) => {
+    if (isUnconfigured(product)) {
+      toast.error(`${product.name} belum tersedia di cabang ini`);
+      return;
+    }
     if (isSoldOut(product)) {
       toast.error(`${product.name} sudah habis`);
       return;
@@ -591,6 +724,11 @@ export default function KasirManualOrderPage() {
   const confirmCustomize = (state: CustomizationState) => {
     if (!customizing) return;
     const { product, line } = customizing;
+    if (isUnconfigured(product)) {
+      toast.error(`${product.name} belum tersedia di cabang ini`);
+      setCustomizing(null);
+      return;
+    }
     if (isSoldOut(product)) {
       toast.error(`${product.name} sudah habis`);
       setCustomizing(null);
@@ -703,6 +841,12 @@ export default function KasirManualOrderPage() {
     }
     if (isDineIn && !tableId) {
       toast.error("Pilih meja untuk dine-in");
+      return;
+    }
+    if (cart.length > 0 && cartBranchRef.current !== workingBranch?.id) {
+      toast.error(
+        "Keranjang tidak cocok dengan cabang aktif. Kosongkan lalu pilih item ulang."
+      );
       return;
     }
     setSubmitting(true);
@@ -1035,6 +1179,8 @@ export default function KasirManualOrderPage() {
             <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3">
               {filteredProducts.map((product) => {
                 const soldOut = isSoldOut(product);
+                const unconfigured = isUnconfigured(product);
+                const unavailable = soldOut || unconfigured;
                 const qtyInCart = cartQtyForProduct(product.id);
                 const needsCustomization = hasCustomization(product);
                 return (
@@ -1044,7 +1190,12 @@ export default function KasirManualOrderPage() {
                   >
                     <h3 className="text-sm font-semibold leading-snug line-clamp-2">
                       {product.name}
-                      {soldOut && (
+                      {unconfigured && (
+                        <span className="ml-1.5 align-middle inline-block bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
+                          Belum Tersedia
+                        </span>
+                      )}
+                      {soldOut && !unconfigured && (
                         <span className="ml-1.5 align-middle inline-block bg-gray-800 text-white text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">
                           Habis
                         </span>
@@ -1054,13 +1205,20 @@ export default function KasirManualOrderPage() {
                       {rupiah(product.price)}
                     </p>
                     <div className="mt-auto pt-2.5">
-                      {soldOut ? (
+                      {unavailable ? (
                         <button
                           type="button"
                           disabled
+                          title={
+                            unconfigured
+                              ? "Belum tersedia di cabang ini"
+                              : "Stok habis"
+                          }
                           className="w-full min-h-10 rounded-lg bg-gray-100 text-gray-400 text-sm font-medium px-3 cursor-not-allowed"
                         >
-                          Habis
+                          {unconfigured
+                            ? "Belum Tersedia di Cabang Ini"
+                            : "Habis"}
                         </button>
                       ) : qtyInCart === 0 ? (
                         <button

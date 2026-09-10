@@ -71,6 +71,62 @@ async function computeShiftTotals(shiftId: string, restaurantId: string) {
   return { openingCash, cashSales, refunds, expectedCash };
 }
 
+// ============================================================
+// Payment breakdown helper (CASH + QRIS revenue + unique orders)
+// ============================================================
+
+interface PaymentBreakdown {
+  cash: number;
+  qris: number;
+  totalRevenue: number;
+  transactionCount: number; // unique orders with at least one paid payment
+}
+
+/**
+ * Compute CASH/QRIS revenue and unique-order transaction count for a set of
+ * shifts. Uses a single SELECT query and de-duplicates orders in JS so that
+ * one order paying partially with CASH + QRIS is counted as one transaction.
+ */
+async function computePaymentBreakdown(
+  shiftIds: string[]
+): Promise<Map<string, PaymentBreakdown>> {
+  if (!shiftIds.length) return new Map();
+
+  // Fetch every PAID payment linked to these shifts — groupBy _count would
+  // over-count orders that have multiple payment rows (split tender), so we
+  // select distinct (shiftId, orderId) and de-dup in the application layer.
+  const rows = await prisma.payment.findMany({
+    where: { shiftId: { in: shiftIds }, status: "PAID" },
+    select: { shiftId: true, method: true, amount: true, orderId: true },
+  });
+
+  // Per-shift accumulator: revenue by method + set of unique orderIds.
+  const acc = new Map<
+    string,
+    { cash: number; qris: number; orders: Set<string> }
+  >();
+  for (const r of rows) {
+    if (!r.shiftId) continue;
+    const e = acc.get(r.shiftId) || { cash: 0, qris: 0, orders: new Set() };
+    const amt = Number(r.amount);
+    if (r.method === "KASIR") e.cash += amt;
+    else if (r.method === "QRIS") e.qris += amt;
+    e.orders.add(r.orderId);
+    acc.set(r.shiftId, e);
+  }
+
+  const result = new Map<string, PaymentBreakdown>();
+  for (const [sid, e] of acc) {
+    result.set(sid, {
+      cash: e.cash,
+      qris: e.qris,
+      totalRevenue: e.cash + e.qris,
+      transactionCount: e.orders.size,
+    });
+  }
+  return result;
+}
+
 export class ShiftService {
   /**
    * Open a cash drawer shift for the authenticated cashier.
@@ -261,13 +317,14 @@ export class ShiftService {
 
   /**
    * Get the caller's open shift (or null), optionally scoped to branches.
+   * Includes the CASH + QRIS revenue breakdown for the open drawer.
    */
   async getMyOpenShift(
     restaurantId: string,
     userId: string,
     branchFilters?: string[] | null
   ) {
-    return prisma.cashierShift.findFirst({
+    const shift = await prisma.cashierShift.findFirst({
       where: {
         restaurantId,
         userId,
@@ -282,6 +339,18 @@ export class ShiftService {
         },
       },
     });
+    if (!shift) return null;
+
+    const breakdown = await computePaymentBreakdown([shift.id]);
+    const bk = breakdown.get(shift.id);
+
+    return {
+      ...shift,
+      cashRevenue: bk?.cash ?? 0,
+      qrisRevenue: bk?.qris ?? 0,
+      totalRevenue: bk?.totalRevenue ?? 0,
+      transactionCount: bk?.transactionCount ?? 0,
+    };
   }
 
   /**
@@ -291,16 +360,34 @@ export class ShiftService {
   async listMyShifts(
     restaurantId: string,
     userId: string,
-    branchFilters?: string[] | null
+    branchFilters?: string[] | null,
+    filters?: {
+      status?: "OPEN" | "CLOSED";
+      startDate?: string;
+      endDate?: string;
+    }
   ) {
+    const where: Prisma.CashierShiftWhereInput = {
+      restaurantId,
+      userId,
+      branchId: branchFilters?.length ? { in: branchFilters } : undefined,
+    };
+    if (filters?.status) where.status = filters.status;
+    if (filters?.startDate || filters?.endDate) {
+      where.openedAt = {};
+      if (filters.startDate) {
+        where.openedAt.gte = new Date(`${filters.startDate}T00:00:00`);
+      }
+      if (filters.endDate) {
+        where.openedAt.lte = new Date(`${filters.endDate}T23:59:59.999`);
+      }
+    }
+
     const shifts = await prisma.cashierShift.findMany({
-      where: {
-        restaurantId,
-        userId,
-        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
-      },
+      where,
       include: {
         user: { select: { id: true, name: true } },
+        branch: { select: { id: true, name: true, code: true } },
         _count: {
           select: { payments: { where: { status: "PAID", method: "KASIR" } } },
         },
@@ -308,32 +395,82 @@ export class ShiftService {
       orderBy: { openedAt: "desc" },
       take: 100,
     });
-    return { items: shifts };
+
+    const shiftIds = shifts.map((s) => s.id);
+    const breakdown = await computePaymentBreakdown(shiftIds);
+
+    const items = shifts.map((s) => {
+      const bk = breakdown.get(s.id);
+      return {
+        ...s,
+        cashRevenue: bk?.cash ?? 0,
+        qrisRevenue: bk?.qris ?? 0,
+        totalRevenue: bk?.totalRevenue ?? 0,
+        transactionCount: bk?.transactionCount ?? 0,
+      };
+    });
+    return { items };
   }
 
   /**
    * All shifts across cashiers (admin only), optionally scoped to branches.
+   * Supports filtering by userId, status, and date range.
    */
-  async listAllShifts(restaurantId: string, branchFilters?: string[] | null) {
+  async listAllShifts(
+    restaurantId: string,
+    branchFilters?: string[] | null,
+    filters?: {
+      userId?: string;
+      status?: "OPEN" | "CLOSED";
+      startDate?: string;
+      endDate?: string;
+    }
+  ) {
+    const where: Prisma.CashierShiftWhereInput = {
+      restaurantId,
+      branchId: branchFilters?.length ? { in: branchFilters } : undefined,
+    };
+    if (filters?.userId) where.userId = filters.userId;
+    if (filters?.status) where.status = filters.status;
+    if (filters?.startDate || filters?.endDate) {
+      where.openedAt = {};
+      if (filters.startDate) {
+        where.openedAt.gte = new Date(`${filters.startDate}T00:00:00`);
+      }
+      if (filters.endDate) {
+        where.openedAt.lte = new Date(`${filters.endDate}T23:59:59.999`);
+      }
+    }
+
+    // Sorting: OPEN shifts first (newest openedAt), then CLOSED (newest closedAt)
     const shifts = await prisma.cashierShift.findMany({
-      where: {
-        restaurantId,
-        branchId: branchFilters?.length ? { in: branchFilters } : undefined,
-      },
+      where,
       include: {
         user: { select: { id: true, name: true, email: true } },
-        // Branch name/code so the admin can tell shifts apart when viewing
-        // "Semua Cabang" — never the raw database id.
         branch: { select: { id: true, name: true, code: true } },
         overrides: { orderBy: { createdAt: "desc" } },
         _count: {
           select: { payments: { where: { status: "PAID", method: "KASIR" } } },
         },
       },
-      orderBy: { openedAt: "desc" },
+      orderBy: [{ status: "asc" }, { openedAt: "desc" }],
       take: 200,
     });
-    return { items: shifts };
+
+    const shiftIds = shifts.map((s) => s.id);
+    const breakdown = await computePaymentBreakdown(shiftIds);
+
+    const items = shifts.map((s) => {
+      const bk = breakdown.get(s.id);
+      return {
+        ...s,
+        cashRevenue: bk?.cash ?? 0,
+        qrisRevenue: bk?.qris ?? 0,
+        totalRevenue: bk?.totalRevenue ?? 0,
+        transactionCount: bk?.transactionCount ?? 0,
+      };
+    });
+    return { items };
   }
 
   /** Shift detail with payments and refunds (admin all; cashier own only). */
@@ -359,6 +496,7 @@ export class ShiftService {
           },
       include: {
         user: { select: { id: true, name: true, email: true } },
+        branch: { select: { id: true, name: true, code: true } },
         payments: {
           where: { status: "PAID", method: "KASIR" },
           orderBy: { paidAt: "asc" },
@@ -371,7 +509,16 @@ export class ShiftService {
       throw new NotFoundError("Shift tidak ditemukan");
     }
     const totals = await computeShiftTotals(shift.id, restaurantId);
-    return { shift, totals };
+    const breakdown = await computePaymentBreakdown([shift.id]);
+    const bk = breakdown.get(shift.id);
+    return {
+      shift,
+      totals,
+      cashRevenue: bk?.cash ?? 0,
+      qrisRevenue: bk?.qris ?? 0,
+      totalRevenue: bk?.totalRevenue ?? 0,
+      transactionCount: bk?.transactionCount ?? 0,
+    };
   }
 
   /**

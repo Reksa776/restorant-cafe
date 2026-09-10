@@ -136,6 +136,11 @@ export async function GET(request: NextRequest) {
             optionGroups: p.optionGroups,
             addons: p.addons,
             isPriceOverride: bp?.priceOverride != null ? true : false,
+            // Whether a BranchProduct row exists for this branch. Lets the
+            // UI distinguish "product configured but out of stock" (row exists,
+            // stock 0) from "product not yet curated for this branch" (row
+            // missing). Additive info only — no filtering/behavior change.
+            hasBranchProduct: bp != null,
             // stock > 0 → buyable; stock 0 → SOLD OUT. When a branch is
             // resolved, a product WITHOUT a BranchProduct row is treated as
             // out of stock (default stock 0). stock stays null only when

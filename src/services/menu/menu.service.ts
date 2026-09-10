@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ConflictError, ValidationError } from "@/lib/errors";
+import { auditService } from "@/services/audit/audit.service";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { normalizeProductImageUrl } from "@/lib/product-image";
@@ -245,6 +246,11 @@ export class MenuService {
       price: number;
       imageUrl?: string | null;
       isAvailable?: boolean;
+    },
+    options?: {
+      /** The validated branch the admin is working in — see POST /api/menu/products. */
+      branchId?: string | null;
+      userId?: string | null;
     }
   ) {
     // Validate category exists and belongs to this restaurant
@@ -279,20 +285,72 @@ export class MenuService {
         ? null
         : validateProductImageValue(data.imageUrl, restaurantId);
 
-    const product = await prisma.product.create({
-      data: {
-        restaurantId,
-        categoryId: data.categoryId,
-        name: data.name,
-        description: data.description,
-        price,
-        imageUrl,
-        isAvailable: data.isAvailable ?? true,
-      },
-      include: {
-        category: true,
-      },
+    // Product master is restaurant-level; the BranchProduct junction carries
+    // per-branch configuration. The whole write is transactional so a new
+    // product is EITHER fully registered in the working branch (when the
+    // admin created it under an active branch context) OR created as a pure
+    // master (branchId null = "Semua Cabang") — never a half-registered row
+    // that would surface as "Habis" on the branch it was meant for.
+    const product = await prisma.$transaction(async (tx) => {
+      const created = await tx.product.create({
+        data: {
+          restaurantId,
+          categoryId: data.categoryId,
+          name: data.name,
+          description: data.description,
+          price,
+          imageUrl,
+          isAvailable: data.isAvailable ?? true,
+        },
+        include: {
+          category: true,
+        },
+      });
+
+      if (options?.branchId) {
+        // Register the product in the working branch. Unique [branchId,
+        // productId] makes this non-duplicating; update:{} never touches an
+        // existing configuration. Defaults mirror the branch-availability
+        // dialog: available per the master value, base price, stock 0 (staff
+        // fills inventory per branch via /admin/stock).
+        await tx.branchProduct.upsert({
+          where: {
+            branchId_productId: {
+              branchId: options.branchId,
+              productId: created.id,
+            },
+          },
+          update: {},
+          create: {
+            branchId: options.branchId,
+            productId: created.id,
+            isAvailable: created.isAvailable,
+            priceOverride: null,
+            stock: 0,
+          },
+        });
+      }
+
+      return created;
     });
+
+    if (options?.branchId) {
+      await auditService.log({
+        restaurantId,
+        branchId: options.branchId,
+        userId: options.userId,
+        action: "BRANCH_PRODUCT_CREATED",
+        entityType: "BranchProduct",
+        entityId: product.id,
+        details: {
+          productId: product.id,
+          name: product.name,
+          isAvailable: product.isAvailable,
+          priceOverride: null,
+          stock: 0,
+        },
+      });
+    }
 
     emitRealtime(
       restaurantId,

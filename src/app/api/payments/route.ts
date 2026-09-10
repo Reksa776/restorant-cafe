@@ -54,7 +54,9 @@ export async function POST(request: NextRequest) {
       const result = await paymentService.createKasirQrisPayment(
         body.orderNumber,
         ctx.restaurantId,
-        authorizedBranches(ctx)
+        authorizedBranches(ctx),
+        ctx.userId,
+        effectiveWriteBranchId(ctx)
       );
       return successResponse(result, result.message);
     }

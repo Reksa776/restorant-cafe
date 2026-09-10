@@ -27,7 +27,7 @@ export interface CashierShift {
     name: string;
     code: string;
   } | null;
-  payments?: Array<{ id: string; amount: string; paidAt?: string | null }>;
+  payments?: Array<{ id: string; amount: string; paidAt?: string | null; method?: string | null; order?: { orderNumber: string } | null }>;
   overrides?: Array<ShiftOverride>;
   _count?: { payments?: number };
 }
@@ -70,8 +70,21 @@ export interface CancellationRequest {
 }
 
 export const shiftService = {
-  async listShifts(): Promise<{ items: CashierShift[] }> {
-    const response = await api.get("/shifts");
+  async listShifts(filters?: {
+    branchId?: string;
+    userId?: string;
+    status?: string;
+    startDate?: string;
+    endDate?: string;
+  }): Promise<{ items: Array<CashierShift & { cashRevenue?: number; qrisRevenue?: number; totalRevenue?: number; transactionCount?: number }> }> {
+    const params = new URLSearchParams();
+    if (filters?.branchId) params.set("branchId", filters.branchId);
+    if (filters?.userId) params.set("userId", filters.userId);
+    if (filters?.status) params.set("status", filters.status);
+    if (filters?.startDate) params.set("startDate", filters.startDate);
+    if (filters?.endDate) params.set("endDate", filters.endDate);
+    const qs = params.toString();
+    const response = await api.get(`/shifts${qs ? `?${qs}` : ""}`);
     return response.data.data;
   },
 
@@ -88,6 +101,10 @@ export const shiftService = {
       refunds: number;
       expectedCash: number;
     };
+    cashRevenue: number;
+    qrisRevenue: number;
+    totalRevenue: number;
+    transactionCount: number;
   }> {
     const response = await api.get(`/shifts/${shiftId}`);
     return response.data.data;

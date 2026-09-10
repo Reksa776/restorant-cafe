@@ -1221,7 +1221,9 @@ export class PaymentService {
   async createKasirQrisPayment(
     orderNumber: string,
     restaurantId: string,
-    branchFilters?: string[] | null
+    branchFilters?: string[] | null,
+    userId?: string,
+    branchId?: string | null
   ) {
     // Find the order with payments
     const order = await prisma.order.findFirst({
@@ -1258,6 +1260,22 @@ export class PaymentService {
       throw new ConflictError("Order already paid");
     }
 
+    // Resolve the cashier's open shift for branch-scoped shift linking.
+    // The route already called requireOpenShift() — this lookup retrieves
+    // the shift ID so the QRIS payment is linked to the correct drawer.
+    let shiftId: string | null = null;
+    if (userId) {
+      const openShift = await prisma.cashierShift.findFirst({
+        where: {
+          restaurantId,
+          userId,
+          status: "OPEN",
+          ...(branchId ? { branchId } : {}),
+        },
+      });
+      shiftId = openShift?.id ?? null;
+    }
+
     const now = new Date();
 
     // A live UNPAID KASIR row (CASH chosen earlier) is superseded by the
@@ -1289,6 +1307,13 @@ export class PaymentService {
         latestPayment.expiresAt &&
         new Date(latestPayment.expiresAt).getTime() > now.getTime()
       ) {
+        // Link existing PENDING QRIS to the cashier's open shift
+        if (shiftId && !latestPayment.shiftId) {
+          await prisma.payment.update({
+            where: { id: latestPayment.id, shiftId: null },
+            data: { shiftId },
+          });
+        }
         return {
           payment: latestPayment,
           kind: "pending_existing" as const,
@@ -1319,6 +1344,13 @@ export class PaymentService {
           },
         });
         if (checkPayment) {
+          // Link concurrent PENDING/PAID payment to the cashier's open shift
+          if (shiftId && checkPayment.status === "PENDING" && !checkPayment.shiftId) {
+            await prisma.payment.update({
+              where: { id: checkPayment.id, shiftId: null },
+              data: { shiftId },
+            });
+          }
           return {
             payment: checkPayment,
             kind: "pending_existing" as const,
@@ -1332,6 +1364,14 @@ export class PaymentService {
     const result = await this.createPayment(order.id, restaurantId, {
       method: "QRIS",
     }, branchFilters);
+
+    // Link newly created QRIS payment to the cashier's open shift
+    if (shiftId && !result.shiftId) {
+      await prisma.payment.update({
+        where: { id: result.id, shiftId: null },
+        data: { shiftId },
+      });
+    }
 
     return {
       payment: result,
