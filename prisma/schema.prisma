@@ -38,6 +38,28 @@ enum OrderStatus {
   CANCELLED
 }
 
+// ============================================================
+// PURCHASING & INVENTORY — Phase B foundation decisions
+//
+// D1 — unit: quantities are integer PCS (no unit/packaging model yet).
+// D2 — cost: historical unit cost is stored ONLY on PurchaseItem.unitCost;
+//      Product.price (selling price) is never touched.
+// D4 — stock: OUT movements are written only when an Order reaches
+//      COMPLETED (order.service updateOrderStatus), never at PAID.
+// ============================================================
+
+enum PurchaseStatus {
+  DRAFT
+  RECEIVED
+  CANCELLED
+}
+
+enum StockMovementType {
+  IN
+  OUT
+  ADJUSTMENT
+}
+
 enum OrderType {
   DINE_IN
   TAKEAWAY
@@ -104,6 +126,7 @@ model User {
   cancellationsRequested CancellationRequest[] @relation("CancellationRequester")
   cancellationsApproved  CancellationRequest[] @relation("CancellationApprover")
   cancellationsRejected  CancellationRequest[] @relation("CancellationRejecter")
+  stockMovements StockMovement[]
 
   @@map("user")
 }
@@ -134,6 +157,9 @@ model Restaurant {
   promos       Promo[]
   settings     RestaurantSettings?
   productRecommendations ProductRecommendation[]
+  suppliers    Supplier[]
+  purchases    Purchase[]
+  stockMovements StockMovement[]
 
   @@map("restaurant")
 }
@@ -159,6 +185,8 @@ model Branch {
   promos     Promo[]
   promoUsages PromoUsage[]
   notifications Notification[]
+  purchases  Purchase[]
+  stockMovements StockMovement[]
 
   @@unique([restaurantId, code])
   @@index([restaurantId])
@@ -457,6 +485,8 @@ model Product {
   // Admin-curated "recommend for this product" rows (F3).
   recommendationsFrom ProductRecommendation[] @relation("RecommendationSource")
   recommendationsTo   ProductRecommendation[] @relation("RecommendationTarget")
+  purchaseItems PurchaseItem[]
+  stockMovements StockMovement[]
 
   @@index([restaurantId])
   @@index([categoryId])
@@ -867,4 +897,122 @@ model Notification {
   @@index([createdAt])
 
   @@map("notification")
+}
+
+// ============================================================
+// PURCHASING & INVENTORY — Phase B foundation models
+// ============================================================
+
+// One vendor per restaurant. Tenant-scoped (restaurantId), soft-deletable
+// via isActive — never hard-deleted so purchase history stays intact.
+model Supplier {
+  id           String   @id @default(cuid())
+  restaurantId String
+  name         String
+  phone        String?
+  email        String?
+  address      String?
+  notes        String?  @db.Text
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  purchases  Purchase[]
+
+  // Idempotency within a tenant: two different restaurants may each have a
+  // supplier named the same; within ONE restaurant the name is unique.
+  @@unique([restaurantId, name])
+  @@index([restaurantId])
+  @@index([restaurantId, isActive])
+
+  @@map("supplier")
+}
+
+// A goods-delivery/order transaction: which branch received items from which
+// supplier. Status DRAFT → RECEIVED is the atomic receive transition;
+// CANCELLED aborts a draft. total is server-derived from item lineTotal.
+model Purchase {
+  id           String         @id @default(cuid())
+  restaurantId String
+  branchId     String
+  supplierId   String
+  status       PurchaseStatus @default(DRAFT)
+  receivedAt   DateTime?
+  total        Decimal        @db.Decimal(12, 2)
+  notes        String?        @db.Text
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  branch     Branch     @relation(fields: [branchId], references: [id])
+  supplier   Supplier   @relation(fields: [supplierId], references: [id])
+  items      PurchaseItem[]
+
+  @@index([restaurantId, createdAt])
+  @@index([restaurantId, branchId, createdAt])
+  @@index([restaurantId, supplierId, createdAt])
+  @@index([restaurantId, status])
+
+  @@map("purchase")
+}
+
+// One purchased line: references the restaurant-level Product master (never
+// BranchProduct). quantity is positive PCS; unitCost is the historical
+// purchase cost (D2); lineTotal/total are server-derived, never client input.
+model PurchaseItem {
+  id         String   @id @default(cuid())
+  purchaseId String
+  productId  String
+  quantity   Int
+  unitCost   Decimal  @db.Decimal(12, 2)
+  lineTotal  Decimal  @db.Decimal(12, 2)
+  createdAt  DateTime @default(now())
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id])
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@index([purchaseId])
+  @@index([productId])
+
+  @@map("purchaseitem")
+}
+
+// Append-only stock ledger, one row per stock change.
+//
+// quantity semantics (documented):
+//   IN          quantity > 0 — receiving goods adds stock
+//   OUT         quantity < 0 — an Order reaching COMPLETED removes stock
+//   ADJUSTMENT  quantity is a signed delta (+increase / -decrease)
+//
+// balanceAfter = the branchproduct.stock value AFTER `quantity` is applied.
+// refType/refId link the movement to its source (e.g. "PURCHASE_RECEIVE" +
+// purchaseId) so Phase E receiving can be double-submit safe; they are NOT
+// unique because one document (a purchase) legitimately produces multiple
+// movements (one per item).
+model StockMovement {
+  id           String            @id @default(cuid())
+  restaurantId String
+  branchId     String
+  productId    String
+  type         StockMovementType
+  quantity     Int
+  balanceAfter Int
+  refType      String?
+  refId        String?
+  reason       String?           @db.Text
+  userId       String?
+  createdAt    DateTime          @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  branch     Branch     @relation(fields: [branchId], references: [id])
+  product    Product    @relation(fields: [productId], references: [id])
+  user       User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([restaurantId, branchId, createdAt])
+  @@index([restaurantId, productId, createdAt])
+  @@index([restaurantId, type, createdAt])
+  @@index([refType, refId])
+
+  @@map("stockmovement")
 }

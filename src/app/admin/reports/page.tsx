@@ -98,7 +98,8 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function ReportsPage() {
   const { role } = useUserRole();
-  const { isLoading: branchCtxLoading } = useBranchContext();
+  const { isLoading: branchCtxLoading, branchId: currentBranchId } =
+    useBranchContext();
   const [period, setPeriod] = useState<ReportPeriod>("today");
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(todayStr());
@@ -155,6 +156,7 @@ export default function ReportsPage() {
 
       const res = await fetch(`/api/reports/sales/export?${params.toString()}`, {
         credentials: "same-origin",
+        headers: currentBranchId ? { "x-branch-id": currentBranchId } : undefined,
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);

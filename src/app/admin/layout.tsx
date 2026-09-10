@@ -23,6 +23,9 @@ import {
   X,
   Boxes,
   Receipt,
+  Truck,
+  Container,
+  ClipboardList,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
@@ -41,6 +44,7 @@ interface NavItem {
   href: string;
   icon: typeof LayoutDashboard;
   roles: StaffRole[];
+  section?: string;
 }
 
 const navigation: NavItem[] = [
@@ -51,6 +55,25 @@ const navigation: NavItem[] = [
   { name: "Riwayat Penjualan", href: "/admin/cashier/sales", icon: Receipt, roles: ["ADMIN", "CASHIER"] },
   { name: "Reports", href: "/admin/reports", icon: BarChart3, roles: ["ADMIN", "CASHIER"] },
   { name: "Marketing", href: "/admin/marketing", icon: Megaphone, roles: ["ADMIN"] },
+  {
+    section: "Purchasing",
+    name: "Supplier",
+    href: "/admin/purchasing/suppliers",
+    icon: Truck,
+    roles: ["ADMIN", "CASHIER"],
+  },
+  {
+    name: "Pembelian",
+    href: "/admin/purchasing/purchases",
+    icon: Container,
+    roles: ["ADMIN", "CASHIER"],
+  },
+  {
+    name: "Inventory",
+    href: "/admin/inventory",
+    icon: ClipboardList,
+    roles: ["ADMIN", "CASHIER"],
+  },
   { name: "Users", href: "/admin/users", icon: Users, roles: ["ADMIN"] },
   { name: "Menu", href: "/admin/menu", icon: UtensilsCrossed, roles: ["ADMIN"] },
   { name: "Stok", href: "/admin/stock", icon: Boxes, roles: ["ADMIN", "CASHIER"] },
@@ -111,20 +134,26 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           const isActive =
             pathname === item.href || pathname.startsWith(item.href + "/");
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              onClick={onNavigate}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                isActive
-                  ? "bg-brand-secondary text-brand-primary"
-                  : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+            <div key={item.href}>
+              {item.section && (
+                <p className="mt-4 mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-gray-400 first:mt-0">
+                  {item.section}
+                </p>
               )}
-            >
-              <item.icon className="h-5 w-5" />
-              {item.name}
-            </Link>
+              <Link
+                href={item.href}
+                onClick={onNavigate}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  isActive
+                    ? "bg-brand-secondary text-brand-primary"
+                    : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                )}
+              >
+                <item.icon className="h-5 w-5" />
+                {item.name}
+              </Link>
+            </div>
           );
         })}
       </nav>

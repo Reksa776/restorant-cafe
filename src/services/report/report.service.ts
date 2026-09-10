@@ -1073,6 +1073,107 @@ export class ReportService {
     };
   }
 
+  /**
+   * Payment rows for CSV export — the SAME filters/semantics as
+   * getPaymentReport but UNPAGINATED and bounded (take: 5000). Chronological
+   * (createdAt asc). Never exposes paymentUrl / provider / providerRef /
+   * qrImage / qrString / internal IDs. Refund per row = sum of APPROVED
+   * refunds linked to that payment within the report range (matches the
+   * sales report's APPROVED-only refund semantics; 0 when none).
+   */
+  async getPaymentsForExport(
+    restaurantId: string,
+    period: ReportPeriod,
+    opts?: {
+      startDate?: string;
+      endDate?: string;
+      branchFilters?: string[] | null;
+      filters?: {
+        branchId?: string | null;
+        cashierId?: string | null;
+        shiftId?: string | null;
+        method?: string | null;
+        status?: string | null;
+      };
+    }
+  ) {
+    const range = resolveReportRange(period, opts?.startDate, opts?.endDate);
+    const branchFilters = opts?.branchFilters;
+    const { branchId, cashierId, shiftId, method, status } = opts?.filters || {};
+
+    const where: Prisma.PaymentWhereInput = {
+      restaurantId,
+      ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
+      ...(branchId ? { branchId } : {}),
+      ...(cashierId ? { shift: { userId: cashierId } } : {}),
+      ...(shiftId ? { shiftId } : {}),
+      ...(method ? { method: method as "KASIR" | "QRIS" } : {}),
+      ...(status ? { status: status as PaymentStatus } : {}),
+      createdAt: { gte: range.start, lte: range.end },
+    };
+
+    const payments = await prisma.payment.findMany({
+      where,
+      select: {
+        id: true,
+        createdAt: true,
+        paidAt: true,
+        method: true,
+        status: true,
+        amount: true,
+        order: { select: { orderNumber: true } },
+        shift: {
+          select: {
+            shiftNumber: true,
+            user: { select: { name: true } },
+          },
+        },
+        branch: { select: { code: true, name: true } },
+      },
+      orderBy: { createdAt: "asc" },
+      take: 5000,
+    });
+
+    // Approved refunds linked to the exported payments (same date range).
+    const ids = payments.map((p) => p.id);
+    const refundRows =
+      ids.length > 0
+        ? await prisma.refund.findMany({
+            where: {
+              paymentId: { in: ids },
+              status: "APPROVED",
+              approvedAt: { gte: range.start, lte: range.end },
+            },
+            select: { paymentId: true, amount: true },
+          })
+        : [];
+    const refundByPayment = new Map<string, number>();
+    for (const r of refundRows) {
+      if (!r.paymentId) continue;
+      refundByPayment.set(
+        r.paymentId,
+        (refundByPayment.get(r.paymentId) ?? 0) + num(r.amount)
+      );
+    }
+
+    return {
+      count: payments.length,
+      items: payments.map((p) => ({
+        createdAt: p.createdAt.toISOString(),
+        paidAt: p.paidAt ? p.paidAt.toISOString() : "",
+        orderNumber: p.order?.orderNumber ?? "",
+        branchCode: p.branch?.code ?? "",
+        branchName: p.branch?.name ?? "",
+        shiftNumber: p.shift?.shiftNumber ?? "",
+        cashierName: p.shift?.user?.name ?? "",
+        method: p.method ?? "",
+        status: p.status,
+        amount: num(p.amount),
+        refund: refundByPayment.get(p.id) ?? 0,
+      })),
+    };
+  }
+
   // ============================================================
   // WAVE 5 — LAPORAN MULTI OUTLET
   // ============================================================

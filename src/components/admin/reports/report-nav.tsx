@@ -17,7 +17,6 @@ const REPORTS = [
   { href: "/admin/reports/shift-sales", label: "Per Shift" },
   { href: "/admin/reports/payments", label: "Pembayaran" },
   { href: "/admin/reports/multi-outlet", label: "Multi Outlet", adminOnly: true },
-  { href: "/admin/reports/purchases", label: "Pembelian (Segera)", disabled: true },
 ] as const;
 
 export function ReportSubNav() {
@@ -30,17 +29,6 @@ export function ReportSubNav() {
         if ("adminOnly" in r && r.adminOnly && role !== "ADMIN") return null;
 
         const isActive = pathname === r.href || (r.href !== "/admin/reports" && pathname.startsWith(r.href));
-        if ("disabled" in r && r.disabled) {
-          return (
-            <span
-              key={r.href}
-              title="Belum tersedia — menunggu modul pembelian"
-              className="rounded-full px-4 py-1.5 text-sm font-medium border border-dashed border-gray-300 text-gray-400 cursor-not-allowed select-none"
-            >
-              {r.label}
-            </span>
-          );
-        }
         return (
           <Link
             key={r.href}

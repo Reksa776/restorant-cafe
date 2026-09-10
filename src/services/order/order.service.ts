@@ -18,6 +18,10 @@ import { normalizePhone } from "@/lib/phone";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { promoService } from "@/services/promo/promo.service";
+import {
+  applyStockMovement,
+  StockRefType,
+} from "@/services/stock/stock.service";
 
 // ============================================================
 // Constants
@@ -1418,22 +1422,31 @@ export class OrderService {
         }
 
         for (const [pid, qty] of qtyByProduct) {
-          // Atomic conditional deduction: stock must be >= requested qty.
-          // If two COMPLETED requests race, the loser hits 0 affected rows.
-          const result = await tx.branchProduct.updateMany({
-            where: {
+          // Atomic conditional deduction through the shared stock-movement
+          // foundation: the branchproduct row is locked FOR UPDATE, the
+          // balance may not drop below 0, and a StockMovement OUT row is
+          // appended in the SAME transaction. If two COMPLETED requests
+          // race, the loser's conditional order-status update rolls back —
+          // no double deduction, no ledger row without its balance change.
+          try {
+            await applyStockMovement(tx, {
+              restaurantId,
               branchId: order.branchId,
               productId: pid,
-              stock: { gte: qty },
-            },
-            data: {
-              stock: { decrement: qty },
-            },
-          });
-          if (result.count === 0) {
-            throw new ConflictError(
-              `Stok produk tidak mencukupi — pesanan tidak dapat diselesaikan`
-            );
+              type: "OUT",
+              quantity: -qty,
+              refType: StockRefType.ORDER_COMPLETED,
+              refId: order.id,
+              reason: input.notes ?? null,
+              userId: changedBy ?? undefined,
+            });
+          } catch (error) {
+            if (error instanceof ConflictError) {
+              throw new ConflictError(
+                `Stok produk tidak mencukupi — pesanan tidak dapat diselesaikan`
+              );
+            }
+            throw error;
           }
         }
       }

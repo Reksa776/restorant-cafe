@@ -7,12 +7,14 @@ import {
   Loader2,
   RefreshCw,
   AlertCircle,
+  Download,
   TrendingUp,
   ShoppingCart,
   Store,
   Banknote,
   Award,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useUserRole } from "@/hooks/use-user-role";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import {
@@ -43,6 +45,7 @@ export default function MultiOutletReportPage() {
   const [report, setReport] = useState<MultiOutletReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const loadReport = useCallback(
     async (silent = false) => {
@@ -71,6 +74,42 @@ export default function MultiOutletReportPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, branchCtxLoading]);
 
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const params = new URLSearchParams({ period });
+      if (period === "custom") {
+        params.set("startDate", startDate);
+        params.set("endDate", endDate);
+      }
+
+      const res = await fetch(
+        `/api/reports/multi-outlet/export?${params.toString()}`,
+        {
+          credentials: "same-origin",
+        }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || "Gagal mengekspor laporan");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `multi-outlet-report-${period}-${todayStr()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to export:", err);
+      toast.error(err instanceof Error ? err.message : "Gagal mengekspor laporan");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   // ADMIN-only guard at the UI layer (server also enforces).
   if (role !== "ADMIN") {
     return (
@@ -88,10 +127,20 @@ export default function MultiOutletReportPage() {
           <h1 className="text-3xl font-bold">Laporan Multi Outlet</h1>
           <p className="text-gray-500">Perbandingan performa seluruh cabang</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+          <Button size="sm" onClick={handleExport} disabled={isExporting}>
+            {isExporting ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4 mr-2" />
+            )}
+            Download CSV
+          </Button>
+        </div>
       </div>
 
       <ReportSubNav />

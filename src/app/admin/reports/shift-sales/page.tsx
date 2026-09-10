@@ -15,11 +15,13 @@ import {
   Loader2,
   RefreshCw,
   AlertCircle,
+  Download,
   Banknote,
   TrendingUp,
   Users,
   Undo2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useUserRole } from "@/hooks/use-user-role";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import {
@@ -42,7 +44,8 @@ const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function ShiftSalesReportPage() {
-  const { isLoading: branchCtxLoading } = useBranchContext();
+  const { isLoading: branchCtxLoading, branchId: currentBranchId } =
+    useBranchContext();
   const [period, setPeriod] = useState<ReportPeriod>("today");
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(todayStr());
@@ -50,6 +53,7 @@ export default function ShiftSalesReportPage() {
   const [report, setReport] = useState<ShiftSalesReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const loadReport = useCallback(
     async (silent = false) => {
@@ -79,6 +83,46 @@ export default function ShiftSalesReportPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, branchCtxLoading, shiftStatus]);
 
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const params = new URLSearchParams({ period });
+      if (period === "custom") {
+        params.set("startDate", startDate);
+        params.set("endDate", endDate);
+      }
+      if (shiftStatus !== "all") params.set("status", shiftStatus);
+
+      const res = await fetch(
+        `/api/reports/shift-sales/export?${params.toString()}`,
+        {
+          credentials: "same-origin",
+          headers: currentBranchId
+            ? { "x-branch-id": currentBranchId }
+            : undefined,
+        }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || "Gagal mengekspor laporan");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `shift-report-${period}-${todayStr()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to export:", err);
+      toast.error(err instanceof Error ? err.message : "Gagal mengekspor laporan");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const differenceBadge = (d: number | null) => {
     if (d === null || d === undefined) return <Badge variant="outline">—</Badge>;
     if (d === 0) return <Badge className="bg-green-100 text-green-800">± Rp0</Badge>;
@@ -93,10 +137,20 @@ export default function ShiftSalesReportPage() {
           <h1 className="text-3xl font-bold">Laporan Penjualan per Shift</h1>
           <p className="text-gray-500">Rekap kasir per sesi buka/tutup shift</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+          <Button size="sm" onClick={handleExport} disabled={isExporting}>
+            {isExporting ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4 mr-2" />
+            )}
+            Download CSV
+          </Button>
+        </div>
       </div>
 
       <ReportSubNav />

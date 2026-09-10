@@ -6,11 +6,12 @@ import {
   type BranchProductRow,
 } from "@/services/branch.service";
 import { useBranchContext } from "@/hooks/use-branch-context";
+import { useUserRole } from "@/hooks/use-user-role";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Minus, Plus, Store, Save } from "lucide-react";
+import { Loader2, Minus, Plus, Store, Save, Lock } from "lucide-react";
 import { toast } from "sonner";
 
 /**
@@ -22,12 +23,18 @@ import { toast } from "sonner";
  *
  * Server re-validates authorization on every read/write, so a forged
  * branchId or x-branch-id never exposes/edits another branch.
+ *
+ * D3: stok hanya bisa diubah ADMIN (penyesuaian manual tercatat sebagai
+ * StockMovement ADJUSTMENT dengan alasan wajib). KASIR hanya membaca.
  */
 export default function StockPage() {
   const { branchId, branches, isLoading: ctxLoading } = useBranchContext();
+  const { role, isLoading: roleLoading } = useUserRole();
+  const isAdmin = role === "ADMIN";
 
   const [items, setItems] = useState<BranchProductRow[]>([]);
   const [drafts, setDrafts] = useState<Record<string, number>>({});
+  const [reasons, setReasons] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -39,7 +46,7 @@ export default function StockPage() {
     branches.find((b) => b.id === workingBranchId) ?? null;
 
   useEffect(() => {
-    if (!workingBranchId || ctxLoading) return;
+    if (!workingBranchId || ctxLoading || roleLoading) return;
     let alive = true;
     (async () => {
       try {
@@ -47,8 +54,13 @@ export default function StockPage() {
         if (!alive) return;
         setItems(rows);
         const next: Record<string, number> = {};
-        for (const r of rows) next[r.productId] = r.stock;
+        const reasonMap: Record<string, string> = {};
+        for (const r of rows) {
+          next[r.productId] = r.stock;
+          reasonMap[r.productId] = "";
+        }
         setDrafts(next);
+        setReasons(reasonMap);
       } catch (error) {
         if (!alive) return;
         console.error("Failed to load stock:", error);
@@ -60,7 +72,7 @@ export default function StockPage() {
     return () => {
       alive = false;
     };
-  }, [workingBranchId, ctxLoading]);
+  }, [workingBranchId, ctxLoading, roleLoading]);
 
   const setDraft = (productId: string, value: number) => {
     if (Number.isNaN(value) || value < 0) return;
@@ -80,16 +92,23 @@ export default function StockPage() {
       toast.info("Nilai stok tidak berubah");
       return;
     }
+    const reason = (reasons[product.productId] ?? "").trim();
+    if (!reason) {
+      toast.error("Alasan penyesuaian stok wajib diisi");
+      return;
+    }
     setSaving(product.productId);
     try {
       await branchService.updateBranchProduct(workingBranchId, product.productId, {
         stock: value,
+        reason,
       });
       setItems((prev) =>
         prev.map((p) =>
           p.productId === product.productId ? { ...p, stock: value } : p
         )
       );
+      setReasons((prev) => ({ ...prev, [product.productId]: "" }));
       toast.success(`Stok ${product.name} diperbarui`);
     } catch (error) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -103,7 +122,7 @@ export default function StockPage() {
   const isDirty = (p: BranchProductRow) =>
     (drafts[p.productId] ?? p.stock) !== p.stock;
 
-  if (ctxLoading) {
+  if (ctxLoading || roleLoading) {
     return (
       <div className="flex items-center justify-center py-16 text-gray-400">
         <Loader2 className="h-5 w-5 animate-spin" />
@@ -135,7 +154,15 @@ export default function StockPage() {
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Daftar Stok</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base">Daftar Stok</CardTitle>
+              {!isAdmin && (
+                <Badge variant="outline" className="gap-1 text-gray-500">
+                  <Lock className="h-3 w-3" />
+                  Hanya baca
+                </Badge>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="pt-0">
             {loading ? (
@@ -164,50 +191,72 @@ export default function StockPage() {
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-9 w-9"
-                        onClick={() => adjust(p.productId, p, -1)}
-                        aria-label={`Kurangi stok ${p.name}`}
-                      >
-                        <Minus className="h-4 w-4" />
-                      </Button>
-                      <Input
-                        type="number"
-                        min={0}
-                        value={drafts[p.productId] ?? p.stock}
-                        onChange={(e) =>
-                          setDraft(p.productId, parseInt(e.target.value, 10))
-                        }
-                        className="h-9 w-20 text-center tabular-nums"
-                        inputMode="numeric"
-                        aria-label={`Stok ${p.name}`}
-                      />
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className="h-9 w-9"
-                        onClick={() => adjust(p.productId, p, 1)}
-                        aria-label={`Tambah stok ${p.name}`}
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="default"
-                        size="sm"
-                        className="h-9 w-9"
-                        disabled={saving === p.productId || !isDirty(p)}
-                        onClick={() => handleSave(p)}
-                        aria-label={`Simpan stok ${p.name}`}
-                      >
-                        {saving === p.productId ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <Save className="h-4 w-4" />
-                        )}
-                      </Button>
+                      {isAdmin ? (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9"
+                            onClick={() => adjust(p.productId, p, -1)}
+                            aria-label={`Kurangi stok ${p.name}`}
+                          >
+                            <Minus className="h-4 w-4" />
+                          </Button>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={drafts[p.productId] ?? p.stock}
+                            onChange={(e) =>
+                              setDraft(p.productId, parseInt(e.target.value, 10))
+                            }
+                            className="h-9 w-20 text-center tabular-nums"
+                            inputMode="numeric"
+                            aria-label={`Stok ${p.name}`}
+                          />
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-9 w-9"
+                            onClick={() => adjust(p.productId, p, 1)}
+                            aria-label={`Tambah stok ${p.name}`}
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="h-9 w-9"
+                            disabled={saving === p.productId || !isDirty(p)}
+                            onClick={() => handleSave(p)}
+                            aria-label={`Simpan stok ${p.name}`}
+                          >
+                            {saving === p.productId ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Save className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </>
+                      ) : (
+                        <span className="text-right text-sm font-medium tabular-nums text-gray-600">
+                          {p.stock} PCS
+                        </span>
+                      )}
                     </div>
+                    {isAdmin && isDirty(p) && (
+                      <Input
+                        type="text"
+                        value={reasons[p.productId] ?? ""}
+                        onChange={(e) =>
+                          setReasons((prev) => ({
+                            ...prev,
+                            [p.productId]: e.target.value,
+                          }))
+                        }
+                        placeholder="Alasan penyesuaian stok (wajib)"
+                        className="h-8 w-full text-sm sm:w-64"
+                      />
+                    )}
                   </li>
                 ))}
               </ul>

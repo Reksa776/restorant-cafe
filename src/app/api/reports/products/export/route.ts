@@ -12,27 +12,29 @@ import { buildCsv } from "@/lib/csv";
 import { errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import {
-  requireAdmin,
+  requireRoles,
   branchHintFrom,
   authorizedBranches,
 } from "@/lib/auth-helpers";
 
 // ============================================================
-// GET /api/reports/sales/export
+// GET /api/reports/products/export
 //   ?period=...&startDate=...&endDate=...
-//   &orderType=...&paymentMethod=...&status=...&branchId=...
+//   &branchId=<id>&categoryId=<id>&sortBy=qty|revenue|gross
+//   &orderType=...&paymentMethod=...&status=...
 //
-// ADMIN only, restaurant-scoped. Branch-scoped via an explicit branchId
-// (validated server-side) or the x-branch-id header. Returns an order-level
-// CSV download (non-cancelled orders in the period). Never includes payment
-// secrets.
+// Product CSV download — ADMIN or CASHIER, restaurant-scoped. Uses the exact
+// same aggregation and revenue semantics as GET /api/reports/products (PAID +
+// non-cancelled only, product-level discount = pro-rata allocation). Never
+// exposes internal IDs.
 // ============================================================
 
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const branchIdParam = searchParams.get("branchId") || undefined;
-    const ctx = await requireAdmin(
+    const ctx = await requireRoles(
+      ["ADMIN", "CASHIER"],
       branchIdParam || branchHintFrom(request)
     );
 
@@ -46,6 +48,10 @@ export async function GET(request: NextRequest) {
     const orderTypeRaw = searchParams.get("orderType");
     const paymentMethodRaw = searchParams.get("paymentMethod");
     const statusRaw = searchParams.get("status");
+    const categoryId = searchParams.get("categoryId") || null;
+    const sortByRaw = searchParams.get("sortBy");
+    const sortBy =
+      sortByRaw === "revenue" || sortByRaw === "gross" ? "revenue" : "qty";
 
     const filters: ReportFilters = {
       orderType: REPORT_ORDER_TYPES.includes(orderTypeRaw as never)
@@ -64,65 +70,50 @@ export async function GET(request: NextRequest) {
       ? [branchIdParam]
       : authorizedBranches(ctx);
 
-    const orders = await reportService.getSalesOrdersForExport(
+    const report = await reportService.getProductReport(
       ctx.restaurantId,
       period,
-      startDate,
-      endDate,
-      branchFilters,
-      filters
+      {
+        startDate,
+        endDate,
+        branchFilters,
+        filters,
+        categoryId,
+        sortBy,
+      }
     );
 
     const header = [
-      "Order Number",
-      "Tanggal",
-      "Tipe",
-      "Customer",
-      "Subtotal",
+      "Rank",
+      "Produk",
+      "Kategori",
+      "Harga Satuan",
+      "Qty Terjual",
+      "Gross Sales",
       "Diskon",
-      "Pajak",
-      "Service Charge",
-      "Total",
-      "Status Order",
-      "Status Pembayaran",
-      "Metode",
-      "Dibayar",
+      "Net Sales",
+      "Rata-rata Harga",
+      "Jumlah Order",
     ];
 
-    const rows = orders.map((o) => {
-      const pay = o.payments[0];
-      const method =
-        pay?.method === "KASIR"
-          ? "Kasir"
-          : pay?.method === "QRIS"
-            ? "QRIS"
-            : pay?.provider === "ipaymu" && !pay?.method
-              ? "VA iPaymu"
-              : pay?.method || "";
-      return [
-        o.orderNumber,
-        o.createdAt.toISOString(),
-        o.orderType,
-        o.customer?.name || "",
-        Number(o.subtotal),
-        Number(o.discount),
-        Number(o.tax),
-        Number(o.serviceCharge),
-        Number(o.grandTotal),
-        o.status,
-        o.paymentStatus,
-        method,
-        pay?.paidAt ? pay.paidAt.toISOString() : "",
-      ];
-    });
+    const rows = report.products.map((p) => [
+      p.rank,
+      p.name,
+      p.categoryName ?? "",
+      p.price,
+      p.qtySold,
+      p.grossSales,
+      p.discount,
+      p.netSales,
+      p.qtySold > 0 ? Math.round((p.netSales / p.qtySold) * 100) / 100 : 0,
+      p.orderCount,
+    ]);
 
-    const csv = buildCsv(header, rows);
-
-    const fileName = `sales-report-${period}-${new Date()
+    const fileName = `product-report-${period}-${new Date()
       .toISOString()
       .slice(0, 10)}.csv`;
 
-    return new NextResponse(csv, {
+    return new NextResponse(buildCsv(header, rows), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
         "Content-Disposition": `attachment; filename="${fileName}"`,
@@ -132,7 +123,11 @@ export async function GET(request: NextRequest) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.code, error.statusCode);
     }
-    console.error("Error exporting sales report:", error);
-    return errorResponse("Failed to export sales report", "INTERNAL_ERROR", 500);
+    console.error("Error exporting product report:", error);
+    return errorResponse(
+      "Failed to export product report",
+      "INTERNAL_ERROR",
+      500
+    );
   }
 }

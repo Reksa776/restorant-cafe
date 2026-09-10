@@ -82,6 +82,8 @@ export const branchService = {
       isAvailable?: boolean;
       priceOverride?: number | null;
       stock?: number;
+      /** Mandatory human-readable reason when `stock` is being changed. */
+      reason?: string;
     }
   ): Promise<{
     productId: string;

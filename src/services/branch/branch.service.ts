@@ -1,6 +1,10 @@
 import { prisma } from "@/lib/prisma";
 import { ConflictError, NotFoundError, ValidationError, ForbiddenError } from "@/lib/errors";
 import { auditService } from "@/services/audit/audit.service";
+import {
+  applyStockMovement,
+  StockRefType,
+} from "@/services/stock/stock.service";
 
 // ============================================================
 // Branch Service — restaurant-scoped branch (outlet) management.
@@ -356,6 +360,9 @@ export class BranchService {
       isAvailable?: boolean;
       priceOverride?: number | null;
       stock?: number;
+      /** Mandatory human-readable reason when `stock` is being changed
+       *  (consolidated stock adjustment — Phase C). */
+      reason?: string;
     },
     allowedBranchFilters?: string[] | null
   ) {
@@ -388,29 +395,60 @@ export class BranchService {
       throw new ValidationError("Stok harus berupa bilangan bulat >= 0");
     }
 
-    // Capture previous stock for audit trail (Phase: stock history).
+    // --- Consolidated manual stock adjustment (STEP 9 / D3) ---
+    // A stock change MUST go through the StockMovement ledger — never a blind
+    // `BranchProduct.stock = value`. The delta is a signed ADJUSTMENT movement
+    // applied atomically (FOR UPDATE + balanceAfter + no-negative guard), so
+    // the ledger always reflects reality and concurrent writers serialize.
     const existing = await prisma.branchProduct.findUnique({
       where: { branchId_productId: { branchId, productId } },
       select: { id: true, stock: true },
     });
+    const prevStock = existing ? existing.stock : 0;
+    const stockChanging = data.stock !== undefined;
+    const stockDelta = stockChanging ? data.stock! - prevStock : 0;
+    if (stockChanging && stockDelta !== 0) {
+      const reason = typeof data.reason === "string" ? data.reason.trim() : "";
+      if (!reason) {
+        throw new ValidationError("Alasan penyesuaian stok wajib diisi");
+      }
+    }
 
-    const bp = await prisma.branchProduct.upsert({
-      where: {
-        branchId_productId: { branchId, productId },
-      },
-      update: {
-        isAvailable: data.isAvailable ?? undefined,
-        priceOverride:
-          data.priceOverride === null ? null : (data.priceOverride ?? undefined),
-        stock: data.stock ?? undefined,
-      },
-      create: {
-        branchId,
-        productId,
-        isAvailable: data.isAvailable ?? product.isAvailable,
-        priceOverride: data.priceOverride ?? null,
-        stock: data.stock ?? 0,
-      },
+    const bp = await prisma.$transaction(async (tx) => {
+      if (stockChanging && stockDelta !== 0) {
+        // applyStockMovement validates the sign, serializes writers via the
+        // row lock, blocks results < 0 and appends the ADJUSTMENT ledger row —
+        // all inside this very transaction.
+        await applyStockMovement(tx, {
+          restaurantId,
+          branchId,
+          productId,
+          type: "ADJUSTMENT",
+          quantity: stockDelta,
+          reason: data.reason!.trim(),
+          refType: StockRefType.STOCK_ADJUSTMENT,
+          userId,
+        });
+      }
+
+      return tx.branchProduct.upsert({
+        where: {
+          branchId_productId: { branchId, productId },
+        },
+        update: {
+          isAvailable: data.isAvailable ?? undefined,
+          priceOverride:
+            data.priceOverride === null ? null : (data.priceOverride ?? undefined),
+          stock: data.stock !== undefined ? data.stock : undefined,
+        },
+        create: {
+          branchId,
+          productId,
+          isAvailable: data.isAvailable ?? product.isAvailable,
+          priceOverride: data.priceOverride ?? null,
+          stock: data.stock ?? 0,
+        },
+      });
     });
 
     await auditService.log({
@@ -426,10 +464,8 @@ export class BranchService {
         priceOverride: bp.priceOverride ? Number(bp.priceOverride) : null,
         stock: bp.stock,
         oldStock: existing ? existing.stock : null,
-        stockChanged:
-          data.stock !== undefined && existing
-            ? existing.stock !== data.stock
-            : false,
+        stockChanged: stockChanging && prevStock !== data.stock,
+        reason: stockChanging && stockDelta !== 0 ? data.reason!.trim() : null,
       },
     });
 

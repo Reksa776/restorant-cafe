@@ -15,12 +15,14 @@ import {
   Loader2,
   RefreshCw,
   AlertCircle,
+  Download,
   Banknote,
   CreditCard,
   ShoppingCart,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useUserRole } from "@/hooks/use-user-role";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import {
@@ -71,7 +73,8 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function PaymentsReportPage() {
   const { role } = useUserRole();
-  const { isLoading: branchCtxLoading } = useBranchContext();
+  const { isLoading: branchCtxLoading, branchId: currentBranchId } =
+    useBranchContext();
   const [period, setPeriod] = useState<ReportPeriod>("today");
   const [startDate, setStartDate] = useState(todayStr());
   const [endDate, setEndDate] = useState(todayStr());
@@ -81,6 +84,7 @@ export default function PaymentsReportPage() {
   const [report, setReport] = useState<PaymentReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   const loadReport = useCallback(
     async (silent = false) => {
@@ -113,6 +117,48 @@ export default function PaymentsReportPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period, branchCtxLoading, methodFilter, statusFilter, page]);
 
+  const handleExport = async () => {
+    setIsExporting(true);
+    try {
+      const params = new URLSearchParams({ period });
+      if (period === "custom") {
+        params.set("startDate", startDate);
+        params.set("endDate", endDate);
+      }
+      // Export is the FULL bounded dataset — never page/limit.
+      if (methodFilter !== "all") params.set("method", methodFilter);
+      if (statusFilter !== "all") params.set("status", statusFilter);
+
+      const res = await fetch(
+        `/api/reports/payments/export?${params.toString()}`,
+        {
+          credentials: "same-origin",
+          headers: currentBranchId
+            ? { "x-branch-id": currentBranchId }
+            : undefined,
+        }
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message || "Gagal mengekspor laporan");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `payment-report-${period}-${todayStr()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to export:", err);
+      toast.error(err instanceof Error ? err.message : "Gagal mengekspor laporan");
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -120,10 +166,20 @@ export default function PaymentsReportPage() {
           <h1 className="text-3xl font-bold">Laporan Pembayaran</h1>
           <p className="text-gray-500">Aktivitas pembayaran berdasarkan status dan metode</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
-          <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+          <Button size="sm" onClick={handleExport} disabled={isExporting}>
+            {isExporting ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4 mr-2" />
+            )}
+            Download CSV
+          </Button>
+        </div>
       </div>
 
       <ReportSubNav />
