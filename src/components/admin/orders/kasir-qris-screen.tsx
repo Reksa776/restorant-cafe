@@ -32,10 +32,11 @@ const rupiah = (v: string | number) =>
   `Rp${Number(v).toLocaleString("id-ID")}`;
 
 function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const msg = (error as any)?.response?.data?.message;
-  return typeof msg === "string" && msg ? msg : "Gagal memproses pembayaran QRIS";
+  if (typeof msg === "string" && msg) return msg;
+  if (error instanceof Error) return error.message;
+  return "Gagal memproses pembayaran QRIS";
 }
 
 /**
