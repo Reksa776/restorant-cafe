@@ -34,6 +34,18 @@ export function ReportBranchFilter() {
   const value = branchId ?? (canPickAll ? "ALL" : branches[0]?.id ?? "ALL");
   const hasOptions = branches.length > 0;
 
+  // Human-readable trigger label. Base UI renders the raw VALUE string in
+  // the trigger (not the item label) while the popup is closed, so an
+  // internal branch ID like "cmts3aks100009tu818hblu00" would be shown as-is
+  // — expose the branch NAME instead (same format as the dropdown options).
+  const selectedBranch = branches.find((b) => b.id === value);
+  const triggerLabel =
+    value === "ALL"
+      ? "Semua Cabang"
+      : selectedBranch
+        ? `${selectedBranch.name} (${selectedBranch.code})`
+        : "Semua Cabang";
+
   return (
     <div className="flex items-center gap-2">
       <Building2 className="h-4 w-4 shrink-0 text-gray-400" />
@@ -42,7 +54,7 @@ export function ReportBranchFilter() {
         onValueChange={(v) => setBranchId(v === "ALL" ? null : v)}
       >
         <SelectTrigger className="w-auto min-w-[150px] text-sm">
-          <SelectValue />
+          <SelectValue>{triggerLabel}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {canPickAll && (

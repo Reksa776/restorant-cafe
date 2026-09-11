@@ -338,7 +338,13 @@ export default function TablesPage() {
                         }
                       >
                         <SelectTrigger className="w-full">
-                          <SelectValue />
+                          <SelectValue>
+                            {table.status === "AVAILABLE"
+                              ? "Tersedia"
+                              : table.status === "OCCUPIED"
+                                ? "Terisi"
+                                : "Maintenance"}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="AVAILABLE">Tersedia</SelectItem>

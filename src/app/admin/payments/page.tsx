@@ -124,7 +124,19 @@ export default function PaymentsPage() {
           <div className="flex gap-4">
             <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value || "all")}>
               <SelectTrigger className="w-[180px]">
-                <SelectValue placeholder="Filter Status" />
+                <SelectValue>
+                  {statusFilter === "all"
+                    ? "Semua Status"
+                    : statusFilter === "UNPAID"
+                      ? "Belum Bayar"
+                      : statusFilter === "PENDING"
+                        ? "Menunggu"
+                        : statusFilter === "PAID"
+                          ? "Lunas"
+                          : statusFilter === "FAILED"
+                            ? "Gagal"
+                            : "Kedaluwarsa"}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Semua Status</SelectItem>

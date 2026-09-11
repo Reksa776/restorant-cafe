@@ -279,7 +279,10 @@ export default function PurchasesReportPage() {
                 }}
               >
                 <SelectTrigger className="w-[180px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {suppliers.find((s) => s.id === supplierFilter)?.name ??
+                      "Semua Supplier"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Semua Supplier</SelectItem>
@@ -304,7 +307,10 @@ export default function PurchasesReportPage() {
                 }}
               >
                 <SelectTrigger className="w-[150px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {STATUS_OPTIONS.find((o) => o.value === statusFilter)
+                      ?.label ?? "Semua Status"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {STATUS_OPTIONS.map((o) => (

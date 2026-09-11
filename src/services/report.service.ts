@@ -273,6 +273,8 @@ export interface InventoryReport {
   }>;
   productStockSummary: Array<{
     branchId: string;
+    branchName: string | null;
+    branchCode: string | null;
     productId: string;
     productName: string | null;
     currentStock: number;

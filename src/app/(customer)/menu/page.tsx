@@ -966,14 +966,33 @@ function MenuContent() {
     router.push("/pilih-cabang");
   }, [clearCustomerBranch, router]);
 
-  // Re-personalize recommendations after login/logout (cookie is sent
+  // Re-personalize recommendations after LOGIN/LOGOUT (cookie is sent
   // automatically; the server re-validates the session + restaurant scope).
+  //
+  // Two guardrails keep this from causing UI flicker and duplicate fetches:
+  // 1. Only run when the login state ACTUALLY changed. On initial mount
+  //    loadMenu has already fetched branch-scoped recommendations, so an
+  //    unconditional refetch here would duplicate the request and race it
+  //    with unscoped stock — flipping the rec cards between "+ Tambah" and
+  //    "Habis" as the two responses land in different orders.
+  // 2. Always scope the refetch to the active branch (same branchCode the
+  //    menu itself uses) so stock/availability semantics match the menu;
+  //    a branchless fetch would resolve stock as null (all buyable) and
+  //    even leak sold-out products as orderable.
+  const prevAuthCustomerIdRef = useRef<string | null | undefined>(undefined);
+
   useEffect(() => {
     if (!authHydrated || !restaurant) return;
+    const prev = prevAuthCustomerIdRef.current;
+    prevAuthCustomerIdRef.current = customerId;
+    if (prev === undefined || prev === customerId) return;
+
+    const branchCode =
+      tableContext?.branchCode ?? customerBranch?.branchCode ?? undefined;
     (async () => {
       try {
         const recRes = await api.get("/public/menu/recommendations", {
-          params: { restaurantId: restaurant.id, limit: 8 },
+          params: { restaurantId: restaurant.id, limit: 8, branchCode },
         });
         const recProducts: Product[] = (recRes.data.data.products || []).map(
           (p: Product) => normalizeProduct(p)
@@ -988,7 +1007,12 @@ function MenuContent() {
         try {
           const exclIds = recProducts.map((p) => p.id).join(",");
           const bsRes = await api.get("/public/menu/best-sellers", {
-            params: { restaurantId: restaurant.id, limit: 8, excludeIds: exclIds },
+            params: {
+              restaurantId: restaurant.id,
+              limit: 8,
+              excludeIds: exclIds,
+              branchCode,
+            },
           });
           setBestSellers(
             (bsRes.data.data.products || []).map(

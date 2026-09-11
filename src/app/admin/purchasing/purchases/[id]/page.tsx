@@ -227,7 +227,10 @@ export default function PurchaseDetailPage() {
               <Label>Supplier *</Label>
               <Select value={supplierId} onValueChange={(v) => setSupplierId(v || "")}>
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue>
+                    {suppliers.find((s) => s.id === supplierId)?.name ??
+                      "Pilih supplier"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {suppliers.map((s) => (

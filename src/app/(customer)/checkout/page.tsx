@@ -29,6 +29,8 @@ interface Table {
   number: number;
   name: string;
   capacity: number;
+  /** Branch this table belongs to (null = legacy/unassigned table). */
+  branch?: { id: string; name: string; code: string } | null;
 }
 
 // ============================================================
@@ -243,17 +245,23 @@ export default function CheckoutPage() {
       ? subtotal
       : grandTotal;
 
-  // Load tables if restaurant is available and not coming from QR
+  // Load tables if restaurant is available and not coming from QR. The list
+  // is scoped to the branch the customer selected (checkoutBranchCode): the
+  // server treats the chosen TABLE's branch as authoritative for stock
+  // validation, so offering tables from another branch would make an
+  // in-stock menu item fail checkout with "Produk sudah habis" (menu stock
+  // source ≠ checkout stock source). Tables carry their branch so the label
+  // is unambiguous.
   useEffect(() => {
     if (restaurantId && orderType === "DINE_IN" && !tableContext) {
       loadTables();
     }
-  }, [restaurantId, orderType, tableContext]);
+  }, [restaurantId, orderType, tableContext, checkoutBranchCode]);
 
   const loadTables = async () => {
     try {
       const res = await api.get("/public/tables", {
-        params: { restaurantId },
+        params: { restaurantId, branchCode: checkoutBranchCode },
       });
       setTables(res.data.data);
     } catch (error) {
@@ -606,6 +614,7 @@ export default function CheckoutPage() {
                   {tables.map((table) => (
                     <option key={table.id} value={table.id}>
                       {table.name} (Kapasitas: {table.capacity})
+                      {table.branch ? ` — ${table.branch.name}` : ""}
                     </option>
                   ))}
                 </select>

@@ -118,7 +118,15 @@ export default function InventoryPage() {
                 <Label className="text-xs text-gray-500">Jenis</Label>
                 <Select value={filterType} onValueChange={(v) => setFilterType(v as Flow)}>
                   <SelectTrigger size="sm" className="w-full lg:w-36">
-                    <SelectValue />
+                    <SelectValue>
+                      {filterType === "ALL"
+                        ? "Semua"
+                        : filterType === "IN"
+                          ? "Masuk"
+                          : filterType === "OUT"
+                            ? "Keluar"
+                            : "Penyesuaian"}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="ALL">Semua</SelectItem>
@@ -132,7 +140,10 @@ export default function InventoryPage() {
                 <Label className="text-xs text-gray-500">Cabang</Label>
                 <Select value={filterBranch} onValueChange={(v) => setFilterBranch(v || "")}>
                   <SelectTrigger size="sm" className="w-full lg:w-40">
-                    <SelectValue />
+                    <SelectValue>
+                      {branches.find((b) => b.id === filterBranch)?.name ??
+                        "Semua cabang"}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Semua cabang</SelectItem>
@@ -148,7 +159,10 @@ export default function InventoryPage() {
                 <Label className="text-xs text-gray-500">Produk</Label>
                 <Select value={filterProduct} onValueChange={(v) => setFilterProduct(v || "")}>
                   <SelectTrigger size="sm" className="w-full lg:w-44">
-                    <SelectValue />
+                    <SelectValue>
+                      {products.find((p) => p.id === filterProduct)?.name ??
+                        "Semua produk"}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Semua produk</SelectItem>

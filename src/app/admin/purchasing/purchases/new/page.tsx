@@ -163,7 +163,10 @@ export default function NewPurchasePage() {
               <Label>Supplier *</Label>
               <Select value={supplierId} onValueChange={(v) => setSupplierId(v || "")}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Pilih supplier" />
+                  <SelectValue>
+                    {suppliers.find((s) => s.id === supplierId)?.name ??
+                      "Pilih supplier"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {suppliers.map((s) => (
@@ -178,7 +181,12 @@ export default function NewPurchasePage() {
               <Label>Cabang Tujuan *</Label>
               <Select value={selectedBranchId} onValueChange={(v) => setSelectedBranchId(v || "")}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Pilih cabang" />
+                  <SelectValue>
+                    {(() => {
+                      const b = branches.find((x) => x.id === selectedBranchId);
+                      return b ? `${b.name} (${b.code})` : "Pilih cabang";
+                    })()}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {branches.map((b) => (
@@ -224,7 +232,10 @@ export default function NewPurchasePage() {
                   <Label className="text-xs text-gray-500">Produk</Label>
                   <Select value={it.productId} onValueChange={(v) => setItem(index, { productId: v || "" })}>
                     <SelectTrigger size="sm">
-                      <SelectValue placeholder="Pilih produk" />
+                      <SelectValue>
+                        {products.find((p) => p.id === it.productId)?.name ??
+                          "Pilih produk"}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent>
                       {products.map((p) => (

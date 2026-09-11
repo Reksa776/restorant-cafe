@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { usePathname } from "next/navigation";
 import api from "@/lib/axios";
 import { useCart } from "@/hooks/use-cart";
 import { useBranding } from "@/hooks/use-branding";
@@ -24,12 +25,24 @@ import { useBranding } from "@/hooks/use-branding";
 
 const brandingFetchedFor = new Set<string>();
 
+// Pages that resolve the restaurant (and apply its branding) themselves:
+// the menu page (loadMenu), the QR table landing (/t) and the branch
+// selector (/pilih-cabang). BrandingSync only needs to cover hard refreshes
+// on the OTHER customer pages (/cart, /checkout, /payment/*, /order/*) —
+// skipping these paths avoids a duplicate /api/public/restaurant fetch per
+// load on exactly the pages the customer sees first.
+const SELF_BRANDING_PREFIXES = ["/menu", "/t/", "/pilih-cabang"];
+
 export function BrandingSync() {
   const { restaurantId, isHydrated } = useCart();
   const { applyBranding } = useBranding();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (!isHydrated || !restaurantId) return;
+    if (SELF_BRANDING_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) {
+      return;
+    }
     if (brandingFetchedFor.has(restaurantId)) return;
     brandingFetchedFor.add(restaurantId);
 
@@ -58,7 +71,7 @@ export function BrandingSync() {
     return () => {
       cancelled = true;
     };
-  }, [isHydrated, restaurantId, applyBranding]);
+  }, [isHydrated, restaurantId, applyBranding, pathname]);
 
   return null;
 }

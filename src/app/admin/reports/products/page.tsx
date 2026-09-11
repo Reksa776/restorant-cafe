@@ -200,7 +200,10 @@ export default function ProductsReportPage() {
               <span className="text-xs text-gray-500">Kategori</span>
               <Select value={categoryId} onValueChange={(v) => v !== null && setCategoryId(v)}>
                 <SelectTrigger className="w-[160px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {(report?.categories ?? []).find((c) => c.id === categoryId)
+                      ?.name ?? "Semua Kategori"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Semua Kategori</SelectItem>
@@ -217,7 +220,9 @@ export default function ProductsReportPage() {
               <span className="text-xs text-gray-500">Urutkan</span>
               <Select value={sortBy} onValueChange={(v) => setSortBy(v as "qty" | "revenue")}>
                 <SelectTrigger className="w-[140px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {sortBy === "revenue" ? "Pendapatan" : "Jumlah Terjual"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="qty">Jumlah Terjual</SelectItem>

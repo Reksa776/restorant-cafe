@@ -136,7 +136,15 @@ export default function PurchasesPage() {
                 <Label className="text-xs text-gray-500">Status</Label>
                 <Select value={status} onValueChange={(v) => setStatus(v || "all")}>
                   <SelectTrigger size="sm" className="w-full lg:w-36">
-                    <SelectValue />
+                    <SelectValue>
+                      {status === "all"
+                        ? "Semua"
+                        : status === "DRAFT"
+                          ? "Draft"
+                          : status === "RECEIVED"
+                            ? "Diterima"
+                            : "Dibatalkan"}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Semua</SelectItem>
@@ -150,7 +158,10 @@ export default function PurchasesPage() {
                 <Label className="text-xs text-gray-500">Supplier</Label>
                 <Select value={supplierId} onValueChange={(v) => setSupplierId(v || "all")}>
                   <SelectTrigger size="sm" className="w-full lg:w-44">
-                    <SelectValue />
+                    <SelectValue>
+                      {suppliers.find((s) => s.id === supplierId)?.name ??
+                        "Semua"}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Semua</SelectItem>

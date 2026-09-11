@@ -277,7 +277,10 @@ export default function ReportsPage() {
               <span className="text-xs text-gray-500">Tipe</span>
               <Select value={orderTypeFilter} onValueChange={(v) => v !== null && setOrderTypeFilter(v)}>
                 <SelectTrigger className="w-[150px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {ORDER_TYPE_OPTIONS.find((o) => o.value === orderTypeFilter)
+                      ?.label ?? "Semua Tipe"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {ORDER_TYPE_OPTIONS.map((o) => (
@@ -296,7 +299,11 @@ export default function ReportsPage() {
                 onValueChange={(v) => v !== null && setPaymentMethodFilter(v)}
               >
                 <SelectTrigger className="w-[150px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {PAYMENT_METHOD_OPTIONS.find(
+                      (o) => o.value === paymentMethodFilter
+                    )?.label ?? "Semua Metode"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {PAYMENT_METHOD_OPTIONS.map((o) => (
@@ -312,7 +319,10 @@ export default function ReportsPage() {
               <span className="text-xs text-gray-500">Status</span>
               <Select value={statusFilter} onValueChange={(v) => v !== null && setStatusFilter(v)}>
                 <SelectTrigger className="w-[150px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {PAYMENT_STATUS_OPTIONS.find((o) => o.value === statusFilter)
+                      ?.label ?? "Semua Status"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {PAYMENT_STATUS_OPTIONS.map((o) => (

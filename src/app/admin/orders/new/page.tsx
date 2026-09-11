@@ -137,6 +137,35 @@ function normalizeProduct(p: Product): Product {
   };
 }
 
+/**
+ * Kasir product thumbnail: fixed 4:3 container so cards never shift when the
+ * image loads, with a graceful placeholder for products without an image and
+ * for broken URLs (the browser's broken-image glyph never appears). Reuses
+ * the existing `Product.imageUrl` / local /uploads/products/... served by the
+ * current upload system — no new upload mechanism.
+ */
+function SafeProductImage({ url, alt }: { url?: string | null; alt: string }) {
+  const [broken, setBroken] = useState(false);
+  return (
+    <div className="relative w-full aspect-[4/3] bg-gradient-to-br from-gray-100 to-gray-50 overflow-hidden flex-shrink-0 rounded-lg">
+      {url && !broken ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={url}
+          alt={alt}
+          className="w-full h-full object-cover"
+          loading="lazy"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <UtensilsCrossed className="h-6 w-6 text-gray-300" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function hasCustomization(product: Product): boolean {
   const hasActiveGroup = (product.optionGroups || []).some(
     (group) =>
@@ -1188,7 +1217,8 @@ export default function KasirManualOrderPage() {
                     key={product.id}
                     className="bg-white rounded-xl border border-gray-200 p-3 flex flex-col min-w-0"
                   >
-                    <h3 className="text-sm font-semibold leading-snug line-clamp-2">
+                    <SafeProductImage url={product.imageUrl} alt={product.name} />
+                    <h3 className="text-sm font-semibold leading-snug line-clamp-2 mt-2">
                       {product.name}
                       {unconfigured && (
                         <span className="ml-1.5 align-middle inline-block bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.5 rounded uppercase">

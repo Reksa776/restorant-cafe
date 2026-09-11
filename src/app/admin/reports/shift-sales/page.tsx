@@ -203,7 +203,13 @@ export default function ShiftSalesReportPage() {
               <span className="text-xs text-gray-500">Status</span>
               <Select value={shiftStatus} onValueChange={(v) => v !== null && setShiftStatus(v)}>
                 <SelectTrigger className="w-[130px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {shiftStatus === "all"
+                      ? "Semua Status"
+                      : shiftStatus === "OPEN"
+                        ? "Buka"
+                        : "Tutup"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Semua Status</SelectItem>

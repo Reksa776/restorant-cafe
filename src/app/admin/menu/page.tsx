@@ -679,7 +679,12 @@ export default function MenuPage() {
             <div>
               <Label htmlFor="prodCategory">Kategori</Label>
               <Select value={productForm.categoryId} onValueChange={(value) => setProductForm({ ...productForm, categoryId: value || "" })}>
-                <SelectTrigger><SelectValue placeholder="Pilih kategori" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue>
+                    {categories.find((c) => c.id === productForm.categoryId)
+                      ?.name ?? "Pilih kategori"}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   {categories.map((cat) => (<SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>))}
                 </SelectContent>
@@ -721,7 +726,15 @@ export default function MenuPage() {
                   minSelect: groupForm.isRequired ? (isSingle ? 1 : groupForm.minSelect) : 0,
                 });
               }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue>
+                    {groupForm.type === "SINGLE"
+                      ? "Single (Pilih 1)"
+                      : groupForm.type === "MULTI"
+                        ? "Multi (Pilih Banyak)"
+                        : "Pilih tipe"}
+                  </SelectValue>
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="SINGLE">Single (Pilih 1)</SelectItem>
                   <SelectItem value="MULTI">Multi (Pilih Banyak)</SelectItem>
@@ -1218,7 +1231,10 @@ function RecommendationsTab() {
             onValueChange={(v) => v && setSourceProductId(v)}
           >
             <SelectTrigger className="mt-1">
-              <SelectValue placeholder="Pilih produk sumber" />
+              <SelectValue>
+                {products.find((p) => p.id === sourceProductId)?.name ??
+                  "Pilih produk sumber"}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {products.map((p) => (
@@ -1319,7 +1335,10 @@ function RecommendationsTab() {
             <div className="flex gap-2">
               <Select value={addCandidateId} onValueChange={(v) => v && setAddCandidateId(v)}>
                 <SelectTrigger className="flex-1 min-w-0">
-                  <SelectValue placeholder="Pilih produk untuk ditambahkan" />
+                  <SelectValue>
+                    {addableProducts.find((p) => p.id === addCandidateId)
+                      ?.name ?? "Pilih produk untuk ditambahkan"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {addableProducts.length === 0 ? (

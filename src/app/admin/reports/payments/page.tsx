@@ -235,7 +235,10 @@ export default function PaymentsReportPage() {
                 onValueChange={(v) => { if (v !== null) { setMethodFilter(v); setPage(1); } }}
               >
                 <SelectTrigger className="w-[150px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {METHOD_OPTIONS.find((o) => o.value === methodFilter)
+                      ?.label ?? "Semua Metode"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {METHOD_OPTIONS.map((o) => (
@@ -254,7 +257,10 @@ export default function PaymentsReportPage() {
                 onValueChange={(v) => { if (v !== null) { setStatusFilter(v); setPage(1); } }}
               >
                 <SelectTrigger className="w-[150px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {STATUS_OPTIONS.find((o) => o.value === statusFilter)
+                      ?.label ?? "Semua Status"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {STATUS_OPTIONS.map((o) => (

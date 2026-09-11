@@ -283,7 +283,10 @@ export default function InventoryReportPage() {
                 }}
               >
                 <SelectTrigger className="w-[180px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {products.find((p) => p.id === productFilter)?.name ??
+                      "Semua Produk"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Semua Produk</SelectItem>
@@ -308,7 +311,10 @@ export default function InventoryReportPage() {
                 }}
               >
                 <SelectTrigger className="w-[160px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {categories.find((c) => c.id === categoryFilter)?.name ??
+                      "Semua Kategori"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Semua Kategori</SelectItem>
@@ -333,7 +339,10 @@ export default function InventoryReportPage() {
                 }}
               >
                 <SelectTrigger className="w-[150px] text-sm h-8">
-                  <SelectValue />
+                  <SelectValue>
+                    {TYPE_OPTIONS.find((o) => o.value === typeFilter)?.label ??
+                      "Semua Jenis"}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {TYPE_OPTIONS.map((o) => (
@@ -522,7 +531,11 @@ export default function InventoryReportPage() {
                         <tr key={`${s.branchId}-${s.productId}`} className="border-b last:border-0">
                           <td className="py-2 font-medium">{s.productName ?? s.productId}</td>
                           <td className="py-2 text-sm text-gray-500">
-                            {s.branchId.slice(-8).toUpperCase()}
+                            {s.branchName
+                              ? s.branchCode
+                                ? `${s.branchName} (${s.branchCode})`
+                                : s.branchName
+                              : "—"}
                           </td>
                           <td className="py-2 text-right tabular-nums font-medium">
                             {s.currentStock}

@@ -598,6 +598,8 @@ export class ReportService {
             stockOut: number | bigint | string;
             adjustment: number | bigint | string;
             lastMovement: Date | null;
+            branchName: string | null;
+            branchCode: string | null;
           }>
         >`
           SELECT bp.\`branchId\` AS branchId,
@@ -606,9 +608,12 @@ export class ReportService {
                  COALESCE(SUM(CASE WHEN sm.\`type\` = 'IN' THEN sm.\`quantity\` ELSE 0 END), 0) AS stockIn,
                  COALESCE(SUM(CASE WHEN sm.\`type\` = 'OUT' THEN sm.\`quantity\` ELSE 0 END), 0) AS stockOut,
                  COALESCE(SUM(CASE WHEN sm.\`type\` = 'ADJUSTMENT' THEN sm.\`quantity\` ELSE 0 END), 0) AS adjustment,
-                 MAX(sm.\`createdAt\`) AS lastMovement
+                 MAX(sm.\`createdAt\`) AS lastMovement,
+                 b.\`name\` AS branchName,
+                 b.\`code\` AS branchCode
           FROM \`branchproduct\` bp
           JOIN \`product\` p ON p.\`id\` = bp.\`productId\`
+          LEFT JOIN \`branch\` b ON b.\`id\` = bp.\`branchId\`
           LEFT JOIN \`stockmovement\` sm
             ON sm.\`branchId\` = bp.\`branchId\`
            AND sm.\`productId\` = bp.\`productId\`
@@ -618,7 +623,7 @@ export class ReportService {
            ${type ? Prisma.sql`AND sm.\`type\` = ${type}` : Prisma.empty}
           WHERE 1 = 1
           ${bpSql}
-          GROUP BY bp.\`branchId\`, bp.\`productId\`, bp.\`stock\`
+          GROUP BY bp.\`branchId\`, bp.\`productId\`, bp.\`stock\`, b.\`name\`, b.\`code\`
           ORDER BY bp.\`stock\` DESC
           LIMIT ${limit} OFFSET ${skip}
         `,
@@ -686,6 +691,8 @@ export class ReportService {
       })),
       productStockSummary: productStockRows.map((r) => ({
         branchId: r.branchId as string,
+        branchName: r.branchName ?? null,
+        branchCode: r.branchCode ?? null,
         productId: r.productId as string,
         productName: stockProductMap.get(r.productId as string) ?? null,
         currentStock: Number(r.stock),

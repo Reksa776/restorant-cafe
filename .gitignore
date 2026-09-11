@@ -14,6 +14,7 @@ npm-debug.log*
 /.runtime-data/
 /uploads/
 /public/uploads/
+/scripts/*
 
 # Local E2E browser screenshots (test artifacts only)
 /shots/
