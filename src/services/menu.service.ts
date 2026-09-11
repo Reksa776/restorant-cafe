@@ -79,6 +79,32 @@ export interface ProductWithCustomization extends Product {
   addons: ProductAddon[];
 }
 
+// Recipe / BOM (F.3) — composition only, never cost/stock fields.
+export interface RecipeItem {
+  id: string;
+  ingredientId: string;
+  ingredientName: string;
+  baseUnit: string;
+  quantity: string;
+  unit: string;
+}
+
+export interface Recipe {
+  id: string;
+  productId: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+  items: RecipeItem[];
+}
+
+export interface RecipeInputItem {
+  ingredientId: string;
+  /** Decimal string, e.g. "0.150" — never a JS float. */
+  quantity: string;
+  unit: string;
+}
+
 export const menuService = {
   // Categories
   async getCategories(): Promise<Category[]> {
@@ -245,5 +271,22 @@ export const menuService = {
 
   async deleteAddon(productId: string, addonId: string): Promise<void> {
     await api.delete(`/menu/products/${productId}/addons/${addonId}`);
+  },
+
+  // Recipe / BOM (F.3)
+  async getRecipe(productId: string): Promise<Recipe | null> {
+    const response = await api.get(`/admin/menu/products/${productId}/recipe`);
+    return response.data.data;
+  },
+
+  async saveRecipe(productId: string, items: RecipeInputItem[]): Promise<Recipe | null> {
+    const response = await api.put(`/admin/menu/products/${productId}/recipe`, {
+      items,
+    });
+    return response.data.data;
+  },
+
+  async deleteRecipe(productId: string): Promise<void> {
+    await api.delete(`/admin/menu/products/${productId}/recipe`);
   },
 };

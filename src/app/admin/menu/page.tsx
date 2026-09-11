@@ -32,6 +32,10 @@ import {
   type ProductOption,
   type ProductAddon,
 } from "@/services/menu.service";
+import {
+  ingredientService,
+  type Ingredient as IngredientOption,
+} from "@/services/ingredient.service";
 import { Plus, Pencil, Trash2, ToggleLeft, ToggleRight, ChevronDown, ChevronUp, MoveUp, MoveDown, Star, Store, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { BranchAvailabilityDialog } from "@/components/admin/branch-availability-dialog";
@@ -67,6 +71,17 @@ function apiErrorMessage(error: unknown, fallback: string): string {
   return typeof msg === "string" && msg.trim() ? msg : fallback;
 }
 
+/**
+ * One editable recipe row in the Komposisi tab of the product dialog.
+ * Unit is NOT editable — it always follows the selected ingredient's
+ * baseUnit (F.3 rule; no unit conversion).
+ */
+interface RecipeRow {
+  key: string;
+  ingredientId: string;
+  quantity: string;
+}
+
 // ============================================================
 // Main Page
 // ============================================================
@@ -100,6 +115,13 @@ export default function MenuPage() {
   // Customization state
   const [customizingProduct, setCustomizingProduct] = useState<ProductWithCustomization | null>(null);
   const [activeTab, setActiveTab] = useState<"general" | "customization">("general");
+
+  // Recipe / BOM state (Komposisi tab inside the product dialog, F.3)
+  const [productTab, setProductTab] = useState<"info" | "komposisi">("info");
+  const [recipeIngredients, setRecipeIngredients] = useState<IngredientOption[]>([]);
+  const [recipeRows, setRecipeRows] = useState<RecipeRow[]>([]);
+  const [isRecipeLoading, setIsRecipeLoading] = useState(false);
+  const [isRecipeSaving, setIsRecipeSaving] = useState(false);
 
   // Option Group dialog
   const [isGroupDialogOpen, setIsGroupDialogOpen] = useState(false);
@@ -271,6 +293,7 @@ export default function MenuPage() {
       setEditingProduct(null);
       setProductForm({ name: "", description: "", price: "", categoryId: "" });
       setProductImage({ kind: "empty" });
+      resetRecipeState();
       loadData();
     } catch (error) {
       console.error("Failed to save product:", error);
@@ -313,6 +336,136 @@ export default function MenuPage() {
     } catch (error) {
       console.error("Failed to load product customization:", error);
       toast.error("Gagal memuat data kustomisasi");
+    }
+  };
+
+  // ============================================================
+  // Recipe / BOM handlers (Komposisi tab, F.3)
+  // ============================================================
+
+  const loadRecipeRows = async (productId: string) => {
+    setIsRecipeLoading(true);
+    try {
+      const recipe = await menuService.getRecipe(productId);
+      setRecipeRows(
+        recipe && recipe.items.length
+          ? recipe.items.map((it) => ({
+              key: crypto.randomUUID(),
+              ingredientId: it.ingredientId,
+              quantity: it.quantity,
+            }))
+          : []
+      );
+    } catch (error) {
+      console.error("Failed to load recipe:", error);
+      toast.error("Gagal memuat komposisi");
+    } finally {
+      setIsRecipeLoading(false);
+    }
+  };
+
+  const handleProductTabChange = (tab: string) => {
+    setProductTab(tab as "info" | "komposisi");
+    if (tab === "komposisi" && editingProduct) {
+      if (recipeIngredients.length === 0) {
+        ingredientService
+          .list({ isActive: "true", limit: 100 })
+          .then((res) => setRecipeIngredients(res.items))
+          .catch(() => toast.error("Gagal memuat bahan baku"));
+      }
+      loadRecipeRows(editingProduct.id);
+    }
+  };
+
+  const addRecipeRow = () => {
+    if (recipeIngredients.length === 0) {
+      toast.error("Belum ada bahan baku. Tambahkan bahan baku terlebih dahulu.");
+      return;
+    }
+    setRecipeRows((rows) => [
+      ...rows,
+      { key: crypto.randomUUID(), ingredientId: "", quantity: "" },
+    ]);
+  };
+
+  const updateRecipeRow = (key: string, patch: Partial<RecipeRow>) => {
+    setRecipeRows((rows) =>
+      rows.map((r) => (r.key === key ? { ...r, ...patch } : r))
+    );
+  };
+
+  const removeRecipeRow = (key: string) => {
+    setRecipeRows((rows) => rows.filter((r) => r.key !== key));
+  };
+
+  const resetRecipeState = () => {
+    setProductTab("info");
+    setRecipeRows([]);
+  };
+
+  const handleSaveRecipe = async () => {
+    if (!editingProduct) return;
+    const filled = recipeRows.filter(
+      (r) => r.ingredientId !== "" && r.quantity.trim() !== ""
+    );
+    if (filled.length === 0) {
+      toast.error("Tambahkan minimal 1 bahan baku");
+      return;
+    }
+    if (filled.length !== recipeRows.length) {
+      toast.error("Semua baris harus lengkap (bahan + quantity)");
+      return;
+    }
+    const seen = new Set(filled.map((r) => r.ingredientId));
+    if (seen.size !== filled.length) {
+      toast.error("Bahan baku tidak boleh duplikat");
+      return;
+    }
+    for (const r of filled) {
+      if (!(Number(r.quantity) > 0)) {
+        toast.error("Quantity harus lebih besar dari 0");
+        return;
+      }
+    }
+    setIsRecipeSaving(true);
+    try {
+      const items = filled.map((r) => {
+        const ing = recipeIngredients.find((i) => i.id === r.ingredientId);
+        return {
+          ingredientId: r.ingredientId,
+          quantity: r.quantity.trim(),
+          unit: ing?.baseUnit ?? "",
+        };
+      });
+      const recipe = await menuService.saveRecipe(editingProduct.id, items);
+      toast.success("Komposisi berhasil disimpan");
+      setRecipeRows(
+        recipe && recipe.items.length
+          ? recipe.items.map((it) => ({
+              key: crypto.randomUUID(),
+              ingredientId: it.ingredientId,
+              quantity: it.quantity,
+            }))
+          : []
+      );
+    } catch (error) {
+      console.error("Failed to save recipe:", error);
+      toast.error(apiErrorMessage(error, "Gagal menyimpan komposisi"));
+    } finally {
+      setIsRecipeSaving(false);
+    }
+  };
+
+  const handleDeleteRecipe = async () => {
+    if (!editingProduct) return;
+    if (!confirm("Hapus komposisi produk ini?")) return;
+    try {
+      await menuService.deleteRecipe(editingProduct.id);
+      setRecipeRows([]);
+      toast.success("Komposisi berhasil dihapus");
+    } catch (error) {
+      console.error("Failed to delete recipe:", error);
+      toast.error(apiErrorMessage(error, "Gagal menghapus komposisi"));
     }
   };
 
@@ -574,7 +727,7 @@ export default function MenuPage() {
             <Card>
               <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle>Produk</CardTitle>
-                <Button onClick={() => { setEditingProduct(null); setProductForm({ name: "", description: "", price: "", categoryId: categories[0]?.id || "" }); setProductImage({ kind: "empty" }); setIsProductDialogOpen(true); }}>
+                <Button onClick={() => { setEditingProduct(null); setProductForm({ name: "", description: "", price: "", categoryId: categories[0]?.id || "" }); setProductImage({ kind: "empty" }); resetRecipeState(); setIsProductDialogOpen(true); }}>
                   <Plus className="h-4 w-4 mr-2" /> Tambah Produk
                 </Button>
               </CardHeader>
@@ -610,7 +763,7 @@ export default function MenuPage() {
                           <Button variant="outline" size="sm" onClick={() => handleOpenCustomization(prod)}>
                             Kustomisasi
                           </Button>
-                          <Button variant="outline" size="sm" onClick={() => { setEditingProduct(prod); setProductForm({ name: prod.name, description: prod.description || "", price: prod.price.toString(), categoryId: prod.category.id }); setProductImage(productImageValueFromUrl(prod.imageUrl)); setIsProductDialogOpen(true); }}>
+                          <Button variant="outline" size="sm" onClick={() => { setEditingProduct(prod); setProductForm({ name: prod.name, description: prod.description || "", price: prod.price.toString(), categoryId: prod.category.id }); setProductImage(productImageValueFromUrl(prod.imageUrl)); resetRecipeState(); setIsProductDialogOpen(true); }}>
                             <Pencil className="h-4 w-4" />
                           </Button>
                           <Button variant="destructive" size="sm" onClick={() => handleDeleteProduct(prod.id)}>
@@ -656,49 +809,180 @@ export default function MenuPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Product Dialog */}
-      <Dialog open={isProductDialogOpen} onOpenChange={setIsProductDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+      {/* Product Dialog — Info + Komposisi (recipe/BOM, F.3) tabs when editing */}
+      <Dialog open={isProductDialogOpen} onOpenChange={(open) => { setIsProductDialogOpen(open); if (!open) resetRecipeState(); }}>
+        <DialogContent className={editingProduct ? "sm:max-w-2xl" : "sm:max-w-md"}>
           <DialogHeader>
             <DialogTitle>{editingProduct ? "Edit Produk" : "Tambah Produk"}</DialogTitle>
             <DialogDescription>{editingProduct ? "Ubah informasi produk" : "Tambahkan produk baru"}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="prodName">Nama</Label>
-              <Input id="prodName" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} placeholder="Nama produk" />
+
+          {editingProduct ? (
+            <Tabs value={productTab} onValueChange={handleProductTabChange}>
+              <TabsList>
+                <TabsTrigger value="info">Info</TabsTrigger>
+                <TabsTrigger value="komposisi">Komposisi</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="info" className="space-y-4">
+                <div>
+                  <Label htmlFor="prodName">Nama</Label>
+                  <Input id="prodName" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} placeholder="Nama produk" />
+                </div>
+                <div>
+                  <Label htmlFor="prodDesc">Deskripsi</Label>
+                  <Textarea id="prodDesc" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} placeholder="Deskripsi produk (opsional)" />
+                </div>
+                <div>
+                  <Label htmlFor="prodPrice">Harga (Rp)</Label>
+                  <Input id="prodPrice" type="number" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: e.target.value ?? "" })} placeholder="Harga produk" />
+                </div>
+                <div>
+                  <Label htmlFor="prodCategory">Kategori</Label>
+                  <Select value={productForm.categoryId} onValueChange={(value) => setProductForm({ ...productForm, categoryId: value || "" })}>
+                    <SelectTrigger>
+                      <SelectValue>
+                        {categories.find((c) => c.id === productForm.categoryId)
+                          ?.name ?? "Pilih kategori"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categories.map((cat) => (<SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* Product image — upload from device or external URL */}
+                <div>
+                  <ProductImageField value={productImage} onChange={setProductImage} />
+                </div>
+              </TabsContent>
+
+              <TabsContent value="komposisi" className="space-y-4">
+                {isRecipeLoading ? (
+                  <div className="flex items-center justify-center py-8 text-gray-500">
+                    <Loader2 className="h-5 w-5 animate-spin mr-2" /> Memuat komposisi...
+                  </div>
+                ) : recipeRows.length === 0 ? (
+                  <p className="py-4 text-sm text-gray-500">
+                    Belum ada komposisi. Tambahkan bahan baku untuk produk ini.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-[1fr_100px_100px_36px] gap-2 text-xs font-medium text-gray-500">
+                      <span>Ingredient</span>
+                      <span>Qty</span>
+                      <span>Unit</span>
+                      <span />
+                    </div>
+                    {recipeRows.map((row) => {
+                      const usedIds = new Set(
+                        recipeRows.filter((r) => r.key !== row.key).map((r) => r.ingredientId)
+                      );
+                      const selected = recipeIngredients.find((i) => i.id === row.ingredientId);
+                      return (
+                        <div key={row.key} className="grid grid-cols-[1fr_100px_100px_36px] items-center gap-2">
+                          <Select
+                            value={row.ingredientId || "__none__"}
+                            onValueChange={(v) =>
+                              updateRecipeRow(row.key, { ingredientId: v && v !== "__none__" ? v : "" })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Pilih bahan" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none__">Pilih bahan...</SelectItem>
+                              {recipeIngredients
+                                .filter((i) => !usedIds.has(i.id))
+                                .map((ing) => (
+                                  <SelectItem key={ing.id} value={ing.id}>
+                                    {ing.name} ({ing.baseUnit})
+                                  </SelectItem>
+                                ))}
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            type="number"
+                            step="any"
+                            min="0"
+                            inputMode="decimal"
+                            value={row.quantity}
+                            onChange={(e) => updateRecipeRow(row.key, { quantity: e.target.value })}
+                            placeholder="0.150"
+                          />
+                          <div className="flex h-9 items-center justify-center rounded-md border bg-gray-50 text-sm text-gray-600">
+                            {selected?.baseUnit ?? "—"}
+                          </div>
+                          <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={() => removeRecipeRow(row.key)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between gap-2">
+                  <Button variant="outline" size="sm" onClick={addRecipeRow} disabled={isRecipeLoading || isRecipeSaving}>
+                    <Plus className="h-4 w-4 mr-1" /> Tambah Bahan
+                  </Button>
+                  {recipeRows.length > 0 && (
+                    <Button variant="ghost" size="sm" onClick={handleDeleteRecipe} disabled={isRecipeSaving}>
+                      <Trash2 className="h-4 w-4 mr-1" /> Hapus Komposisi
+                    </Button>
+                  )}
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <Button variant="outline" onClick={() => setProductTab("info")}>Batal</Button>
+                  <Button onClick={handleSaveRecipe} disabled={isRecipeLoading || isRecipeSaving}>
+                    {isRecipeSaving && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+                    Simpan
+                  </Button>
+                </div>
+              </TabsContent>
+            </Tabs>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <Label htmlFor="prodName">Nama</Label>
+                <Input id="prodName" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} placeholder="Nama produk" />
+              </div>
+              <div>
+                <Label htmlFor="prodDesc">Deskripsi</Label>
+                <Textarea id="prodDesc" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} placeholder="Deskripsi produk (opsional)" />
+              </div>
+              <div>
+                <Label htmlFor="prodPrice">Harga (Rp)</Label>
+                <Input id="prodPrice" type="number" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: e.target.value ?? "" })} placeholder="Harga produk" />
+              </div>
+              <div>
+                <Label htmlFor="prodCategory">Kategori</Label>
+                <Select value={productForm.categoryId} onValueChange={(value) => setProductForm({ ...productForm, categoryId: value || "" })}>
+                  <SelectTrigger>
+                    <SelectValue>
+                      {categories.find((c) => c.id === productForm.categoryId)
+                        ?.name ?? "Pilih kategori"}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {categories.map((cat) => (<SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {/* Product image — upload from device or external URL */}
+              <div>
+                <ProductImageField value={productImage} onChange={setProductImage} />
+              </div>
             </div>
-            <div>
-              <Label htmlFor="prodDesc">Deskripsi</Label>
-              <Textarea id="prodDesc" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} placeholder="Deskripsi produk (opsional)" />
-            </div>
-            <div>
-              <Label htmlFor="prodPrice">Harga (Rp)</Label>
-              <Input id="prodPrice" type="number" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: e.target.value ?? "" })} placeholder="Harga produk" />
-            </div>
-            <div>
-              <Label htmlFor="prodCategory">Kategori</Label>
-              <Select value={productForm.categoryId} onValueChange={(value) => setProductForm({ ...productForm, categoryId: value || "" })}>
-                <SelectTrigger>
-                  <SelectValue>
-                    {categories.find((c) => c.id === productForm.categoryId)
-                      ?.name ?? "Pilih kategori"}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((cat) => (<SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>))}
-                </SelectContent>
-              </Select>
-            </div>
-            {/* Product image — upload from device or external URL */}
-            <div>
-              <ProductImageField value={productImage} onChange={setProductImage} />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" disabled={isSavingProduct} onClick={() => setIsProductDialogOpen(false)}>Batal</Button>
-            <Button onClick={handleSaveProduct} disabled={isSavingProduct}>Simpan</Button>
-          </DialogFooter>
+          )}
+
+          {(!editingProduct || productTab === "info") && (
+            <DialogFooter>
+              <Button variant="outline" disabled={isSavingProduct} onClick={() => { setIsProductDialogOpen(false); resetRecipeState(); }}>Batal</Button>
+              <Button onClick={handleSaveProduct} disabled={isSavingProduct}>Simpan</Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
 

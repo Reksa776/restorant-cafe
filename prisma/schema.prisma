@@ -60,6 +60,18 @@ enum StockMovementType {
   ADJUSTMENT
 }
 
+// ============================================================
+// PHASE F — Ingredient Unit (F.1)
+// ============================================================
+
+enum IngredientUnit {
+  PCS
+  GRAM
+  KG
+  ML
+  LITER
+}
+
 enum OrderType {
   DINE_IN
   TAKEAWAY
@@ -74,6 +86,28 @@ enum PaymentStatus {
   EXPIRED
   REFUNDED
   CANCELLED
+}
+
+// ============================================================
+// PHASE F.5 — Historical COGS snapshot status.
+//
+// Snapshot capture happens server-side inside the guarded
+// READY → COMPLETED order transaction:
+//   SNAPSHOTTED        = HPP computed and stored (hppUnit/hppTotal set)
+//   NO_RECIPE          = no active recipe (or empty recipe) → hpp null
+//   MISSING_WAC        = ingredient missing / no averageCost → hpp null
+//   INACTIVE_INGREDIENT= recipe references an inactive ingredient
+//   NO_BRANCH          = order has no branch to resolve WAC against
+//   LEGACY             = never stored — reserved for old orders that
+//                        predate F.5 (no snapshot row exists at all)
+// ============================================================
+enum OrderItemCostStatus {
+  SNAPSHOTTED
+  NO_RECIPE
+  MISSING_WAC
+  INACTIVE_INGREDIENT
+  NO_BRANCH
+  LEGACY
 }
 
 enum TableStatus {
@@ -127,6 +161,7 @@ model User {
   cancellationsApproved  CancellationRequest[] @relation("CancellationApprover")
   cancellationsRejected  CancellationRequest[] @relation("CancellationRejecter")
   stockMovements StockMovement[]
+  ingredientStockMovements IngredientStockMovement[]
 
   @@map("user")
 }
@@ -160,6 +195,10 @@ model Restaurant {
   suppliers    Supplier[]
   purchases    Purchase[]
   stockMovements StockMovement[]
+  ingredients Ingredient[]
+  ingredientStockMovements IngredientStockMovement[]
+  recipes     Recipe[]
+  orderItemCostSnapshots OrderItemCostSnapshot[]
 
   @@map("restaurant")
 }
@@ -187,6 +226,9 @@ model Branch {
   notifications Notification[]
   purchases  Purchase[]
   stockMovements StockMovement[]
+  branchIngredients BranchIngredient[]
+  ingredientStockMovements IngredientStockMovement[]
+  orderItemCostSnapshots OrderItemCostSnapshot[]
 
   @@unique([restaurantId, code])
   @@index([restaurantId])
@@ -487,6 +529,8 @@ model Product {
   recommendationsTo   ProductRecommendation[] @relation("RecommendationTarget")
   purchaseItems PurchaseItem[]
   stockMovements StockMovement[]
+  recipe         Recipe?
+  costSnapshots   OrderItemCostSnapshot[]
 
   @@index([restaurantId])
   @@index([categoryId])
@@ -592,6 +636,7 @@ model Order {
   payments      Payment[]
   refunds       Refund[]
   cancellations CancellationRequest[]
+  costSnapshots OrderItemCostSnapshot[]
   // Promo applied to this order (F3) — null when no promo was used.
   promoId       String?
   promoCode     String?
@@ -680,11 +725,52 @@ model OrderItem {
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])
+  costSnapshot OrderItemCostSnapshot?
 
   @@index([orderId])
   @@index([productId])
 
   @@map("orderitem")
+}
+
+// ============================================================
+// PHASE F.5 — HISTORICAL COGS SNAPSHOT (per OrderItem).
+//
+// Frozen at the guarded READY → COMPLETED transition inside the SAME
+// transaction that flips the order status (order.service updateOrderStatus).
+// The snapshot is written ONCE per OrderItem (one-to-one via the unique
+// orderItemId) and is never recalculated — later WAC / recipe / price
+// changes must NOT rewrite historical cost. Shipment: F.5 = historical
+// COGS, F.4 = current (live) HPP. Money is always Prisma.Decimal, stored
+// as Decimal(12,2); incomplete cost statuses store NULL (never 0).
+// ============================================================
+model OrderItemCostSnapshot {
+  id           String               @id @default(cuid())
+  restaurantId String
+  orderId      String
+  orderItemId  String               @unique
+  branchId     String?
+  productId    String
+  quantity     Int
+  hppUnit      Decimal?             @db.Decimal(12, 2)
+  hppTotal     Decimal?             @db.Decimal(12, 2)
+  status       OrderItemCostStatus
+  completedAt  DateTime             @default(now())
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  restaurant Restaurant     @relation(fields: [restaurantId], references: [id])
+  order      Order          @relation(fields: [orderId], references: [id])
+  orderItem  OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  branch     Branch?        @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  product    Product        @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@index([completedAt])
+  @@index([status])
+
+  @@map("orderitemcostsnapshot")
 }
 
 model OrderStatusHistory {
@@ -948,6 +1034,7 @@ model Purchase {
   branch     Branch     @relation(fields: [branchId], references: [id])
   supplier   Supplier   @relation(fields: [supplierId], references: [id])
   items      PurchaseItem[]
+  purchaseIngredients PurchaseIngredient[]
 
   @@index([restaurantId, createdAt])
   @@index([restaurantId, branchId, createdAt])
@@ -976,6 +1063,31 @@ model PurchaseItem {
   @@index([productId])
 
   @@map("purchaseitem")
+}
+
+// ============================================================
+// PHASE F.2 — Ingredient Purchasing + WAC
+// ============================================================
+
+// One purchased ingredient line: references the restaurant-level Ingredient
+// master. quantity is Decimal(18,3) for fractional units (KG, GRAM, ML, etc.).
+// unitCost is the historical purchase cost; lineTotal = quantity × unitCost.
+model PurchaseIngredient {
+  id              String         @id @default(cuid())
+  purchaseId      String
+  ingredientId    String
+  quantity        Decimal        @db.Decimal(18, 3)
+  unit            IngredientUnit
+  unitCost        Decimal        @db.Decimal(12, 2)
+  lineTotal       Decimal        @db.Decimal(12, 2)
+  createdAt       DateTime       @default(now())
+
+  purchase   Purchase   @relation(fields: [purchaseId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@index([purchaseId])
+  @@index([ingredientId])
+  @@map("purchaseingredient")
 }
 
 // Append-only stock ledger, one row per stock change.
@@ -1015,4 +1127,127 @@ model StockMovement {
   @@index([refType, refId])
 
   @@map("stockmovement")
+}
+
+// ============================================================
+// PHASE F.1 — Ingredient + Unit + Branch Stock
+// ============================================================
+
+model Ingredient {
+  id              String         @id @default(cuid())
+  restaurantId    String
+  name            String
+  baseUnit        IngredientUnit @default(PCS)
+  isActive        Boolean        @default(true)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  restaurant        Restaurant              @relation(fields: [restaurantId], references: [id])
+  branchIngredients BranchIngredient[]
+  ingredientStockMovements IngredientStockMovement[]
+  purchaseIngredients PurchaseIngredient[]
+  recipeItems     RecipeItem[]
+
+  @@unique([restaurantId, name])
+  @@index([restaurantId])
+  @@index([restaurantId, isActive])
+
+  @@map("ingredient")
+}
+
+model BranchIngredient {
+  id              String   @id @default(cuid())
+  branchId        String
+  ingredientId    String
+  stock              Decimal  @db.Decimal(18, 3) @default(0)
+  averageCost        Decimal? @db.Decimal(12, 2)
+  lastPurchaseCost   Decimal? @db.Decimal(12, 2)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  branch          Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  ingredient      Ingredient      @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, ingredientId])
+  @@index([branchId])
+  @@index([ingredientId])
+
+  @@map("branchingredient")
+}
+
+model IngredientStockMovement {
+  id              String            @id @default(cuid())
+  restaurantId    String
+  branchId        String
+  ingredientId    String
+  type            StockMovementType
+  quantity        Decimal           @db.Decimal(18, 3)
+  balanceAfter    Decimal           @db.Decimal(18, 3)
+  refType         String?
+  refId           String?
+  reason          String?           @db.Text
+  userId          String?
+  createdAt       DateTime          @default(now())
+
+  restaurant Restaurant        @relation(fields: [restaurantId], references: [id])
+  branch     Branch            @relation(fields: [branchId], references: [id])
+  ingredient Ingredient        @relation(fields: [ingredientId], references: [id])
+  user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([restaurantId, branchId, createdAt])
+  @@index([restaurantId, ingredientId, createdAt])
+  @@index([restaurantId, type, createdAt])
+  @@index([refType, refId])
+
+  @@map("ingredientstockmovement")
+}
+
+// ============================================================
+// PHASE F.3 — Recipe / BOM
+//
+// Restaurant-level recipe: the production composition of ONE product.
+// 1 product = 1 recipe (@@unique([restaurantId, productId])); soft-deleted
+// via isActive (never hard-deleted). RecipeItem binds a single ingredient
+// to a quantity (Decimal 18,3) expressed in the ingredient's baseUnit —
+// no unit conversion in F.3. The same rule as F.2 purchasing applies:
+// RecipeItem.unit MUST equal Ingredient.baseUnit. F.3 stores composition
+// only; HPP/COGS is derived later (F.4+) from RecipeItem.quantity ×
+// BranchIngredient.averageCost.
+// ============================================================
+
+model Recipe {
+  id            String   @id @default(cuid())
+  restaurantId  String
+  productId     String   @unique
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  restaurant Restaurant  @relation(fields: [restaurantId], references: [id])
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  items      RecipeItem[]
+
+  @@unique([restaurantId, productId])
+  @@index([restaurantId])
+
+  @@map("recipe")
+}
+
+model RecipeItem {
+  id           String         @id @default(cuid())
+  recipeId     String
+  ingredientId String
+  quantity     Decimal        @db.Decimal(18, 3)
+  unit         IngredientUnit
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  recipe     Recipe     @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([recipeId, ingredientId])
+  @@index([recipeId])
+  @@index([ingredientId])
+
+  @@map("recipeitem")
 }

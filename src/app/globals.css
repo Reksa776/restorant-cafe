@@ -162,6 +162,21 @@
   display: none;
 }
 
+/* Subtle scrollbar for kitchen board columns */
+.kitchen-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+.kitchen-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.kitchen-scroll::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 9999px;
+}
+.kitchen-scroll::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af;
+}
+
 /* ============================================================
    Print Bill — dedicated print copy (#print-root).
    PrintBillDialog portals a duplicate of the current bill to the

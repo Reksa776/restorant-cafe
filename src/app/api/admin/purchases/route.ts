@@ -17,6 +17,7 @@ import {
   createPurchase,
   listPurchases,
   type PurchaseItemInput,
+  type PurchaseIngredientInput,
 } from "@/services/purchase/purchase.service";
 
 function jsonBody(request: NextRequest) {
@@ -95,6 +96,11 @@ export async function POST(request: NextRequest) {
       items: (
         Array.isArray(body.items) ? (body.items as unknown[]) : []
       ) as PurchaseItemInput[],
+      purchaseIngredients: (
+        Array.isArray(body.purchaseIngredients)
+          ? (body.purchaseIngredients as unknown[])
+          : []
+      ) as PurchaseIngredientInput[],
     });
 
     return createdResponse(purchase, "Pembelian (draft) berhasil dibuat");

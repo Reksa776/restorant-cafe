@@ -7,8 +7,10 @@ import {
 } from "@/services/branch.service";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import { useUserRole } from "@/hooks/use-user-role";
+import { ingredientService } from "@/services/ingredient.service";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Minus, Plus, Store, Save, Lock } from "lucide-react";
@@ -28,6 +30,7 @@ import { toast } from "sonner";
  * StockMovement ADJUSTMENT dengan alasan wajib). KASIR hanya membaca.
  */
 export default function StockPage() {
+  const [activeTab, setActiveTab] = useState("products");
   const { branchId, branches, isLoading: ctxLoading } = useBranchContext();
   const { role, isLoading: roleLoading } = useUserRole();
   const isAdmin = role === "ADMIN";
@@ -134,8 +137,8 @@ export default function StockPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Stok Produk</h1>
-          <p className="text-gray-500">Kelola stok produk per cabang</p>
+          <h1 className="text-3xl font-bold">Stok</h1>
+          <p className="text-gray-500">Kelola stok produk dan bahan baku per cabang</p>
         </div>
         {workingBranch && (
           <Badge className="inline-flex w-fit items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200">
@@ -145,6 +148,13 @@ export default function StockPage() {
         )}
       </div>
 
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList>
+          <TabsTrigger value="products">Produk</TabsTrigger>
+          <TabsTrigger value="ingredients">Bahan Baku</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="products">
       {!workingBranchId ? (
         <Card>
           <CardContent className="py-10 text-center text-gray-500">
@@ -264,6 +274,238 @@ export default function StockPage() {
           </CardContent>
         </Card>
       )}
+        </TabsContent>
+
+        <TabsContent value="ingredients">
+          <IngredientStockTab workingBranchId={workingBranchId} isAdmin={isAdmin} />
+        </TabsContent>
+      </Tabs>
     </div>
+  );
+}
+
+// ============================================================
+// Ingredient Stock Tab
+// ============================================================
+
+const UNIT_LABELS: Record<string, string> = {
+  PCS: "Pcs",
+  GRAM: "Gram",
+  KG: "Kg",
+  ML: "Ml",
+  LITER: "Liter",
+};
+
+function IngredientStockTab({
+  workingBranchId,
+  isAdmin,
+}: {
+  workingBranchId: string | null;
+  isAdmin: boolean;
+}) {
+  const [items, setItems] = useState<
+    Array<{
+      id: string;
+      ingredientId: string;
+      ingredientName: string;
+      baseUnit: string;
+      stock: number;
+    }>
+  >([]);
+  const [loading, setLoading] = useState(true);
+  const [adjusting, setAdjusting] = useState<string | null>(null);
+  const [targetStock, setTargetStock] = useState<Record<string, string>>({});
+  const [reasons, setReasons] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<string | null>(null);
+
+  // ingredientService imported at top of file
+
+  useEffect(() => {
+    if (!workingBranchId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const result = await ingredientService.getStock({
+          branchId: workingBranchId,
+        });
+        if (!alive) return;
+        setItems(result.items);
+      } catch {
+        // ignore
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [workingBranchId]);
+
+  const handleAdjust = async (item: (typeof items)[number]) => {
+    if (!workingBranchId) return;
+    const target = parseFloat(targetStock[item.ingredientId] ?? "0");
+    if (isNaN(target) || target < 0) {
+      toast.error("Nilai stok tidak valid");
+      return;
+    }
+    const reason = (reasons[item.ingredientId] ?? "").trim();
+    if (!reason) {
+      toast.error("Alasan penyesuaian wajib diisi");
+      return;
+    }
+    setSaving(item.ingredientId);
+    try {
+      await ingredientService.adjustStock(item.ingredientId, {
+        branchId: workingBranchId,
+        targetStock: target,
+        reason,
+      });
+      setItems((prev) =>
+        prev.map((i) =>
+          i.ingredientId === item.ingredientId ? { ...i, stock: target } : i
+        )
+      );
+      setAdjusting(null);
+      setReasons((prev) => ({ ...prev, [item.ingredientId]: "" }));
+      toast.success(`Stok ${item.ingredientName} diperbarui`);
+    } catch (error: unknown) {
+      const msg =
+        (error as { response?: { data?: { message?: string } } })?.response?.data
+          ?.message || "Gagal mengubah stok";
+      toast.error(msg);
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  if (!workingBranchId) {
+    return (
+      <Card>
+        <CardContent className="py-10 text-center text-gray-500">
+          Pilih cabang terlebih dahulu.
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Stok Bahan Baku</CardTitle>
+          {!isAdmin && (
+            <Badge variant="outline" className="gap-1 text-gray-500">
+              <Lock className="h-3 w-3" />
+              Hanya baca
+            </Badge>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {loading ? (
+          <div className="flex items-center justify-center py-10">
+            <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+          </div>
+        ) : items.length === 0 ? (
+          <p className="py-8 text-center text-sm text-gray-400">
+            Belum ada bahan baku untuk cabang ini.
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {items.map((item) => (
+              <li
+                key={item.ingredientId}
+                className="flex flex-col gap-2 rounded-lg border border-gray-100 p-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {item.ingredientName}
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    Satuan: {UNIT_LABELS[item.baseUnit] || item.baseUnit}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {isAdmin && adjusting === item.ingredientId ? (
+                    <>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.001"
+                        value={targetStock[item.ingredientId] ?? item.stock}
+                        onChange={(e) =>
+                          setTargetStock((prev) => ({
+                            ...prev,
+                            [item.ingredientId]: e.target.value,
+                          }))
+                        }
+                        className="h-9 w-24 text-center tabular-nums"
+                        inputMode="decimal"
+                        aria-label={`Target stok ${item.ingredientName}`}
+                      />
+                      <Button
+                        variant="default"
+                        size="sm"
+                        className="h-9"
+                        disabled={saving === item.ingredientId}
+                        onClick={() => handleAdjust(item)}
+                      >
+                        {saving === item.ingredientId ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Save className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-9"
+                        onClick={() => setAdjusting(null)}
+                      >
+                        Batal
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-right text-sm font-medium tabular-nums text-gray-600">
+                        {item.stock} {UNIT_LABELS[item.baseUnit] || item.baseUnit}
+                      </span>
+                      {isAdmin && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-9"
+                          onClick={() => {
+                            setAdjusting(item.ingredientId);
+                            setTargetStock((prev) => ({
+                              ...prev,
+                              [item.ingredientId]: String(item.stock),
+                            }));
+                          }}
+                        >
+                          Sesuaikan
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+                {isAdmin && adjusting === item.ingredientId && (
+                  <Input
+                    type="text"
+                    value={reasons[item.ingredientId] ?? ""}
+                    onChange={(e) =>
+                      setReasons((prev) => ({
+                        ...prev,
+                        [item.ingredientId]: e.target.value,
+                      }))
+                    }
+                    placeholder="Alasan penyesuaian (wajib)"
+                    className="h-8 w-full text-sm sm:w-64"
+                  />
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { Building2, Check } from "lucide-react";
+import { Building2 } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -47,6 +47,20 @@ export function BranchSelector({
 
   const value = branchId ?? (canPickAll ? "ALL" : visibleBranches[0]?.id ?? "ALL");
 
+  // Human-readable trigger label. Base UI renders the raw VALUE string in
+  // the trigger (not the item label) while the popup is closed, so an
+  // internal branch ID like "cmts3aks100009tu818hblu00" would be shown as-is
+  // — expose the branch NAME instead (same format as the dropdown options).
+  const selectedBranch = visibleBranches.find((b) => b.id === value);
+  const triggerLabel =
+    value === "ALL"
+      ? "Semua Cabang"
+      : selectedBranch
+        ? `${selectedBranch.name} (${selectedBranch.code})`
+        : isLoading
+          ? "Memuat cabang…"
+          : "Cabang tidak ditemukan";
+
   return (
     <div className={cn("flex items-center gap-2", className)}>
       <Building2 className="h-4 w-4 shrink-0 text-gray-400" />
@@ -60,7 +74,7 @@ export function BranchSelector({
         }}
       >
         <SelectTrigger className="h-9 w-auto min-w-[140px] text-sm">
-          <SelectValue />
+          <SelectValue>{triggerLabel}</SelectValue>
         </SelectTrigger>
         <SelectContent>
           {canPickAll && (
@@ -73,7 +87,6 @@ export function BranchSelector({
           {visibleBranches.map((b) => (
             <SelectItem key={b.id} value={b.id}>
               <span className="inline-flex items-center gap-1.5">
-                <Check className="h-3 w-3 opacity-0 group-data-[state=checked]:opacity-100" />
                 {b.name} ({b.code})
               </span>
             </SelectItem>
