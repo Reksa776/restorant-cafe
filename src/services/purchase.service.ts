@@ -44,6 +44,31 @@ export interface PurchaseMovement {
   createdAt: string;
 }
 
+export interface PurchaseIngredientLine {
+  id: string;
+  ingredientId: string;
+  ingredientName: string | null;
+  baseUnit: string | null;
+  quantity: number;
+  unit: string;
+  unitCost: number;
+  lineTotal: number;
+}
+
+export interface PurchaseIngredientMovement {
+  id: string;
+  ingredientId: string;
+  ingredientName: string | null;
+  baseUnit: string | null;
+  type: "IN" | "OUT" | "ADJUSTMENT";
+  quantity: number;
+  balanceAfter: number;
+  reason: string | null;
+  userName: string | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
 export interface PurchaseDetail {
   id: string;
   status: PurchaseStatus;
@@ -58,7 +83,9 @@ export interface PurchaseDetail {
   receivedAt: string | null;
   createdAt: string;
   items: PurchaseItem[];
+  purchaseIngredients: PurchaseIngredientLine[];
   movements: PurchaseMovement[];
+  ingredientMovements: PurchaseIngredientMovement[];
 }
 
 export interface CreatePurchaseItemInput {
@@ -67,11 +94,19 @@ export interface CreatePurchaseItemInput {
   unitCost: number;
 }
 
+export interface CreatePurchaseIngredientInput {
+  ingredientId: string;
+  quantity: number;
+  unit: string;
+  unitCost: number;
+}
+
 export interface CreatePurchaseInput {
   supplierId: string;
   branchId: string;
   notes?: string | null;
-  items: CreatePurchaseItemInput[];
+  items?: CreatePurchaseItemInput[];
+  purchaseIngredients?: CreatePurchaseIngredientInput[];
 }
 
 export interface ListPurchasesFilter {
@@ -111,6 +146,7 @@ export const purchaseService = {
       supplierId?: string;
       notes?: string | null;
       items?: CreatePurchaseItemInput[];
+      purchaseIngredients?: CreatePurchaseIngredientInput[];
     }
   ): Promise<void> {
     await api.patch(`/admin/purchases/${id}`, data);

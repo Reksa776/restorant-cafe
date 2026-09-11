@@ -22,6 +22,7 @@ import {
   applyStockMovement,
   StockRefType,
 } from "@/services/stock/stock.service";
+import { createOrderItemCostSnapshots } from "@/services/costing/historical-snapshot";
 
 // ============================================================
 // Constants
@@ -1385,6 +1386,31 @@ export class OrderService {
       });
       if (!fresh) {
         throw new NotFoundError("Order not found");
+      }
+
+      // Historical COGS snapshot (F.5) — PER ORDER ITEM, computed server-side
+      // in a batched single query (recipe + current WAC at completion time)
+      // and written in the SAME guarded transaction, exactly once. Only on a
+      // real COMPLETED transition (from a non-COMPLETED status) — a repeated
+      // COMPLETED request never re-snapshots (idempotency layer: the unique
+      // orderItemId would also reject a second write). Order items carrying
+      // an incomplete cost (NO_RECIPE / MISSING_WAC / INACTIVE_INGREDIENT) or
+      // no branch (NO_BRANCH) store NULL HPP — never 0. A database failure
+      // here rolls back the whole completion (order stays pre-COMPLETED).
+      if (
+        order.status !== "COMPLETED" &&
+        input.status === "COMPLETED"
+      ) {
+        await createOrderItemCostSnapshots(tx, {
+          restaurantId,
+          orderId: id,
+          branchId: order.branchId,
+          items: fresh.items.map((item) => ({
+            orderItemId: item.id,
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+        });
       }
 
       // Create status history

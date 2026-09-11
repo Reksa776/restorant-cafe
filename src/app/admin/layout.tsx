@@ -26,6 +26,11 @@ import {
   Truck,
   Container,
   ClipboardList,
+  ChefHat,
+  Leaf,
+  Calculator,
+  TrendingUp,
+  PieChart,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
@@ -50,6 +55,7 @@ interface NavItem {
 const navigation: NavItem[] = [
   { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "CASHIER"] },
   { name: "Orders", href: "/admin/orders", icon: ShoppingCart, roles: ["ADMIN", "CASHIER"] },
+  { name: "Kitchen", href: "/admin/kitchen", icon: ChefHat, roles: ["ADMIN", "CASHIER"] },
   { name: "Payments", href: "/admin/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
   { name: "Shifts", href: "/admin/shifts", icon: Clock, roles: ["ADMIN", "CASHIER"] },
   { name: "Riwayat Penjualan", href: "/admin/cashier/sales", icon: Receipt, roles: ["ADMIN", "CASHIER"] },
@@ -77,6 +83,10 @@ const navigation: NavItem[] = [
   { name: "Users", href: "/admin/users", icon: Users, roles: ["ADMIN"] },
   { name: "Menu", href: "/admin/menu", icon: UtensilsCrossed, roles: ["ADMIN"] },
   { name: "Stok", href: "/admin/stock", icon: Boxes, roles: ["ADMIN", "CASHIER"] },
+  { name: "Bahan Baku", href: "/admin/ingredients", icon: Leaf, roles: ["ADMIN"] },
+  { name: "Costing", href: "/admin/costing", icon: Calculator, roles: ["ADMIN"] },
+  { name: "Profitabilitas", href: "/admin/profitability", icon: TrendingUp, roles: ["ADMIN"] },
+  { name: "Menu Engineering", href: "/admin/menu-engineering", icon: PieChart, roles: ["ADMIN"] },
   { name: "Tables", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN", "CASHIER"] },
   { name: "Customers", href: "/admin/customers", icon: Users, roles: ["ADMIN"] },
   { name: "Cabang", href: "/admin/settings/branches", icon: Store, roles: ["ADMIN"] },

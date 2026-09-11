@@ -7,6 +7,8 @@ import {
   purchaseService,
   type PurchaseDetail,
   type PurchaseItem,
+  type PurchaseIngredientLine,
+  type PurchaseIngredientMovement,
 } from "@/services/purchase.service";
 import { supplierService, type Supplier } from "@/services/supplier.service";
 import { useUserRole } from "@/hooks/use-user-role";
@@ -63,6 +65,7 @@ export default function PurchaseDetailPage() {
   const [supplierId, setSupplierId] = useState("");
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<EditableItem[]>([]);
+  const [ingredientEdits, setIngredientEdits] = useState<EditableItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [actionBusy, setActionBusy] = useState<null | "receive" | "cancel">(null);
 
@@ -74,6 +77,7 @@ export default function PurchaseDetailPage() {
       setSupplierId(data.supplierId);
       setNotes(data.notes ?? "");
       setItems(data.items.map((it) => ({ quantity: String(it.quantity), unitCost: String(it.unitCost) })));
+      setIngredientEdits((data.purchaseIngredients ?? []).map((pi) => ({ quantity: String(pi.quantity), unitCost: String(pi.unitCost) })));
     } catch (error) {
       console.error("Failed to load purchase:", error);
       toast.error(apiErrorMessage(error, "Gagal memuat pembelian"));
@@ -99,7 +103,18 @@ export default function PurchaseDetailPage() {
     return q * c;
   };
 
-  const total = items.reduce((sum, _, i) => sum + lineTotal(i), 0);
+  const ingredientLineTotal = (index: number) => {
+    const it = ingredientEdits[index];
+    if (!it) return 0;
+    const q = parseFloat(it.quantity);
+    const c = parseFloat(it.unitCost);
+    if (Number.isNaN(q) || q <= 0 || Number.isNaN(c) || c < 0) return 0;
+    return q * c;
+  };
+
+  const productTotalCalc = items.reduce((sum, _, i) => sum + lineTotal(i), 0);
+  const ingredientTotalCalc = ingredientEdits.reduce((sum, _, i) => sum + ingredientLineTotal(i), 0);
+  const total = productTotalCalc + ingredientTotalCalc;
 
   const startEdit = () => {
     supplierService
@@ -125,7 +140,21 @@ export default function PurchaseDetailPage() {
     }
     setSaving(true);
     try {
-      await purchaseService.updateDraft(purchase.id, {
+      // Validate ingredient items
+    for (const [i, it] of ingredientEdits.entries()) {
+      const q = parseFloat(it.quantity);
+      if (Number.isNaN(q) || q <= 0) {
+        toast.error(`Jumlah bahan baku #${i + 1} harus bernilai positif`);
+        return;
+      }
+      const c = parseFloat(it.unitCost);
+      if (Number.isNaN(c) || c < 0) {
+        toast.error(`Harga satuan bahan baku #${i + 1} tidak boleh negatif`);
+        return;
+      }
+    }
+
+    await purchaseService.updateDraft(purchase.id, {
         supplierId,
         notes,
         items: items.map((it, i) => ({
@@ -133,6 +162,12 @@ export default function PurchaseDetailPage() {
           quantity: parseInt(it.quantity, 10),
           unitCost: parseFloat(it.unitCost),
         })),
+        purchaseIngredients: purchase.purchaseIngredients?.map((pi, i) => ({
+          ingredientId: pi.ingredientId,
+          quantity: parseFloat(ingredientEdits[i]?.quantity ?? String(pi.quantity)),
+          unit: pi.unit,
+          unitCost: parseFloat(ingredientEdits[i]?.unitCost ?? String(pi.unitCost)),
+        })) ?? undefined,
       });
       toast.success("Draft pembelian diperbarui");
       setEditing(false);
@@ -328,6 +363,73 @@ export default function PurchaseDetailPage() {
             </table>
           </div>
 
+          {/* Bahan Baku section */}
+          {purchase.purchaseIngredients && purchase.purchaseIngredients.length > 0 && (
+            <div className="overflow-x-auto">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-blue-600">Bahan Baku</p>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-400">
+                    <th className="pb-2 pr-2 font-medium">Bahan Baku</th>
+                    <th className="pb-2 pr-2 text-right font-medium">Jumlah</th>
+                    <th className="pb-2 pr-2 font-medium">Satuan</th>
+                    <th className="pb-2 pr-2 text-right font-medium">Harga Satuan</th>
+                    <th className="pb-2 text-right font-medium">Subtotal</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {purchase.purchaseIngredients.map((pi, index) => (
+                    <tr key={pi.id || pi.ingredientId} className="border-b last:border-none">
+                      <td className="py-2 pr-2">
+                        <p className="font-medium">{pi.ingredientName || pi.ingredientId}</p>
+                      </td>
+                      <td className="py-2 pr-2 text-right">
+                        {editing ? (
+                          <Input
+                            type="number"
+                            min={0.001}
+                            step="any"
+                            value={ingredientEdits[index]?.quantity ?? ""}
+                            onChange={(e) =>
+                              setIngredientEdits((prev) => prev.map((row, i) => (i === index ? { ...row, quantity: e.target.value } : row)))
+                            }
+                            className="ml-auto h-8 w-24 text-right tabular-nums"
+                            inputMode="decimal"
+                          />
+                        ) : (
+                          <span className="tabular-nums">{pi.quantity}</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-2">
+                        <span className="text-gray-600">{pi.unit}</span>
+                      </td>
+                      <td className="py-2 pr-2 text-right">
+                        {editing ? (
+                          <Input
+                            type="number"
+                            min={0}
+                            step="any"
+                            value={ingredientEdits[index]?.unitCost ?? ""}
+                            onChange={(e) =>
+                              setIngredientEdits((prev) => prev.map((row, i) => (i === index ? { ...row, unitCost: e.target.value } : row)))
+                            }
+                            className="ml-auto h-8 w-28 text-right tabular-nums"
+                            inputMode="decimal"
+                          />
+                        ) : (
+                          <span className="tabular-nums">{rupiah(pi.unitCost)}</span>
+                        )}
+                      </td>
+                      <td className="py-2 text-right font-medium tabular-nums">
+                        {editing ? rupiah(ingredientLineTotal(index)) : rupiah(pi.lineTotal)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
           <div className="space-y-1 pt-2">
             <p className="text-xs uppercase tracking-wide text-gray-400">Catatan</p>
             {editing ? (
@@ -338,6 +440,18 @@ export default function PurchaseDetailPage() {
           </div>
 
           <div className="flex flex-col items-end gap-2 border-t pt-3">
+            {editing && purchase.purchaseIngredients && purchase.purchaseIngredients.length > 0 && (
+              <div className="w-full max-w-xs space-y-1 text-sm text-gray-500">
+                <div className="flex justify-between">
+                  <span>Subtotal Produk</span>
+                  <span className="tabular-nums">{rupiah(productTotalCalc)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Subtotal Bahan Baku</span>
+                  <span className="tabular-nums">{rupiah(ingredientTotalCalc)}</span>
+                </div>
+              </div>
+            )}
             <div className="text-right">
               <p className="text-sm text-gray-500">Total</p>
               <p className="text-2xl font-bold tabular-nums">{rupiah(editing ? total : purchase.total)}</p>
@@ -374,14 +488,15 @@ export default function PurchaseDetailPage() {
             <CardTitle className="text-base">Riwayat Stok Masuk</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            {purchase.movements.length === 0 ? (
+            {(purchase.movements.length === 0 && (!purchase.ingredientMovements || purchase.ingredientMovements.length === 0)) ? (
               <p className="py-4 text-center text-sm text-gray-400">Tidak ada pergerakan stok</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-400">
-                      <th className="pb-2 pr-2 font-medium">Produk</th>
+                      <th className="pb-2 pr-2 font-medium">Item</th>
+                      <th className="pb-2 pr-2 font-medium">Tipe</th>
                       <th className="pb-2 pr-2 text-right font-medium">Jumlah</th>
                       <th className="pb-2 pr-2 text-right font-medium">Saldo</th>
                       <th className="pb-2 pr-2 font-medium">Oleh</th>
@@ -395,11 +510,43 @@ export default function PurchaseDetailPage() {
                           ?.productName ?? m.productId;
                       return (
                       <tr key={m.id} className="border-b last:border-none">
-                        <td className="py-2 pr-2">{productName}</td>
+                        <td className="py-2 pr-2">
+                          <span className="font-medium">{productName}</span>
+                          <Badge variant="secondary" className="ml-2 text-[10px]">Produk</Badge>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <Badge className="bg-green-100 text-green-700 border border-green-200 text-[10px]">IN</Badge>
+                        </td>
                         <td className="py-2 pr-2 text-right font-medium tabular-nums text-green-700">
-                          +{m.quantity}
+                          +{m.quantity} PCS
                         </td>
                         <td className="py-2 pr-2 text-right tabular-nums">{m.balanceAfter}</td>
+                        <td className="py-2 pr-2 text-gray-500">{m.userName || "—"}</td>
+                        <td className="py-2 text-gray-500">
+                          {new Date(m.createdAt).toLocaleString("id-ID", {
+                            day: "2-digit",
+                            month: "short",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </td>
+                      </tr>
+                      );
+                    })}
+                    {purchase.ingredientMovements?.map((m) => {
+                      return (
+                      <tr key={`ing-${m.id}`} className="border-b last:border-none">
+                        <td className="py-2 pr-2">
+                          <span className="font-medium">{m.ingredientName ?? m.ingredientId}</span>
+                          <Badge variant="secondary" className="ml-2 text-[10px] bg-blue-50 text-blue-700">Bahan Baku</Badge>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <Badge className="bg-green-100 text-green-700 border border-green-200 text-[10px]">IN</Badge>
+                        </td>
+                        <td className="py-2 pr-2 text-right font-medium tabular-nums text-green-700">
+                          +{m.quantity} {m.baseUnit ?? ""}
+                        </td>
+                        <td className="py-2 pr-2 text-right tabular-nums">{m.balanceAfter} {m.baseUnit ?? ""}</td>
                         <td className="py-2 pr-2 text-gray-500">{m.userName || "—"}</td>
                         <td className="py-2 text-gray-500">
                           {new Date(m.createdAt).toLocaleString("id-ID", {

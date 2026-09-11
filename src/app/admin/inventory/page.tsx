@@ -141,15 +141,17 @@ export default function InventoryPage() {
                 <Select value={filterBranch} onValueChange={(v) => setFilterBranch(v || "")}>
                   <SelectTrigger size="sm" className="w-full lg:w-40">
                     <SelectValue>
-                      {branches.find((b) => b.id === filterBranch)?.name ??
-                        "Semua cabang"}
+                      {(() => {
+                        const b = branches.find((b) => b.id === filterBranch);
+                        return b ? `${b.name} (${b.code})` : "Semua cabang";
+                      })()}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">Semua cabang</SelectItem>
                     {branches.map((b) => (
                       <SelectItem key={b.id} value={b.id}>
-                        {b.name}
+                        {b.name} ({b.code})
                       </SelectItem>
                     ))}
                   </SelectContent>

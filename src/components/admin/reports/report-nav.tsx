@@ -19,6 +19,8 @@ const REPORTS = [
   { href: "/admin/reports/shift-sales", label: "Per Shift" },
   { href: "/admin/reports/payments", label: "Pembayaran" },
   { href: "/admin/reports/multi-outlet", label: "Multi Outlet", adminOnly: true },
+  { href: "/admin/profitability", label: "Profitabilitas", adminOnly: true },
+  { href: "/admin/menu-engineering", label: "Menu Engineering", adminOnly: true },
 ] as const;
 
 export function ReportSubNav() {

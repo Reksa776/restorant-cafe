@@ -11,6 +11,7 @@ import {
   getPurchase,
   updateDraftPurchase,
   type PurchaseItemInput,
+  type PurchaseIngredientInput,
 } from "@/services/purchase/purchase.service";
 
 type Params = { params: Promise<{ id: string }> };
@@ -49,12 +50,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     if (!body || typeof body !== "object") {
       return errorResponse("Invalid request body", "VALIDATION_ERROR", 400);
-    }
-
-    const hasEditableField =
-      body.supplierId !== undefined ||
-      body.notes !== undefined ||
-      body.items !== undefined;
+    }    const hasEditableField =
+      body.supplierId !== undefined || body.notes !== undefined || body.items !== undefined || body.purchaseIngredients !== undefined;
     if (!hasEditableField) {
       return errorResponse("Tidak ada perubahan yang dikirim", "VALIDATION_ERROR", 400);
     }
@@ -64,6 +61,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       notes: body.notes === null ? null : (typeof body.notes === "string" ? body.notes : undefined),
       items: Array.isArray(body.items)
         ? (body.items as unknown as PurchaseItemInput[])
+        : undefined,
+      purchaseIngredients: Array.isArray(body.purchaseIngredients)
+        ? (body.purchaseIngredients as unknown as PurchaseIngredientInput[])
         : undefined,
     });
 
