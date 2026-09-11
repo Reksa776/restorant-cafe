@@ -17,7 +17,7 @@ CREATE TABLE `recipe` (
   INDEX `recipe_restaurantId_idx` (`restaurantId`),
   CONSTRAINT `recipe_restaurantId_fkey` FOREIGN KEY (`restaurantId`) REFERENCES `restaurant`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `recipe_productId_fkey` FOREIGN KEY (`productId`) REFERENCES `product`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- 2. New table: recipeitem (ingredient composition rows)
 -- RecipeItem -> Recipe : ON DELETE CASCADE (rows removed with recipe)
@@ -37,4 +37,4 @@ CREATE TABLE `recipeitem` (
   INDEX `recipeitem_ingredientId_idx` (`ingredientId`),
   CONSTRAINT `recipeitem_recipeId_fkey` FOREIGN KEY (`recipeId`) REFERENCES `recipe`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `recipeitem_ingredientId_fkey` FOREIGN KEY (`ingredientId`) REFERENCES `ingredient`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

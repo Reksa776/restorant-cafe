@@ -17,7 +17,7 @@ CREATE TABLE `purchaseingredient` (
   INDEX `purchaseingredient_ingredientId_idx` (`ingredientId`),
   CONSTRAINT `purchaseingredient_purchaseId_fkey` FOREIGN KEY (`purchaseId`) REFERENCES `purchase`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `purchaseingredient_ingredientId_fkey` FOREIGN KEY (`ingredientId`) REFERENCES `ingredient`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- 2. Add cost fields to BranchIngredient
 ALTER TABLE `branchingredient`

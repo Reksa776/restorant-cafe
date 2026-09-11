@@ -20,7 +20,7 @@ CREATE TABLE `ingredient` (
   INDEX `ingredient_restaurantId_idx` (`restaurantId`),
   INDEX `ingredient_restaurantId_isActive_idx` (`restaurantId`, `isActive`),
   CONSTRAINT `ingredient_restaurantId_fkey` FOREIGN KEY (`restaurantId`) REFERENCES `restaurant`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- 2. New table: branchingredient
 CREATE TABLE `branchingredient` (
@@ -37,7 +37,7 @@ CREATE TABLE `branchingredient` (
   INDEX `branchingredient_ingredientId_idx` (`ingredientId`),
   CONSTRAINT `branchingredient_branchId_fkey` FOREIGN KEY (`branchId`) REFERENCES `branch`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
   CONSTRAINT `branchingredient_ingredientId_fkey` FOREIGN KEY (`ingredientId`) REFERENCES `ingredient`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- 3. New table: ingredientstockmovement
 CREATE TABLE `ingredientstockmovement` (
@@ -63,4 +63,4 @@ CREATE TABLE `ingredientstockmovement` (
   CONSTRAINT `ingredientstockmovement_branchId_fkey` FOREIGN KEY (`branchId`) REFERENCES `branch`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `ingredientstockmovement_ingredientId_fkey` FOREIGN KEY (`ingredientId`) REFERENCES `ingredient`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `ingredientstockmovement_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `user`(`id`) ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
