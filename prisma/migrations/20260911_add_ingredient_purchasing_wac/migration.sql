@@ -7,7 +7,7 @@ CREATE TABLE `purchaseingredient` (
   `purchaseId` VARCHAR(191) NOT NULL,
   `ingredientId` VARCHAR(191) NOT NULL,
   `quantity` DECIMAL(18,3) NOT NULL,
-  `unit` ENUM('PCS','GRAM','KG','ML','LITER') NOT NULL DEFAULT 'PCS',
+  `unit` ENUM('PCS','GRAM','KG','ML','LITER') NOT NULL,
   `unitCost` DECIMAL(12,2) NOT NULL,
   `lineTotal` DECIMAL(12,2) NOT NULL,
   `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -15,8 +15,8 @@ CREATE TABLE `purchaseingredient` (
   PRIMARY KEY (`id`),
   INDEX `purchaseingredient_purchaseId_idx` (`purchaseId`),
   INDEX `purchaseingredient_ingredientId_idx` (`ingredientId`),
-  CONSTRAINT `purchaseingredient_purchaseId_fkey` FOREIGN KEY (`purchaseId`) REFERENCES `purchase`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `purchaseingredient_ingredientId_fkey` FOREIGN KEY (`ingredientId`) REFERENCES `ingredient`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT `purchaseingredient_purchaseId_fkey` FOREIGN KEY (`purchaseId`) REFERENCES `purchase`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `purchaseingredient_ingredientId_fkey` FOREIGN KEY (`ingredientId`) REFERENCES `ingredient`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
 -- 2. Add cost fields to BranchIngredient

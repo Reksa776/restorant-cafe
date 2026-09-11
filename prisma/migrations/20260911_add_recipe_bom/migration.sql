@@ -15,7 +15,7 @@ CREATE TABLE `recipe` (
   UNIQUE INDEX `recipe_productId_key` (`productId`),
   UNIQUE INDEX `recipe_restaurantId_productId_key` (`restaurantId`, `productId`),
   INDEX `recipe_restaurantId_idx` (`restaurantId`),
-  CONSTRAINT `recipe_restaurantId_fkey` FOREIGN KEY (`restaurantId`) REFERENCES `restaurant`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `recipe_restaurantId_fkey` FOREIGN KEY (`restaurantId`) REFERENCES `restaurant`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `recipe_productId_fkey` FOREIGN KEY (`productId`) REFERENCES `product`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 

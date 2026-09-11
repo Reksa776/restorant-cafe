@@ -1,12 +1,11 @@
 -- Phase F.1: Ingredient + Unit + Branch Stock
 -- Additive migration — no destructive changes
+--
+-- `IngredientUnit` (PCS/GRAM/KG/ML/LITER) is an inline MySQL ENUM column —
+-- Prisma enums are NOT separate tables in MySQL, so this migration emits no
+-- DDL for the enum itself (only the ENUM(...) column below).
 
--- 1. New enum: IngredientUnit
-CREATE TABLE `ingredientunit` () ENGINE=InnoDB;
-DROP TABLE `ingredientunit`;
--- MySQL doesn't support CREATE TYPE; Prisma handles enum via VARCHAR + CHECK
-
--- 2. New table: ingredient
+-- 1. New table: ingredient
 CREATE TABLE `ingredient` (
   `id` VARCHAR(191) NOT NULL,
   `restaurantId` VARCHAR(191) NOT NULL,
@@ -20,10 +19,10 @@ CREATE TABLE `ingredient` (
   UNIQUE INDEX `ingredient_restaurantId_name_key` (`restaurantId`, `name`),
   INDEX `ingredient_restaurantId_idx` (`restaurantId`),
   INDEX `ingredient_restaurantId_isActive_idx` (`restaurantId`, `isActive`),
-  CONSTRAINT `ingredient_restaurantId_fkey` FOREIGN KEY (`restaurantId`) REFERENCES `restaurant`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
+  CONSTRAINT `ingredient_restaurantId_fkey` FOREIGN KEY (`restaurantId`) REFERENCES `restaurant`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
--- 3. New table: branchingredient
+-- 2. New table: branchingredient
 CREATE TABLE `branchingredient` (
   `id` VARCHAR(191) NOT NULL,
   `branchId` VARCHAR(191) NOT NULL,
@@ -40,7 +39,7 @@ CREATE TABLE `branchingredient` (
   CONSTRAINT `branchingredient_ingredientId_fkey` FOREIGN KEY (`ingredientId`) REFERENCES `ingredient`(`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB;
 
--- 4. New table: ingredientstockmovement
+-- 3. New table: ingredientstockmovement
 CREATE TABLE `ingredientstockmovement` (
   `id` VARCHAR(191) NOT NULL,
   `restaurantId` VARCHAR(191) NOT NULL,
@@ -60,8 +59,8 @@ CREATE TABLE `ingredientstockmovement` (
   INDEX `ingredientstockmovement_restaurantId_ingredientId_createdAt_idx` (`restaurantId`, `ingredientId`, `createdAt`),
   INDEX `ingredientstockmovement_restaurantId_type_createdAt_idx` (`restaurantId`, `type`, `createdAt`),
   INDEX `ingredientstockmovement_refType_refId_idx` (`refType`, `refId`),
-  CONSTRAINT `ingredientstockmovement_restaurantId_fkey` FOREIGN KEY (`restaurantId`) REFERENCES `restaurant`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `ingredientstockmovement_branchId_fkey` FOREIGN KEY (`branchId`) REFERENCES `branch`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `ingredientstockmovement_ingredientId_fkey` FOREIGN KEY (`ingredientId`) REFERENCES `ingredient`(`id`) ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT `ingredientstockmovement_restaurantId_fkey` FOREIGN KEY (`restaurantId`) REFERENCES `restaurant`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `ingredientstockmovement_branchId_fkey` FOREIGN KEY (`branchId`) REFERENCES `branch`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
+  CONSTRAINT `ingredientstockmovement_ingredientId_fkey` FOREIGN KEY (`ingredientId`) REFERENCES `ingredient`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE,
   CONSTRAINT `ingredientstockmovement_userId_fkey` FOREIGN KEY (`userId`) REFERENCES `user`(`id`) ON DELETE SET NULL ON UPDATE CASCADE
 ) ENGINE=InnoDB;
