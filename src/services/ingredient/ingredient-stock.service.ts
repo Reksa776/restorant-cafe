@@ -163,7 +163,7 @@ export async function listIngredientStock(
       ingredient: { restaurantId, isActive: true },
     },
     include: {
-      ingredient: { select: { id: true, name: true, baseUnit: true } },
+      ingredient: { select: { id: true, name: true, baseUnit: true, isActive: true } },
       branch: { select: { id: true, name: true, code: true } },
     },
     orderBy: { ingredient: { name: "asc" } },
@@ -178,6 +178,10 @@ export async function listIngredientStock(
     ingredientName: r.ingredient.name,
     baseUnit: r.ingredient.baseUnit,
     stock: Number(r.stock),
+    // G.3 — cost visibility for the Bahan Baku stock screen (admin-only API).
+    averageCost: r.averageCost != null ? Number(r.averageCost) : null,
+    lastPurchaseCost: r.lastPurchaseCost != null ? Number(r.lastPurchaseCost) : null,
+    isActive: r.ingredient.isActive,
   }));
 }
 

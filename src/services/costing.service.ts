@@ -7,6 +7,9 @@ import api from "@/lib/axios";
 export type CostStatus = "NO_RECIPE" | "COMPLETE" | "INCOMPLETE";
 export type MissingReason = "MISSING_WAC" | "INACTIVE_INGREDIENT";
 
+/** G.1 — per-branch HPP method. */
+export type CostingMode = "INGREDIENT" | "MANUAL";
+
 export interface CostingListItem {
   productId: string;
   name: string;
@@ -20,6 +23,10 @@ export interface CostingListItem {
   costStatus: CostStatus;
   coveredItems: number;
   totalItems: number;
+  /** G.1 — method that produced `hpp` for this branch. */
+  costingMode: CostingMode;
+  /** G.1 — stored manual HPP for this branch (null when unset). */
+  manualHpp: string | null;
 }
 
 export interface CostingItem {

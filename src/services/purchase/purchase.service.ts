@@ -126,59 +126,16 @@ async function validateSupplier(restaurantId: string, supplierId: string) {
 }
 
 /**
- * Validate raw purchase items against the tenant's Product master and return
- * normalized rows with server-derived lineTotal. quantity must be a positive
- * integer (PCS); unitCost must be a finite number >= 0.
+ * G.2 — purchasing is BAHAN BAKU ONLY. New purchases may never carry product
+ * lines; the legacy PurchaseItem rows stay readable for history but no new
+ * one can be created through this service.
  */
-async function normalizeItems(
-  restaurantId: string,
-  rawItems: PurchaseItemInput[]
-): Promise<{ productId: string; quantity: number; unitCost: number; lineTotal: number }[]> {
-  if (!Array.isArray(rawItems) || rawItems.length === 0) {
-    throw new ValidationError("Pembelian harus memiliki minimal satu item");
+function rejectProductItems(rawItems: PurchaseItemInput[] | undefined): void {
+  if (Array.isArray(rawItems) && rawItems.length > 0) {
+    throw new ValidationError(
+      "Pembelian hanya untuk bahan baku. Pilih bahan baku, bukan produk."
+    );
   }
-
-  const productIds = new Set<string>();
-  for (const item of rawItems) {
-    if (!item || typeof item.productId !== "string" || !item.productId) {
-      throw new ValidationError("Produk wajib diisi pada setiap item");
-    }
-    productIds.add(item.productId);
-  }
-
-  const products = await prisma.product.findMany({
-    where: { id: { in: [...productIds] }, restaurantId },
-    select: { id: true },
-  });
-  if (products.length !== productIds.size) {
-    throw new ValidationError("Ada produk yang tidak ditemukan");
-  }
-  const owned = new Set(products.map((p) => p.id));
-
-  return rawItems.map((item) => {
-    if (!owned.has(item.productId)) {
-      throw new ValidationError("Ada produk yang tidak ditemukan");
-    }
-    const quantity = item.quantity;
-    if (typeof quantity !== "number" || !Number.isInteger(quantity) || quantity <= 0) {
-      throw new ValidationError("Jumlah item harus bilangan bulat positif (PCS)");
-    }
-    const unitCost = Number(item.unitCost);
-    if (
-      typeof item.unitCost !== "number" ||
-      !Number.isFinite(unitCost) ||
-      unitCost < 0
-    ) {
-      throw new ValidationError("Harga satuan tidak boleh negatif");
-    }
-    const cost = round2(unitCost);
-    return {
-      productId: item.productId,
-      quantity,
-      unitCost: cost,
-      lineTotal: round2(quantity * cost),
-    };
-  });
 }
 
 function toNumber(value: Prisma.Decimal | number): number {
@@ -252,19 +209,19 @@ export async function createPurchase(
   await validateBranch(restaurantId, input.branchId);
   await validateSupplier(restaurantId, input.supplierId);
 
-  const items = input.items?.length ? await normalizeItems(restaurantId, input.items) : [];
+  // G.2 — reject any product line; only ingredients may be purchased.
+  rejectProductItems(input.items);
+
   const ingredientItems = input.purchaseIngredients?.length
     ? await normalizeIngredientItems(restaurantId, input.purchaseIngredients)
     : [];
 
   // Empty purchase guard
-  if (items.length === 0 && ingredientItems.length === 0) {
-    throw new ValidationError("Pembelian harus memiliki minimal satu item produk atau bahan baku");
+  if (ingredientItems.length === 0) {
+    throw new ValidationError("Pembelian harus memiliki minimal satu bahan baku");
   }
 
-  const productTotal = items.reduce((sum, i) => sum + i.lineTotal, 0);
-  const ingredientTotal = ingredientItems.reduce((sum, i) => sum + i.lineTotal, 0);
-  const total = round2(productTotal + ingredientTotal);
+  const total = round2(ingredientItems.reduce((sum, i) => sum + i.lineTotal, 0));
 
   const purchase = await prisma.$transaction(async (tx) => {
     const created = await tx.purchase.create({
@@ -277,29 +234,16 @@ export async function createPurchase(
         notes: input.notes?.trim() || null,
       },
     });
-    if (items.length > 0) {
-      await tx.purchaseItem.createMany({
-        data: items.map((i) => ({
-          purchaseId: created.id,
-          productId: i.productId,
-          quantity: i.quantity,
-          unitCost: i.unitCost,
-          lineTotal: i.lineTotal,
-        })),
-      });
-    }
-    if (ingredientItems.length > 0) {
-      await tx.purchaseIngredient.createMany({
-        data: ingredientItems.map((i) => ({
-          purchaseId: created.id,
-          ingredientId: i.ingredientId,
-          quantity: i.quantity,
-          unit: i.unit as "PCS" | "GRAM" | "KG" | "ML" | "LITER",
-          unitCost: i.unitCost,
-          lineTotal: i.lineTotal,
-        })),
-      });
-    }
+    await tx.purchaseIngredient.createMany({
+      data: ingredientItems.map((i) => ({
+        purchaseId: created.id,
+        ingredientId: i.ingredientId,
+        quantity: i.quantity,
+        unit: i.unit as "PCS" | "GRAM" | "KG" | "ML" | "LITER",
+        unitCost: i.unitCost,
+        lineTotal: i.lineTotal,
+      })),
+    });
     return created;
   });
 
@@ -312,7 +256,14 @@ export async function createPurchase(
     notes: purchase.notes,
     receivedAt: purchase.receivedAt,
     createdAt: purchase.createdAt,
-    items,
+    // G.2 — always empty for new purchases (product lines are rejected above).
+    // Typed to keep the legacy response shape stable for existing consumers.
+    items: [] as Array<{
+      productId: string;
+      quantity: number;
+      unitCost: number;
+      lineTotal: number;
+    }>,
     purchaseIngredients: ingredientItems,
   };
 }
@@ -351,6 +302,7 @@ export async function listPurchases(
         items: {
           select: { id: true, productId: true, quantity: true, unitCost: true, lineTotal: true },
         },
+        _count: { select: { purchaseIngredients: true } },
       },
       orderBy: { createdAt: "desc" },
       take: limit,
@@ -378,7 +330,9 @@ export async function listPurchases(
       notes: p.notes,
       receivedAt: p.receivedAt,
       createdAt: p.createdAt,
-      itemCount: p.items.length,
+      // G.2 — count ingredient lines (the only line type for new purchases)
+      // plus any legacy product lines, so history stays meaningful.
+      itemCount: p.items.length + (p._count?.purchaseIngredients ?? 0),
     })),
     total,
   };
@@ -530,15 +484,19 @@ export async function updateDraftPurchase(
     await validateSupplier(restaurantId, input.supplierId);
   }
 
-  const items = input.items ? await normalizeItems(restaurantId, input.items) : null;
+  // G.2 — a draft may only ever be edited with ingredient lines. Legacy
+  // product lines (if any) are left untouched and still counted in the total.
+  rejectProductItems(input.items);
+
   const ingredientItems = input.purchaseIngredients
     ? await normalizeIngredientItems(restaurantId, input.purchaseIngredients)
     : null;
 
   // Calculate total from whatever items exist
-  const productTotal = items
-    ? items.reduce((sum, i) => sum.add(i.lineTotal), new Prisma.Decimal(0))
-    : existing.items.reduce((sum, i) => sum.add(i.lineTotal), new Prisma.Decimal(0));
+  const productTotal = existing.items.reduce(
+    (sum, i) => sum.add(i.lineTotal),
+    new Prisma.Decimal(0)
+  );
   const ingredientTotal = ingredientItems
     ? ingredientItems.reduce((sum, i) => sum.add(i.lineTotal), new Prisma.Decimal(0))
     : existing.purchaseIngredients.reduce((sum, i) => sum.add(i.lineTotal), new Prisma.Decimal(0));
@@ -560,19 +518,6 @@ export async function updateDraftPurchase(
     });
     if (updated.count === 0) {
       throw new ConflictError("Hanya pembelian draft yang dapat diubah");
-    }
-
-    if (items) {
-      await tx.purchaseItem.deleteMany({ where: { purchaseId: id } });
-      await tx.purchaseItem.createMany({
-        data: items.map((i) => ({
-          purchaseId: id,
-          productId: i.productId,
-          quantity: i.quantity,
-          unitCost: i.unitCost,
-          lineTotal: i.lineTotal,
-        })),
-      });
     }
 
     if (ingredientItems) {

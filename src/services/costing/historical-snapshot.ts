@@ -42,24 +42,39 @@ interface ComputedSnapshot {
 }
 
 /**
+ * Product shape used for historical HPP resolution. Includes the branch's
+ * BranchProduct row so the per-branch HPP method (G.1) can be honored.
+ */
+export interface HistoricalHppProduct {
+  id: string;
+  recipe: {
+    items: Array<{
+      quantity: Prisma.Decimal;
+      ingredient: {
+        id: string;
+        isActive: boolean;
+        branchIngredients: Array<{ averageCost: Prisma.Decimal | null }>;
+      };
+    }>;
+  } | null;
+  /** Row for the order's branch: costing mode + optional manual HPP. */
+  branchProducts: Array<{
+    costingMode: string;
+    manualHpp: Prisma.Decimal | null;
+  }>;
+}
+
+/**
  * Resolve recipe + WAC for a product set in ONE batched query and compute
  * the historical HPP per product (rounded ROUND_HALF_UP at the final
  * monetary boundary). Pure function of the DB rows — no I/O here.
+ *
+ * G.1 — when the branch uses MANUAL costing, the frozen HPP IS
+ * BranchProduct.manualHpp and Recipe/WAC are not consulted (0 is valid).
+ * INGREDIENT mode keeps the existing F.5 computation byte-for-byte.
  */
 export function computeHistoricalHpp(
-  products: Array<{
-    id: string;
-    recipe: {
-      items: Array<{
-        quantity: Prisma.Decimal;
-        ingredient: {
-          id: string;
-          isActive: boolean;
-          branchIngredients: Array<{ averageCost: Prisma.Decimal | null }>;
-        };
-      }>;
-    } | null;
-  }>
+  products: HistoricalHppProduct[]
 ): Map<string, { hpp: Prisma.Decimal | null; status: OrderItemCostStatus }> {
   const map = new Map<
     string,
@@ -67,6 +82,21 @@ export function computeHistoricalHpp(
   >();
 
   for (const product of products) {
+    // G.1 — MANUAL mode bypasses Recipe/WAC for NEW snapshots only. A missing
+    // manual value is an incomplete cost (never coerced to 0).
+    const branchProduct = product.branchProducts?.[0] ?? null;
+    if (branchProduct?.costingMode === "MANUAL") {
+      const manual = branchProduct.manualHpp;
+      map.set(product.id, {
+        hpp:
+          manual != null
+            ? (manual.toDecimalPlaces(2, ROUND) as Prisma.Decimal)
+            : null,
+        status: manual != null ? "SNAPSHOTTED" : "MISSING_WAC",
+      });
+      continue;
+    }
+
     const recipe = product.recipe;
     const items = recipe?.items ?? [];
 
@@ -244,22 +274,14 @@ async function loadPerProductHpp(
           },
         },
       },
+      // G.1 — the order's branch HPP method decides manual vs ingredient.
+      branchProducts: {
+        where: { branchId: input.branchId },
+        select: { costingMode: true, manualHpp: true },
+        take: 1,
+      },
     },
   });
 
-  return computeHistoricalHpp(
-    products as unknown as Array<{
-      id: string;
-      recipe: {
-        items: Array<{
-          quantity: Prisma.Decimal;
-          ingredient: {
-            id: string;
-            isActive: boolean;
-            branchIngredients: Array<{ averageCost: Prisma.Decimal | null }>;
-          };
-        }>;
-      } | null;
-    }>
-  );
+  return computeHistoricalHpp(products as unknown as HistoricalHppProduct[]);
 }

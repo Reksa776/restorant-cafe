@@ -64,7 +64,6 @@ export default function PurchaseDetailPage() {
   const [editing, setEditing] = useState(false);
   const [supplierId, setSupplierId] = useState("");
   const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<EditableItem[]>([]);
   const [ingredientEdits, setIngredientEdits] = useState<EditableItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [actionBusy, setActionBusy] = useState<null | "receive" | "cancel">(null);
@@ -76,7 +75,6 @@ export default function PurchaseDetailPage() {
       setPurchase(data);
       setSupplierId(data.supplierId);
       setNotes(data.notes ?? "");
-      setItems(data.items.map((it) => ({ quantity: String(it.quantity), unitCost: String(it.unitCost) })));
       setIngredientEdits((data.purchaseIngredients ?? []).map((pi) => ({ quantity: String(pi.quantity), unitCost: String(pi.unitCost) })));
     } catch (error) {
       console.error("Failed to load purchase:", error);
@@ -94,15 +92,6 @@ export default function PurchaseDetailPage() {
   const isDraft = purchase?.status === "DRAFT";
   const canEdit = isAdmin && isDraft && !loading;
 
-  const lineTotal = (index: number) => {
-    const it = items[index];
-    if (!it || !purchase) return 0;
-    const q = parseInt(it.quantity, 10);
-    const c = parseFloat(it.unitCost);
-    if (!Number.isInteger(q) || q <= 0 || Number.isNaN(c) || c < 0) return 0;
-    return q * c;
-  };
-
   const ingredientLineTotal = (index: number) => {
     const it = ingredientEdits[index];
     if (!it) return 0;
@@ -112,7 +101,12 @@ export default function PurchaseDetailPage() {
     return q * c;
   };
 
-  const productTotalCalc = items.reduce((sum, _, i) => sum + lineTotal(i), 0);
+  // G.2 — legacy product lines are read-only, so their subtotal comes straight
+  // from the loaded purchase; only ingredient lines reflect live edits.
+  const productTotalCalc = (purchase?.items ?? []).reduce(
+    (sum, it) => sum + it.lineTotal,
+    0
+  );
   const ingredientTotalCalc = ingredientEdits.reduce((sum, _, i) => sum + ingredientLineTotal(i), 0);
   const total = productTotalCalc + ingredientTotalCalc;
 
@@ -126,42 +120,26 @@ export default function PurchaseDetailPage() {
 
   const handleSave = async () => {
     if (!purchase) return;
-    for (const [i, it] of items.entries()) {
-      const q = parseInt(it.quantity, 10);
-      if (!Number.isInteger(q) || q <= 0) {
-        toast.error(`Jumlah item #${i + 1} harus bilangan bulat positif`);
-        return;
-      }
-      const c = parseFloat(it.unitCost);
-      if (Number.isNaN(c) || c < 0) {
-        toast.error(`Harga satuan item #${i + 1} tidak boleh negatif`);
-        return;
-      }
-    }
     setSaving(true);
     try {
-      // Validate ingredient items
-    for (const [i, it] of ingredientEdits.entries()) {
-      const q = parseFloat(it.quantity);
-      if (Number.isNaN(q) || q <= 0) {
-        toast.error(`Jumlah bahan baku #${i + 1} harus bernilai positif`);
-        return;
+      // G.2 — only ingredient lines are editable. Legacy product lines are
+      // read-only and are intentionally NOT sent (server rejects new ones).
+      for (const [i, it] of ingredientEdits.entries()) {
+        const q = parseFloat(it.quantity);
+        if (Number.isNaN(q) || q <= 0) {
+          toast.error(`Jumlah bahan baku #${i + 1} harus bernilai positif`);
+          return;
+        }
+        const c = parseFloat(it.unitCost);
+        if (Number.isNaN(c) || c < 0) {
+          toast.error(`Harga satuan bahan baku #${i + 1} tidak boleh negatif`);
+          return;
+        }
       }
-      const c = parseFloat(it.unitCost);
-      if (Number.isNaN(c) || c < 0) {
-        toast.error(`Harga satuan bahan baku #${i + 1} tidak boleh negatif`);
-        return;
-      }
-    }
 
-    await purchaseService.updateDraft(purchase.id, {
+      await purchaseService.updateDraft(purchase.id, {
         supplierId,
         notes,
-        items: items.map((it, i) => ({
-          productId: purchase.items[i].productId,
-          quantity: parseInt(it.quantity, 10),
-          unitCost: parseFloat(it.unitCost),
-        })),
         purchaseIngredients: purchase.purchaseIngredients?.map((pi, i) => ({
           ingredientId: pi.ingredientId,
           quantity: parseFloat(ingredientEdits[i]?.quantity ?? String(pi.quantity)),
@@ -293,7 +271,7 @@ export default function PurchaseDetailPage() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base">Item Pembelian</CardTitle>
+            <CardTitle className="text-base">Item Pembelian (Bahan Baku)</CardTitle>
             {canEdit && !editing && (
               <Button variant="outline" size="sm" onClick={startEdit}>
                 Edit Draft
@@ -302,7 +280,11 @@ export default function PurchaseDetailPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
-          <div className="overflow-x-auto">
+          {purchase.items.length > 0 && (
+            <div className="overflow-x-auto">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                Item Produk (legacy — hanya baca)
+              </p>
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-gray-400">
@@ -313,7 +295,7 @@ export default function PurchaseDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {purchase.items.map((it, index) => (
+                {purchase.items.map((it) => (
                   <tr key={it.id || it.productId} className="border-b last:border-none">
                     <td className="py-2 pr-2">
                       <p className="font-medium">{it.productName || it.productId}</p>
@@ -322,46 +304,20 @@ export default function PurchaseDetailPage() {
                       )}
                     </td>
                     <td className="py-2 pr-2 text-right">
-                      {editing ? (
-                        <Input
-                          type="number"
-                          min={1}
-                          value={items[index]?.quantity ?? ""}
-                          onChange={(e) =>
-                            setItems((prev) => prev.map((row, i) => (i === index ? { ...row, quantity: e.target.value } : row)))
-                          }
-                          className="ml-auto h-8 w-24 text-right tabular-nums"
-                          inputMode="numeric"
-                        />
-                      ) : (
-                        <span className="tabular-nums">{it.quantity} PCS</span>
-                      )}
+                      <span className="tabular-nums">{it.quantity} PCS</span>
                     </td>
                     <td className="py-2 pr-2 text-right">
-                      {editing ? (
-                        <Input
-                          type="number"
-                          min={0}
-                          step="any"
-                          value={items[index]?.unitCost ?? ""}
-                          onChange={(e) =>
-                            setItems((prev) => prev.map((row, i) => (i === index ? { ...row, unitCost: e.target.value } : row)))
-                          }
-                          className="ml-auto h-8 w-28 text-right tabular-nums"
-                          inputMode="decimal"
-                        />
-                      ) : (
-                        <span className="tabular-nums">{rupiah(it.unitCost)}</span>
-                      )}
+                      <span className="tabular-nums">{rupiah(it.unitCost)}</span>
                     </td>
                     <td className="py-2 text-right font-medium tabular-nums">
-                      {editing ? rupiah(lineTotal(index)) : rupiah(it.lineTotal)}
+                      {rupiah(it.lineTotal)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+          )}
 
           {/* Bahan Baku section */}
           {purchase.purchaseIngredients && purchase.purchaseIngredients.length > 0 && (

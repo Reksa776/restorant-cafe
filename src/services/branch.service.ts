@@ -84,12 +84,18 @@ export const branchService = {
       stock?: number;
       /** Mandatory human-readable reason when `stock` is being changed. */
       reason?: string;
+      /** G.1 — per-branch HPP method. */
+      costingMode?: "INGREDIENT" | "MANUAL";
+      /** G.1 — manual HPP (0 is valid). Required when costingMode = MANUAL. */
+      manualHpp?: number | null;
     }
   ): Promise<{
     productId: string;
     isAvailable: boolean;
     priceOverride: number | null;
     stock: number;
+    costingMode: "INGREDIENT" | "MANUAL";
+    manualHpp: number | null;
   }> {
     const response = await api.put(
       `/admin/branches/${branchId}/products/${productId}`,

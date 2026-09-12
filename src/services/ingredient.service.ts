@@ -32,6 +32,12 @@ export interface IngredientStockRow {
   ingredientName: string;
   baseUnit: string;
   stock: number;
+  /** G.3 — WAC for this branch (null when never purchased). */
+  averageCost: number | null;
+  /** G.3 — last purchase unit cost for this branch (null when never purchased). */
+  lastPurchaseCost: number | null;
+  /** G.3 — ingredient master active flag. */
+  isActive: boolean;
 }
 
 export interface IngredientStockMovementRow {

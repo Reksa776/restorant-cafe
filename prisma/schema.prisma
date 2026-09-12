@@ -72,6 +72,20 @@ enum IngredientUnit {
   LITER
 }
 
+// ============================================================
+// PHASE G — Per-branch HPP method (G.1)
+//
+// INGREDIENT = HPP derived live from Recipe × BranchIngredient.averageCost
+//              (existing F.4 automatic costing — unchanged).
+// MANUAL     = HPP read from BranchProduct.manualHpp, ignoring Recipe/WAC.
+// Stored explicitly (never inferred) because manualHpp = 0 is a VALID cost
+// and must be distinguishable from "not set" (null).
+// ============================================================
+enum CostingMode {
+  INGREDIENT
+  MANUAL
+}
+
 enum OrderType {
   DINE_IN
   TAKEAWAY
@@ -262,6 +276,12 @@ model BranchProduct {
   // Per-branch inventory quantity (inventory count managed by staff/admin).
   // Orders/payments do NOT auto-decrement this; it is a manual stock level.
   stock         Int      @default(0)
+  // Per-branch HPP method (Phase G.1). Default INGREDIENT keeps every
+  // existing row on the untouched F.4 automatic costing path.
+  costingMode   CostingMode @default(INGREDIENT)
+  // Manual HPP for this branch, used only when costingMode = MANUAL.
+  // Decimal(12,2); NULL = unset. A literal 0 IS a valid manual cost.
+  manualHpp     Decimal? @db.Decimal(12, 2)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

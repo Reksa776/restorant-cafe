@@ -363,6 +363,10 @@ export class BranchService {
       /** Mandatory human-readable reason when `stock` is being changed
        *  (consolidated stock adjustment — Phase C). */
       reason?: string;
+      /** G.1 — per-branch HPP method. */
+      costingMode?: "INGREDIENT" | "MANUAL";
+      /** G.1 — manual HPP (used only when costingMode = MANUAL). 0 is valid. */
+      manualHpp?: number | null;
     },
     allowedBranchFilters?: string[] | null
   ) {
@@ -395,6 +399,29 @@ export class BranchService {
       throw new ValidationError("Stok harus berupa bilangan bulat >= 0");
     }
 
+    // --- G.1 per-branch HPP method validation ---
+    if (
+      data.costingMode !== undefined &&
+      data.costingMode !== "INGREDIENT" &&
+      data.costingMode !== "MANUAL"
+    ) {
+      throw new ValidationError("Metode HPP tidak valid");
+    }
+    let manualHppValue: number | null | undefined = undefined;
+    if (data.manualHpp !== undefined) {
+      if (data.manualHpp === null) {
+        manualHppValue = null;
+      } else if (
+        !Number.isFinite(data.manualHpp) ||
+        data.manualHpp < 0
+      ) {
+        throw new ValidationError("HPP manual harus berupa angka >= 0");
+      } else {
+        // Money is Decimal(12,2) — collapse to 2dp at the write boundary.
+        manualHppValue = Math.round(data.manualHpp * 100) / 100;
+      }
+    }
+
     // --- Consolidated manual stock adjustment (STEP 9 / D3) ---
     // A stock change MUST go through the StockMovement ledger — never a blind
     // `BranchProduct.stock = value`. The delta is a signed ADJUSTMENT movement
@@ -402,11 +429,26 @@ export class BranchService {
     // the ledger always reflects reality and concurrent writers serialize.
     const existing = await prisma.branchProduct.findUnique({
       where: { branchId_productId: { branchId, productId } },
-      select: { id: true, stock: true },
+      select: { id: true, stock: true, costingMode: true, manualHpp: true },
     });
     const prevStock = existing ? existing.stock : 0;
     const stockChanging = data.stock !== undefined;
     const stockDelta = stockChanging ? data.stock! - prevStock : 0;
+
+    // G.1 — resolve the EFFECTIVE mode/value after this update. MANUAL with no
+    // manual value (neither provided nor already stored) is rejected here, so a
+    // MANUAL row can never exist without a (possibly zero) HPP.
+    const effectiveCostingMode =
+      data.costingMode ?? existing?.costingMode ?? "INGREDIENT";
+    const effectiveManualHpp =
+      manualHppValue !== undefined
+        ? manualHppValue
+        : (existing?.manualHpp != null ? Number(existing.manualHpp) : null);
+    if (effectiveCostingMode === "MANUAL" && effectiveManualHpp === null) {
+      throw new ValidationError(
+        "HPP manual wajib diisi saat metode HPP = Manual"
+      );
+    }
     if (stockChanging && stockDelta !== 0) {
       const reason = typeof data.reason === "string" ? data.reason.trim() : "";
       if (!reason) {
@@ -440,6 +482,11 @@ export class BranchService {
           priceOverride:
             data.priceOverride === null ? null : (data.priceOverride ?? undefined),
           stock: data.stock !== undefined ? data.stock : undefined,
+          costingMode: data.costingMode ?? undefined,
+          manualHpp:
+            manualHppValue === null
+              ? null
+              : (manualHppValue ?? undefined),
         },
         create: {
           branchId,
@@ -447,6 +494,8 @@ export class BranchService {
           isAvailable: data.isAvailable ?? product.isAvailable,
           priceOverride: data.priceOverride ?? null,
           stock: data.stock ?? 0,
+          costingMode: data.costingMode ?? "INGREDIENT",
+          manualHpp: manualHppValue ?? null,
         },
       });
     });
@@ -466,6 +515,8 @@ export class BranchService {
         oldStock: existing ? existing.stock : null,
         stockChanged: stockChanging && prevStock !== data.stock,
         reason: stockChanging && stockDelta !== 0 ? data.reason!.trim() : null,
+        costingMode: bp.costingMode,
+        manualHpp: bp.manualHpp != null ? Number(bp.manualHpp) : null,
       },
     });
 

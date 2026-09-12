@@ -17,6 +17,42 @@ export const missingReasons = ["MISSING_WAC", "INACTIVE_INGREDIENT"] as const;
 export type MissingReason = (typeof missingReasons)[number];
 
 // -----------------------------------------------
+// Phase G.1 — per-branch HPP method.
+//
+// INGREDIENT = automatic HPP from Recipe × BranchIngredient.averageCost.
+// MANUAL     = HPP read from BranchProduct.manualHpp (recipe/WAC ignored).
+// -----------------------------------------------
+
+export const costingModes = ["INGREDIENT", "MANUAL"] as const;
+export type CostingMode = (typeof costingModes)[number];
+
+/**
+ * Body fields for the per-branch costing method, accepted by the existing
+ * branch-product mutation endpoint (reused — no new costing endpoint).
+ *
+ * - MANUAL requires a `manualHpp` (0 IS valid).
+ * - INGREDIENT clears/ignores `manualHpp`.
+ * Precision: at most 2 decimals, finite, >= 0 (server rounds to 2dp).
+ */
+export const BranchCostingSchema = z.object({
+  costingMode: z.enum(costingModes, "Metode HPP tidak valid").optional(),
+  manualHpp: z
+    .union([z.number(), z.null()])
+    .optional()
+    .refine(
+      (v) => v == null || (Number.isFinite(v) && v >= 0),
+      "HPP manual harus berupa angka >= 0"
+    )
+    .refine(
+      (v) =>
+        v == null ||
+        Math.abs(v * 100 - Math.round(v * 100)) < 1e-9,
+      "HPP manual maksimal 2 angka desimal"
+    ),
+});
+export type BranchCostingInput = z.infer<typeof BranchCostingSchema>;
+
+// -----------------------------------------------
 // Query schemas — bounded pagination, no unlimited limits.
 // -----------------------------------------------
 
@@ -72,6 +108,10 @@ export interface CostingListItemDto {
   costStatus: CostStatus;
   coveredItems: number;
   totalItems: number;
+  /** G.1 — which method produced `hpp` for this branch. */
+  costingMode: CostingMode;
+  /** G.1 — stored manual HPP for this branch (null when unset). */
+  manualHpp: string | null;
 }
 
 /** Detail — list row + the recipe lines that produced the HPP. */

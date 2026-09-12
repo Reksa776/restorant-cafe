@@ -7,7 +7,10 @@ import {
 } from "@/services/branch.service";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import { useUserRole } from "@/hooks/use-user-role";
-import { ingredientService } from "@/services/ingredient.service";
+import {
+  ingredientService,
+  type IngredientStockRow,
+} from "@/services/ingredient.service";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -29,8 +32,13 @@ import { toast } from "sonner";
  * D3: stok hanya bisa diubah ADMIN (penyesuaian manual tercatat sebagai
  * StockMovement ADJUSTMENT dengan alasan wajib). KASIR hanya membaca.
  */
-export default function StockPage() {
-  const [activeTab, setActiveTab] = useState("products");
+export default function StockPage({
+  initialTab = "products",
+}: {
+  /** G.3 — which stock screen this route opens on. */
+  initialTab?: "products" | "ingredients";
+}) {
+  const [activeTab, setActiveTab] = useState(initialTab);
   const { branchId, branches, isLoading: ctxLoading } = useBranchContext();
   const { role, isLoading: roleLoading } = useUserRole();
   const isAdmin = role === "ADMIN";
@@ -296,6 +304,9 @@ const UNIT_LABELS: Record<string, string> = {
   LITER: "Liter",
 };
 
+const rupiah = (v: number) =>
+  `Rp${new Intl.NumberFormat("id-ID", { maximumFractionDigits: 2 }).format(v)}`;
+
 function IngredientStockTab({
   workingBranchId,
   isAdmin,
@@ -303,15 +314,7 @@ function IngredientStockTab({
   workingBranchId: string | null;
   isAdmin: boolean;
 }) {
-  const [items, setItems] = useState<
-    Array<{
-      id: string;
-      ingredientId: string;
-      ingredientName: string;
-      baseUnit: string;
-      stock: number;
-    }>
-  >([]);
+  const [items, setItems] = useState<IngredientStockRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [adjusting, setAdjusting] = useState<string | null>(null);
   const [targetStock, setTargetStock] = useState<Record<string, string>>({});
@@ -418,9 +421,19 @@ function IngredientStockTab({
                 <div className="min-w-0">
                   <p className="truncate text-sm font-medium">
                     {item.ingredientName}
+                    {!item.isActive && (
+                      <Badge variant="outline" className="ml-2 text-[10px] text-gray-500">
+                        Tidak aktif
+                      </Badge>
+                    )}
                   </p>
                   <p className="text-xs text-gray-400">
                     Satuan: {UNIT_LABELS[item.baseUnit] || item.baseUnit}
+                    {" · "}
+                    WAC: {item.averageCost != null ? rupiah(item.averageCost) : "—"}
+                    {" · "}
+                    Harga beli terakhir:{" "}
+                    {item.lastPurchaseCost != null ? rupiah(item.lastPurchaseCost) : "—"}
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">

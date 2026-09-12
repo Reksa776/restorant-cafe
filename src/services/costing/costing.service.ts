@@ -9,6 +9,7 @@ import type {
   CostStatus,
   CostingItemDto,
   CostingListItemDto,
+  CostingMode,
   MissingReason,
 } from "./costing.types";
 
@@ -56,7 +57,11 @@ interface ProductCostRow {
   category: { id: string; name: string };
   price: Prisma.Decimal;
   recipe: RecipeCostRow | null;
-  branchProducts: Array<{ priceOverride: Prisma.Decimal | null }>;
+  branchProducts: Array<{
+    priceOverride: Prisma.Decimal | null;
+    costingMode: CostingMode;
+    manualHpp: Prisma.Decimal | null;
+  }>;
 }
 
 interface CostingComputation {
@@ -70,6 +75,8 @@ interface CostingComputation {
   totalItems: number;
   recipeId: string | null;
   items: CostingItemDto[];
+  costingMode: CostingMode;
+  manualHpp: Prisma.Decimal | null;
 }
 
 class CostingService {
@@ -111,7 +118,7 @@ class CostingService {
       },
       branchProducts: {
         where: { branchId },
-        select: { priceOverride: true },
+        select: { priceOverride: true, costingMode: true, manualHpp: true },
         take: 1,
       },
     } satisfies Prisma.ProductSelect;
@@ -135,6 +142,39 @@ class CostingService {
     const sellingPrice =
       branchProduct?.priceOverride != null ? branchProduct.priceOverride : row.price;
 
+    const costingMode: CostingMode = branchProduct?.costingMode ?? "INGREDIENT";
+    const manualHpp = branchProduct?.manualHpp ?? null;
+
+    // G.1 — MANUAL mode short-circuits the automatic engine entirely:
+    // HPP is exactly BranchProduct.manualHpp (recipe/WAC are NOT consulted).
+    // A manual cost of 0 IS valid (COMPLETE); a missing manual value (null)
+    // is an incomplete configuration, never treated as 0.
+    if (costingMode === "MANUAL") {
+      const hpp = manualHpp;
+      let grossProfit: Prisma.Decimal | null = null;
+      let grossMarginPct: Prisma.Decimal | null = null;
+      let foodCostPct: Prisma.Decimal | null = null;
+      if (hpp != null && sellingPrice.greaterThan(0)) {
+        grossProfit = sellingPrice.sub(hpp);
+        grossMarginPct = grossProfit.div(sellingPrice).mul(100);
+        foodCostPct = hpp.div(sellingPrice).mul(100);
+      }
+      return {
+        sellingPrice,
+        hpp,
+        grossProfit,
+        grossMarginPct,
+        foodCostPct,
+        costStatus: hpp != null ? "COMPLETE" : "INCOMPLETE",
+        coveredItems: 0,
+        totalItems: 0,
+        recipeId: null,
+        items: [],
+        costingMode: "MANUAL",
+        manualHpp,
+      };
+    }
+
     const recipe = row.recipe;
     const recipeItems = recipe?.items ?? [];
 
@@ -149,6 +189,8 @@ class CostingService {
       totalItems: recipeItems.length,
       recipeId: recipe?.id ?? null,
       items: [],
+      costingMode: "INGREDIENT",
+      manualHpp,
     };
 
     if (!recipe || recipeItems.length === 0) {
@@ -215,6 +257,8 @@ class CostingService {
       totalItems: items.length,
       recipeId: recipe.id,
       items,
+      costingMode: "INGREDIENT",
+      manualHpp,
     };
   }
 
@@ -234,6 +278,8 @@ class CostingService {
       costStatus: calc.costStatus,
       coveredItems: calc.coveredItems,
       totalItems: calc.totalItems,
+      costingMode: calc.costingMode,
+      manualHpp: calc.manualHpp != null ? money(calc.manualHpp) : null,
     };
   }
 
@@ -345,6 +391,8 @@ class CostingService {
       costStatus: calc.costStatus,
       coveredItems: calc.coveredItems,
       totalItems: calc.totalItems,
+      costingMode: calc.costingMode,
+      manualHpp: calc.manualHpp != null ? money(calc.manualHpp) : null,
       recipeId: calc.recipeId,
       items: calc.items,
     };

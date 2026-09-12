@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Loader2, Search } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Loader2, Save, Search } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useBranchContext } from "@/hooks/use-branch-context";
+import { branchService } from "@/services/branch.service";
 import { menuService, type Category } from "@/services/menu.service";
 import {
   costingService,
@@ -56,6 +57,12 @@ function formatPct(s: string | null): string {
   return `${num}%`;
 }
 
+function apiErrorMessage(error: unknown, fallback: string): string {
+  const msg = (error as { response?: { data?: { message?: unknown } } })
+    ?.response?.data?.message;
+  return typeof msg === "string" && msg.trim() ? msg : fallback;
+}
+
 const statusLabels: Record<CostStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   COMPLETE: { label: "Complete", variant: "default" },
   INCOMPLETE: { label: "Incomplete", variant: "destructive" },
@@ -76,15 +83,23 @@ function CostingDetailDialog({
   onOpenChange,
   productId,
   branchId,
+  onCostingSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   productId: string | null;
   branchId: string | null;
+  /** Refreshes the list after the HPP method changed. */
+  onCostingSaved?: () => void;
 }) {
   const [detail, setDetail] = useState<CostingDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [simulationOpen, setSimulationOpen] = useState(false);
+  // G.1 — per-branch HPP method draft (persisted through the existing
+  // branch-product endpoint, ADMIN-only).
+  const [modeDraft, setModeDraft] = useState<"INGREDIENT" | "MANUAL">("INGREDIENT");
+  const [manualDraft, setManualDraft] = useState("");
+  const [savingCosting, setSavingCosting] = useState(false);
 
   useEffect(() => {
     if (!open || !productId || !branchId) {
@@ -109,6 +124,47 @@ function CostingDetailDialog({
       alive = false;
     };
   }, [open, productId, branchId]);
+
+  // Keep the method draft in sync with the loaded detail.
+  useEffect(() => {
+    if (!detail) return;
+    setModeDraft(detail.costingMode ?? "INGREDIENT");
+    setManualDraft(detail.manualHpp != null ? String(Number(detail.manualHpp)) : "");
+  }, [detail]);
+
+  const reloadDetail = async () => {
+    if (!productId || !branchId) return;
+    const res = await costingService.detail(productId, branchId);
+    setDetail(res);
+  };
+
+  const handleSaveCosting = async () => {
+    if (!productId || !branchId) return;
+    if (modeDraft === "MANUAL") {
+      const v = parseFloat(manualDraft);
+      if (Number.isNaN(v) || !Number.isFinite(v) || v < 0) {
+        toast.error("HPP manual harus berupa angka >= 0");
+        return;
+      }
+    }
+    setSavingCosting(true);
+    try {
+      await branchService.updateBranchProduct(branchId, productId, {
+        costingMode: modeDraft,
+        ...(modeDraft === "MANUAL"
+          ? { manualHpp: parseFloat(manualDraft) }
+          : {}),
+      });
+      toast.success("Metode HPP diperbarui");
+      await reloadDetail();
+      onCostingSaved?.();
+    } catch (error) {
+      console.error("Failed to save costing method:", error);
+      toast.error(apiErrorMessage(error, "Gagal menyimpan metode HPP"));
+    } finally {
+      setSavingCosting(false);
+    }
+  };
 
   const num = (s: string | null): number | null => (s == null ? null : Number(s));
   const rupiah = (s: string | null): string => {
@@ -165,6 +221,84 @@ function CostingDetailDialog({
               ))}
             </dl>
 
+            {/* G.1 — HPP method: automatic from ingredients, or manual. */}
+            <div className="mt-4 rounded-lg border p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                Metode HPP (Cabang Ini)
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  variant={modeDraft === "INGREDIENT" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setModeDraft("INGREDIENT")}
+                >
+                  Dari Bahan Baku
+                </Button>
+                <Button
+                  variant={modeDraft === "MANUAL" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setModeDraft("MANUAL")}
+                >
+                  Manual
+                </Button>
+              </div>
+
+              {modeDraft === "MANUAL" ? (
+                <div className="mt-3 space-y-2">
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="space-y-1">
+                      <label className="text-xs text-gray-500">HPP Manual (Rp)</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="any"
+                        value={manualDraft}
+                        onChange={(e) => setManualDraft(e.target.value)}
+                        className="h-9 w-40 text-right tabular-nums"
+                        inputMode="decimal"
+                        placeholder="15000"
+                      />
+                    </div>
+                    <Button
+                      size="sm"
+                      className="h-9"
+                      onClick={handleSaveCosting}
+                      disabled={savingCosting}
+                    >
+                      {savingCosting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                      <span className="ml-2">Simpan</span>
+                    </Button>
+                  </div>
+                  <p className="text-xs text-amber-600">
+                    Manual HPP tidak menggunakan Recipe/WAC.
+                  </p>
+                </div>
+              ) : (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs text-gray-500">
+                    HPP dihitung otomatis dari Recipe × WAC bahan baku cabang ini.
+                  </p>
+                  {modeDraft !== detail.costingMode && (
+                    <Button
+                      size="sm"
+                      className="h-9"
+                      onClick={handleSaveCosting}
+                      disabled={savingCosting}
+                    >
+                      {savingCosting && (
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                      )}
+                      Simpan
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="mt-4 flex justify-end border-b pb-4">
               <Button
                 variant="outline"
@@ -177,7 +311,12 @@ function CostingDetailDialog({
             </div>
 
             <h4 className="mt-5 mb-2 text-sm font-semibold">RECIPE COST</h4>
-            {detail.items.length === 0 ? (
+            {detail.costingMode === "MANUAL" ? (
+              <p className="rounded-lg border border-dashed p-4 text-sm text-gray-500">
+                Metode Manual — HPP memakai nilai manual per cabang; Recipe/WAC
+                tidak digunakan.
+              </p>
+            ) : detail.items.length === 0 ? (
               <p className="rounded-lg border border-dashed p-4 text-sm text-gray-500">
                 Produk tidak memiliki recipe aktif.
               </p>
@@ -751,20 +890,21 @@ export default function CostingPage() {
                   <TableHead className="text-right">HPP</TableHead>
                   <TableHead className="text-right">Margin</TableHead>
                   <TableHead className="text-right">Food Cost</TableHead>
+                  <TableHead>Metode</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center text-sm text-gray-500">
+                    <TableCell colSpan={7} className="h-24 text-center text-sm text-gray-500">
                       <Loader2 className="mx-auto mb-1 h-5 w-5 animate-spin" />
                       Memuat...
                     </TableCell>
                   </TableRow>
                 ) : items.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center text-sm text-gray-500">
+                    <TableCell colSpan={7} className="h-24 text-center text-sm text-gray-500">
                       {!workingBranch
                         ? "Pilih cabang untuk melihat data costing."
                         : error
@@ -789,6 +929,12 @@ export default function CostingPage() {
                       </TableCell>
                       <TableCell className="text-right">{formatPct(item.grossMarginPct)}</TableCell>
                       <TableCell className="text-right">{formatPct(item.foodCostPct)}</TableCell>
+                      <TableCell>
+                        {/* G.1 — which method produced this HPP. */}
+                        <Badge variant={item.costingMode === "MANUAL" ? "secondary" : "outline"}>
+                          {item.costingMode === "MANUAL" ? "Manual" : "Bahan Baku"}
+                        </Badge>
+                      </TableCell>
                       <TableCell>
                         <StatusBadge status={item.costStatus} />
                       </TableCell>
@@ -835,6 +981,7 @@ export default function CostingPage() {
         onOpenChange={setDialogOpen}
         productId={selectedProductId}
         branchId={workingBranchId}
+        onCostingSaved={load}
       />
     </div>
   );

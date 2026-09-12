@@ -74,7 +74,12 @@ async function loadProducts(
     // applies.
     include: {
       ...productInclude,
-      branchProducts: { where: { branchId: branchId ?? "__none__" } },
+      // Explicit select: BranchProduct also carries per-branch costing fields
+      // (costingMode/manualHpp) which must NEVER reach public/customer APIs.
+      branchProducts: {
+        where: { branchId: branchId ?? "__none__" },
+        select: { isAvailable: true, priceOverride: true, stock: true },
+      },
     },
   });
 
@@ -442,8 +447,11 @@ export class RecommendationService {
       where,
       include: {
         ...productInclude,
+        // Cost fields (costingMode/manualHpp) are admin-only — never selected
+        // for the public recommendation/best-seller payloads.
         branchProducts: {
           where: { branchId: opts?.branchId ?? "__none__" },
+          select: { isAvailable: true, priceOverride: true, stock: true },
         },
       },
       orderBy: { createdAt: "desc" },

@@ -22,6 +22,7 @@ import {
   Menu,
   X,
   Boxes,
+  Package,
   Receipt,
   Truck,
   Container,
@@ -105,12 +106,17 @@ const navigation: NavEntry[] = [
       { name: "Costing", href: "/admin/costing", icon: Calculator, roles: ["ADMIN"] },
     ],
   },
+  // G.3 — Inventory separates BAHAN BAKU stock (BranchIngredient) from
+  // PRODUK stock (BranchProduct) as distinct entries, so the two ledgers are
+  // never mixed in the UI. Both stock screens reuse /admin/stock, opened on
+  // the matching tab via the dedicated routes below.
   {
     name: "Inventory",
     icon: Boxes,
     children: [
-      { name: "Stok", href: "/admin/stock", icon: Boxes, roles: ["ADMIN", "CASHIER"] },
       { name: "Bahan Baku", href: "/admin/ingredients", icon: Leaf, roles: ["ADMIN"] },
+      { name: "Stok Bahan Baku", href: "/admin/stock/ingredients", icon: Boxes, roles: ["ADMIN", "CASHIER"] },
+      { name: "Stok Produk", href: "/admin/stock/products", icon: Package, roles: ["ADMIN", "CASHIER"] },
       { name: "Stock Movement", href: "/admin/inventory", icon: ClipboardList, roles: ["ADMIN", "CASHIER"] },
       { name: "Pembelian", href: "/admin/purchasing/purchases", icon: Container, roles: ["ADMIN", "CASHIER"] },
       { name: "Supplier", href: "/admin/purchasing/suppliers", icon: Truck, roles: ["ADMIN", "CASHIER"] },

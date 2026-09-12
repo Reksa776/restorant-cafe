@@ -93,9 +93,17 @@ export async function GET(request: NextRequest) {
           where: { isActive: true },
           orderBy: { sortOrder: "asc" },
         },
+        // Explicit select — BranchProduct also holds per-branch costing
+        // fields (costingMode/manualHpp) that must NEVER be public.
         branchProducts: branchId
-          ? { where: { branchId } }
-          : { where: { branchId: "__none__" } },
+          ? {
+              where: { branchId },
+              select: { isAvailable: true, priceOverride: true, stock: true },
+            }
+          : {
+              where: { branchId: "__none__" },
+              select: { isAvailable: true, priceOverride: true, stock: true },
+            },
       },
       orderBy: { name: "asc" },
     });

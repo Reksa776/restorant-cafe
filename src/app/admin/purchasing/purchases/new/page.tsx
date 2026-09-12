@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { purchaseService } from "@/services/purchase.service";
 import { supplierService, type Supplier } from "@/services/supplier.service";
-import { menuService, type Product } from "@/services/menu.service";
 import { ingredientService, type Ingredient } from "@/services/ingredient.service";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import { Button } from "@/components/ui/button";
@@ -31,12 +30,6 @@ function apiErrorMessage(error: unknown, fallback: string): string {
   return typeof msg === "string" && msg.trim() ? msg : fallback;
 }
 
-interface DraftProductItem {
-  productId: string;
-  quantity: string;
-  unitCost: string;
-}
-
 interface DraftIngredientItem {
   ingredientId: string;
   quantity: string;
@@ -44,28 +37,31 @@ interface DraftIngredientItem {
   unitCost: string;
 }
 
-function emptyProductItem(): DraftProductItem {
-  return { productId: "", quantity: "1", unitCost: "" };
-}
-
 function emptyIngredientItem(): DraftIngredientItem {
   return { ingredientId: "", quantity: "1", unit: "", unitCost: "" };
 }
 
+/**
+ * Buat Pembelian — G.2: BAHAN BAKU ONLY.
+ *
+ * Supplier → Purchase → PurchaseIngredient → Receive → BranchIngredient.stock
+ * → WAC. Produk/PurchaseItem tidak lagi menjadi pilihan di sini (jalur legacy
+ * tetap tersimpan dan hanya bisa dibaca di riwayat).
+ */
 export default function NewPurchasePage() {
   const router = useRouter();
   const { branches, branchId, isLoading: ctxLoading } = useBranchContext();
 
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [loadingOptions, setLoadingOptions] = useState(true);
 
   const [supplierId, setSupplierId] = useState("");
   const [selectedBranchId, setSelectedBranchId] = useState("");
   const [notes, setNotes] = useState("");
-  const [productItems, setProductItems] = useState<DraftProductItem[]>([emptyProductItem()]);
-  const [ingredientItems, setIngredientItems] = useState<DraftIngredientItem[]>([]);
+  const [ingredientItems, setIngredientItems] = useState<DraftIngredientItem[]>([
+    emptyIngredientItem(),
+  ]);
 
   const [saving, setSaving] = useState(false);
   const saveInFlight = useRef(false);
@@ -77,12 +73,10 @@ export default function NewPurchasePage() {
     setLoadingOptions(true);
     Promise.all([
       supplierService.list(),
-      menuService.getProducts(),
       ingredientService.list({ limit: 200 }),
     ])
-      .then(([supRes, prodRes, ingRes]) => {
+      .then(([supRes, ingRes]) => {
         setSuppliers(supRes.items.filter((s) => s.isActive));
-        setProducts(prodRes);
         setIngredients(ingRes.items.filter((i) => i.isActive));
       })
       .catch((error) => {
@@ -92,37 +86,26 @@ export default function NewPurchasePage() {
       .finally(() => setLoadingOptions(false));
   }, [ctxLoading, branchId, branches]);
 
-  // Product items handlers
-  const setProductItem = (index: number, patch: Partial<DraftProductItem>) => {
-    setProductItems((prev) => prev.map((it, i) => (i === index ? { ...it, ...patch } : it)));
-  };
-  const addProductItem = () => setProductItems((prev) => [...prev, emptyProductItem()]);
-  const removeProductItem = (index: number) =>
-    setProductItems((prev) => (prev.length <= 1 ? [emptyProductItem()] : prev.filter((_, i) => i !== index)));
-
-  // Ingredient items handlers
   const setIngredientItem = (index: number, patch: Partial<DraftIngredientItem>) => {
-    setIngredientItems((prev) => prev.map((it, i) => {
-      if (i !== index) return it;
-      const updated = { ...it, ...patch };
-      // Auto-set unit when ingredient changes
-      if (patch.ingredientId) {
-        const ing = ingredients.find((x) => x.id === patch.ingredientId);
-        if (ing) updated.unit = ing.baseUnit;
-      }
-      return updated;
-    }));
+    setIngredientItems((prev) =>
+      prev.map((it, i) => {
+        if (i !== index) return it;
+        const updated = { ...it, ...patch };
+        // Unit is fixed to the ingredient's base unit (no conversion in F.2/G).
+        if (patch.ingredientId) {
+          const ing = ingredients.find((x) => x.id === patch.ingredientId);
+          if (ing) updated.unit = ing.baseUnit;
+        }
+        return updated;
+      })
+    );
   };
-  const addIngredientItem = () => setIngredientItems((prev) => [...prev, emptyIngredientItem()]);
+  const addIngredientItem = () =>
+    setIngredientItems((prev) => [...prev, emptyIngredientItem()]);
   const removeIngredientItem = (index: number) =>
-    setIngredientItems((prev) => prev.filter((_, i) => i !== index));
-
-  const productLineTotal = (it: DraftProductItem) => {
-    const q = parseInt(it.quantity, 10);
-    const c = parseFloat(it.unitCost);
-    if (!Number.isInteger(q) || q <= 0 || Number.isNaN(c) || c < 0) return 0;
-    return q * c;
-  };
+    setIngredientItems((prev) =>
+      prev.length <= 1 ? [emptyIngredientItem()] : prev.filter((_, i) => i !== index)
+    );
 
   const ingredientLineTotal = (it: DraftIngredientItem) => {
     const q = parseFloat(it.quantity);
@@ -131,27 +114,13 @@ export default function NewPurchasePage() {
     return q * c;
   };
 
-  const productTotal = productItems.reduce((sum, it) => sum + productLineTotal(it), 0);
-  const ingredientTotal = ingredientItems.reduce((sum, it) => sum + ingredientLineTotal(it), 0);
-  const total = productTotal + ingredientTotal;
-
-  const hasProductItems = productItems.some((it) => it.productId);
+  const total = ingredientItems.reduce((sum, it) => sum + ingredientLineTotal(it), 0);
   const hasIngredientItems = ingredientItems.some((it) => it.ingredientId);
 
   const validate = (): string | null => {
     if (!supplierId) return "Pilih supplier";
     if (!selectedBranchId) return "Pilih cabang untuk pembelian";
 
-    // Validate product items that have a product selected
-    for (const it of productItems) {
-      if (!it.productId) continue;
-      const q = parseInt(it.quantity, 10);
-      if (!Number.isInteger(q) || q <= 0) return "Jumlah produk harus bilangan bulat positif (PCS)";
-      const c = parseFloat(it.unitCost);
-      if (Number.isNaN(c) || c < 0) return "Harga satuan produk tidak boleh negatif";
-    }
-
-    // Validate ingredient items that have an ingredient selected
     for (const it of ingredientItems) {
       if (!it.ingredientId) continue;
       const q = parseFloat(it.quantity);
@@ -161,8 +130,8 @@ export default function NewPurchasePage() {
       if (!it.unit) return "Satuan bahan baku wajib diisi";
     }
 
-    if (!hasProductItems && !hasIngredientItems) {
-      return "Tambahkan minimal satu item produk atau bahan baku";
+    if (!hasIngredientItems) {
+      return "Tambahkan minimal satu bahan baku";
     }
 
     return null;
@@ -178,14 +147,6 @@ export default function NewPurchasePage() {
     saveInFlight.current = true;
     setSaving(true);
     try {
-      const productLines = productItems
-        .filter((it) => it.productId)
-        .map((it) => ({
-          productId: it.productId,
-          quantity: parseInt(it.quantity, 10),
-          unitCost: parseFloat(it.unitCost),
-        }));
-
       const ingredientLines = ingredientItems
         .filter((it) => it.ingredientId)
         .map((it) => ({
@@ -199,8 +160,7 @@ export default function NewPurchasePage() {
         supplierId,
         branchId: selectedBranchId,
         notes: notes.trim() || null,
-        items: productLines.length > 0 ? productLines : undefined,
-        purchaseIngredients: ingredientLines.length > 0 ? ingredientLines : undefined,
+        purchaseIngredients: ingredientLines,
       });
       toast.success("Pembelian draft berhasil dibuat");
       router.push(`/admin/purchasing/purchases/${created.id}`);
@@ -224,8 +184,10 @@ export default function NewPurchasePage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Buat Pembelian</h1>
-        <p className="text-gray-500">Pembelian draft — belum memengaruhi stok hingga diterima</p>
+        <h1 className="text-3xl font-bold">Buat Pembelian Bahan Baku</h1>
+        <p className="text-gray-500">
+          Pembelian draft — stok bahan baku dan WAC diperbarui setelah barang diterima
+        </p>
       </div>
 
       <Card>
@@ -239,8 +201,7 @@ export default function NewPurchasePage() {
               <Select value={supplierId} onValueChange={(v) => setSupplierId(v || "")}>
                 <SelectTrigger>
                   <SelectValue>
-                    {suppliers.find((s) => s.id === supplierId)?.name ??
-                      "Pilih supplier"}
+                    {suppliers.find((s) => s.id === supplierId)?.name ?? "Pilih supplier"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
@@ -254,7 +215,10 @@ export default function NewPurchasePage() {
             </div>
             <div className="space-y-1">
               <Label>Cabang Tujuan *</Label>
-              <Select value={selectedBranchId} onValueChange={(v) => setSelectedBranchId(v || "")}>
+              <Select
+                value={selectedBranchId}
+                onValueChange={(v) => setSelectedBranchId(v || "")}
+              >
                 <SelectTrigger>
                   <SelectValue>
                     {(() => {
@@ -285,102 +249,6 @@ export default function NewPurchasePage() {
         </CardContent>
       </Card>
 
-      {/* ===== PRODUK ===== */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CardTitle className="text-base">Produk</CardTitle>
-              {hasProductItems && (
-                <Badge variant="secondary" className="text-xs">
-                  {rupiah(productTotal)}
-                </Badge>
-              )}
-            </div>
-            <Button variant="outline" size="sm" onClick={addProductItem}>
-              <Plus className="mr-1 h-4 w-4" />
-              Tambah Produk
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {productItems.map((it, index) => {
-            const lt = productLineTotal(it);
-            return (
-              <div
-                key={index}
-                className="grid grid-cols-12 items-end gap-2 rounded-lg border border-gray-100 p-3"
-              >
-                <div className="col-span-12 sm:col-span-5 space-y-1">
-                  <Label className="text-xs text-gray-500">Produk</Label>
-                  <Select value={it.productId} onValueChange={(v) => setProductItem(index, { productId: v || "" })}>
-                    <SelectTrigger size="sm">
-                      <SelectValue>
-                        {products.find((p) => p.id === it.productId)?.name ??
-                          "Pilih produk"}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {products.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name} — {rupiah(Number(p.price))}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="col-span-4 sm:col-span-2 space-y-1">
-                  <Label className="text-xs text-gray-500">Jumlah (PCS)</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={it.quantity}
-                    onChange={(e) => setProductItem(index, { quantity: e.target.value })}
-                    className="h-9 text-right tabular-nums"
-                    inputMode="numeric"
-                  />
-                </div>
-                <div className="col-span-4 sm:col-span-2 space-y-1">
-                  <Label className="text-xs text-gray-500">Harga Satuan</Label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step="any"
-                    value={it.unitCost}
-                    onChange={(e) => setProductItem(index, { unitCost: e.target.value })}
-                    className="h-9 text-right tabular-nums"
-                    inputMode="decimal"
-                    placeholder="1000"
-                  />
-                </div>
-                <div className="col-span-3 sm:col-span-2">
-                  <p className="text-right text-sm font-medium tabular-nums text-gray-600">
-                    {rupiah(lt)}
-                  </p>
-                </div>
-                <div className="col-span-1 flex justify-end">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-9 w-9 text-gray-400"
-                    disabled={productItems.length <= 1 && !hasIngredientItems}
-                    onClick={() => removeProductItem(index)}
-                    aria-label="Hapus item"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
-          {productItems.length === 1 && !productItems[0].productId && (
-            <p className="py-2 text-center text-sm text-gray-400">
-              Belum ada item produk — klik &quot;Tambah Produk&quot; atau tambahkan bahan baku
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
       {/* ===== BAHAN BAKU ===== */}
       <Card>
         <CardHeader>
@@ -389,7 +257,7 @@ export default function NewPurchasePage() {
               <CardTitle className="text-base">Bahan Baku</CardTitle>
               {hasIngredientItems && (
                 <Badge variant="secondary" className="text-xs">
-                  {rupiah(ingredientTotal)}
+                  {rupiah(total)}
                 </Badge>
               )}
             </div>
@@ -400,87 +268,90 @@ export default function NewPurchasePage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
-          {ingredientItems.length === 0 ? (
-            <p className="py-2 text-center text-sm text-gray-400">
-              Belum ada bahan baku — klik &quot;Tambah Bahan Baku&quot;
-            </p>
-          ) : (
-            ingredientItems.map((it, index) => {
-              const lt = ingredientLineTotal(it);
-              const selectedIng = ingredients.find((x) => x.id === it.ingredientId);
-              return (
-                <div
-                  key={index}
-                  className="grid grid-cols-12 items-end gap-2 rounded-lg border border-blue-50 p-3"
-                >
-                  <div className="col-span-12 sm:col-span-4 space-y-1">
-                    <Label className="text-xs text-gray-500">Bahan Baku</Label>
-                    <Select value={it.ingredientId} onValueChange={(v) => setIngredientItem(index, { ingredientId: v || "" })}>
-                      <SelectTrigger size="sm">
-                        <SelectValue>
-                          {selectedIng?.name ?? "Pilih bahan baku"}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ingredients.map((ing) => (
-                          <SelectItem key={ing.id} value={ing.id}>
-                            {ing.name} ({ing.baseUnit})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="col-span-3 sm:col-span-2 space-y-1">
-                    <Label className="text-xs text-gray-500">Jumlah</Label>
-                    <Input
-                      type="number"
-                      min={0.001}
-                      step="any"
-                      value={it.quantity}
-                      onChange={(e) => setIngredientItem(index, { quantity: e.target.value })}
-                      className="h-9 text-right tabular-nums"
-                      inputMode="decimal"
-                    />
-                  </div>
-                  <div className="col-span-3 sm:col-span-2 space-y-1">
-                    <Label className="text-xs text-gray-500">Satuan</Label>
-                    <div className="flex h-9 items-center rounded-md border border-gray-200 bg-gray-50 px-3 text-sm text-gray-700">
-                      {it.unit || "—"}
-                    </div>
-                  </div>
-                  <div className="col-span-3 sm:col-span-2 space-y-1">
-                    <Label className="text-xs text-gray-500">Harga Satuan</Label>
-                    <Input
-                      type="number"
-                      min={0}
-                      step="any"
-                      value={it.unitCost}
-                      onChange={(e) => setIngredientItem(index, { unitCost: e.target.value })}
-                      className="h-9 text-right tabular-nums"
-                      inputMode="decimal"
-                      placeholder="18000"
-                    />
-                  </div>
-                  <div className="col-span-2 sm:col-span-1">
-                    <p className="text-right text-sm font-medium tabular-nums text-gray-600">
-                      {rupiah(lt)}
-                    </p>
-                  </div>
-                  <div className="col-span-1 flex justify-end">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 text-gray-400"
-                      onClick={() => removeIngredientItem(index)}
-                      aria-label="Hapus bahan baku"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+          {ingredientItems.map((it, index) => {
+            const lt = ingredientLineTotal(it);
+            const selectedIng = ingredients.find((x) => x.id === it.ingredientId);
+            return (
+              <div
+                key={index}
+                className="grid grid-cols-12 items-end gap-2 rounded-lg border border-blue-50 p-3"
+              >
+                <div className="col-span-12 space-y-1 sm:col-span-4">
+                  <Label className="text-xs text-gray-500">Bahan Baku</Label>
+                  <Select
+                    value={it.ingredientId}
+                    onValueChange={(v) =>
+                      setIngredientItem(index, { ingredientId: v || "" })
+                    }
+                  >
+                    <SelectTrigger size="sm">
+                      <SelectValue>
+                        {selectedIng?.name ?? "Pilih bahan baku"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ingredients.map((ing) => (
+                        <SelectItem key={ing.id} value={ing.id}>
+                          {ing.name} ({ing.baseUnit})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="col-span-3 space-y-1 sm:col-span-2">
+                  <Label className="text-xs text-gray-500">Jumlah</Label>
+                  <Input
+                    type="number"
+                    min={0.001}
+                    step="any"
+                    value={it.quantity}
+                    onChange={(e) =>
+                      setIngredientItem(index, { quantity: e.target.value })
+                    }
+                    className="h-9 text-right tabular-nums"
+                    inputMode="decimal"
+                  />
+                </div>
+                <div className="col-span-3 space-y-1 sm:col-span-2">
+                  <Label className="text-xs text-gray-500">Satuan</Label>
+                  <div className="flex h-9 items-center rounded-md border border-gray-200 bg-gray-50 px-3 text-sm text-gray-700">
+                    {it.unit || "—"}
                   </div>
                 </div>
-              );
-            })
-          )}
+                <div className="col-span-3 space-y-1 sm:col-span-2">
+                  <Label className="text-xs text-gray-500">Harga Beli</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={it.unitCost}
+                    onChange={(e) =>
+                      setIngredientItem(index, { unitCost: e.target.value })
+                    }
+                    className="h-9 text-right tabular-nums"
+                    inputMode="decimal"
+                    placeholder="18000"
+                  />
+                </div>
+                <div className="col-span-2 sm:col-span-1">
+                  <p className="text-right text-sm font-medium tabular-nums text-gray-600">
+                    {rupiah(lt)}
+                  </p>
+                </div>
+                <div className="col-span-1 flex justify-end">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-9 w-9 text-gray-400"
+                    onClick={() => removeIngredientItem(index)}
+                    aria-label="Hapus bahan baku"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
 
@@ -488,24 +359,15 @@ export default function NewPurchasePage() {
       <Card>
         <CardContent className="pt-6">
           <div className="flex flex-col items-end gap-3">
-            {hasProductItems && hasIngredientItems && (
-              <div className="w-full space-y-1 text-sm text-gray-500">
-                <div className="flex justify-between">
-                  <span>Subtotal Produk</span>
-                  <span className="tabular-nums">{rupiah(productTotal)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Subtotal Bahan Baku</span>
-                  <span className="tabular-nums">{rupiah(ingredientTotal)}</span>
-                </div>
-              </div>
-            )}
             <div className="text-right">
               <p className="text-sm text-gray-500">Total Pembelian</p>
               <p className="text-2xl font-bold tabular-nums">{rupiah(total)}</p>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => router.push("/admin/purchasing/purchases")}>
+              <Button
+                variant="outline"
+                onClick={() => router.push("/admin/purchasing/purchases")}
+              >
                 Batal
               </Button>
               <Button onClick={handleSubmit} disabled={saving}>

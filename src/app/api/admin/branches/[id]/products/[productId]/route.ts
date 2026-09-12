@@ -3,6 +3,7 @@ import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 import { branchService } from "@/services/branch/branch.service";
+import { BranchCostingSchema } from "@/services/costing/costing.types";
 
 type Params = { params: Promise<{ id: string; productId: string }> };
 
@@ -28,11 +29,27 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const { id, productId } = await params;
     const changingStock = typeof body.stock === "number";
 
-    // Stock mutation = inventory adjustment → ADMIN only. Anything else
-    // (availability/price) keeps the legacy ADMIN + KASIR permission.
-    const ctx = changingStock
-      ? await requireRoles(["ADMIN"], branchId)
-      : await requireRoles(["ADMIN", "CASHIER"], branchId);
+    // G.1 — per-branch HPP method. Validated here (Zod) and again in the
+    // service (authoritative). MANUAL with no value is rejected downstream.
+    const costing = BranchCostingSchema.safeParse({
+      costingMode: body.costingMode,
+      manualHpp: body.manualHpp,
+    });
+    if (!costing.success) {
+      const msg = costing.error.issues[0]?.message ?? "Metode HPP tidak valid";
+      return errorResponse(msg, "VALIDATION_ERROR", 400);
+    }
+    const changingCosting =
+      costing.data.costingMode !== undefined ||
+      costing.data.manualHpp !== undefined;
+
+    // Stock adjustment AND HPP method are inventory/financial mutations →
+    // ADMIN only. Anything else (availability/price) keeps the legacy
+    // ADMIN + KASIR permission.
+    const ctx =
+      changingStock || changingCosting
+        ? await requireRoles(["ADMIN"], branchId)
+        : await requireRoles(["ADMIN", "CASHIER"], branchId);
 
     const bp = await branchService.updateBranchProduct(
       ctx.restaurantId,
@@ -51,6 +68,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
         reason: changingStock
           ? (typeof body.reason === "string" ? body.reason : "")
           : undefined,
+        costingMode: costing.data.costingMode,
+        manualHpp: costing.data.manualHpp,
       },
       authorizedBranches(ctx)
     );
@@ -61,6 +80,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
         isAvailable: bp.isAvailable,
         priceOverride: bp.priceOverride ? Number(bp.priceOverride) : null,
         stock: bp.stock,
+        costingMode: bp.costingMode,
+        manualHpp: bp.manualHpp != null ? Number(bp.manualHpp) : null,
       },
       "Ketersediaan produk cabang diperbarui"
     );
