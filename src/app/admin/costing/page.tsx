@@ -172,15 +172,24 @@ function CostingDetailDialog({
     return n == null ? "—" : formatRupiah(n);
   };
 
+  // H4.2 — HPP breakdown. Addon/Option HPP is 0 here because the product-level
+  // view has no customization selection (the catalog below shows each
+  // component's cost per 1 unit).
   const summary: Array<{ label: string; value: string }> = detail
     ? [
         { label: "Selling Price", value: rupiah(detail.sellingPrice) },
-        { label: "HPP", value: rupiah(detail.hpp) },
+        { label: "Base HPP", value: rupiah(detail.baseHpp) },
+        { label: "Addon HPP", value: rupiah(detail.addonHpp) },
+        { label: "Option HPP", value: rupiah(detail.optionHpp) },
+        { label: "Total HPP", value: rupiah(detail.totalHpp) },
         { label: "Gross Profit", value: rupiah(detail.grossProfit) },
         { label: "Gross Margin", value: formatPct(detail.grossMarginPct) },
         { label: "Food Cost", value: formatPct(detail.foodCostPct) },
       ]
     : [];
+
+  // H4.2 — addon/option cost catalog (per 1 unit).
+  const components = detail ? [...detail.addons, ...detail.options] : [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -338,6 +347,75 @@ function CostingDetailDialog({
                 </TableBody>
               </Table>
             )}
+
+            {/* H4.2 — addon/option mini-BOM costing (per 1 unit). */}
+            <h4 className="mt-6 mb-2 text-sm font-semibold">
+              KOMPONEN KUSTOMISASI (per 1 unit)
+            </h4>
+            {components.length === 0 ? (
+              <p className="rounded-lg border border-dashed p-4 text-sm text-gray-500">
+                Produk ini belum memiliki addon/option aktif.
+              </p>
+            ) : (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Komponen</TableHead>
+                      <TableHead className="text-right">Harga Jual</TableHead>
+                      <TableHead className="text-right">HPP</TableHead>
+                      <TableHead>Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {components.map((component) => (
+                      <TableRow key={`${component.kind}-${component.id}`}>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-[10px]">
+                              {component.kind === "ADDON" ? "Addon" : "Option"}
+                            </Badge>
+                            <span>{component.name}</span>
+                          </div>
+                          {component.status === "INCOMPLETE" && (
+                            <div className="mt-0.5 flex items-center gap-1 text-xs text-amber-600">
+                              <AlertTriangle className="h-3 w-3" />
+                              {componentReasonLabel(component.reasons)}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatRupiah(Number(component.sellingPrice))}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {component.hpp == null
+                            ? "—"
+                            : formatRupiah(Number(component.hpp))}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              component.status === "COMPLETE"
+                                ? "default"
+                                : "destructive"
+                            }
+                          >
+                            {component.status === "COMPLETE"
+                              ? "Complete"
+                              : "Incomplete"}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <p className="mt-2 text-xs text-gray-500">
+                  HPP addon/option dihitung dari komposisi bahan × WAC bahan baku
+                  cabang ini. Harga jual addon/option tidak pernah dipakai sebagai HPP.
+                  "Incomplete" berarti komposisi atau WAC belum lengkap — bukan Rp 0.
+                </p>
+              </>
+            )}
           </div>
         )}
 
@@ -353,6 +431,21 @@ function CostingDetailDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Human label for an incomplete addon/option cost reason. */
+function componentReasonLabel(reasons: string[]): string {
+  const map: Record<string, string> = {
+    NO_BOM: "Komposisi bahan belum diisi",
+    MISSING_WAC: "WAC bahan belum tersedia",
+    INACTIVE_INGREDIENT: "Bahan baku tidak aktif",
+    INACTIVE_COMPONENT: "Addon/option tidak aktif",
+    NOT_FOUND: "Addon/option tidak ditemukan",
+    INVALID_QUANTITY: "Jumlah pilihan tidak valid",
+    MALFORMED_CUSTOMIZATION: "Data pilihan tidak dapat dibaca",
+  };
+  const labels = reasons.map((r) => map[r] ?? r);
+  return labels.length ? labels.join(", ") : "HPP belum dapat dihitung";
 }
 
 function CostingItemRow({ item }: { item: CostingItem }) {

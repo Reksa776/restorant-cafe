@@ -43,6 +43,20 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
 const rupiah = (v: number | null) =>
   v === null ? "—" : `Rp${Math.round(v).toLocaleString("id-ID")}`;
 const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(2)}%`);
+
+// H2.3 — coverage state → Badge. Unknown COGS is never rendered as Rp 0.
+const COGS_STATE_BADGE: Record<string, { label: string; className: string }> = {
+  COVERED: { label: "COVERED", className: "bg-green-100 text-green-800" },
+  PARTIAL: { label: "PARTIAL", className: "bg-amber-100 text-amber-800" },
+  PENDING_COGS: { label: "PENDING", className: "bg-blue-100 text-blue-800" },
+  UNCOVERED: { label: "UNCOVERED", className: "bg-amber-100 text-amber-800" },
+  LEGACY: { label: "LEGACY", className: "bg-gray-100 text-gray-700" },
+};
+const cogsBadge = (state: string) =>
+  COGS_STATE_BADGE[state] ?? {
+    label: state,
+    className: "bg-gray-100 text-gray-700",
+  };
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function ProfitabilityPage() {
@@ -132,6 +146,10 @@ export default function ProfitabilityPage() {
   const summary = report?.summary;
   const hasUncosted = (summary?.coverage.uncostedOrderItems ?? 0) > 0;
   const hasLegacy = (summary?.coverage.legacyOrderItems ?? 0) > 0;
+  const hasPending = (summary?.coverage.pendingOrderItems ?? 0) > 0;
+  // H3 — refund-aware state: a FULL refund reverses revenue but KEEPS the
+  // incurred COGS, so gross profit can legitimately be negative.
+  const hasRefund = (summary?.refundState ?? "NONE") !== "NONE";
 
   return (
     <div className="space-y-6">
@@ -286,8 +304,19 @@ export default function ProfitabilityPage() {
         </div>
       ) : !report || !summary ? null : (
         <div className="space-y-6">
-          {(hasUncosted || hasLegacy) && (
+          {(hasUncosted || hasLegacy || hasPending) && (
             <div className="space-y-2">
+              {hasPending && (
+                <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                  <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                  <span>
+                    COGS Pending: {summary.coverage.pendingOrderItems} item sudah
+                    dibayar tetapi belum selesai — COGS belum terjadi. Revenue
+                    tetap dihitung, namun Gross Profit ditampilkan sebagai tidak
+                    diketahui sampai order selesai.
+                  </span>
+                </div>
+              )}
               {hasUncosted && (
                 <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
@@ -311,6 +340,22 @@ export default function ProfitabilityPage() {
             </div>
           )}
 
+          {hasRefund && summary && (
+            <div className="flex items-start gap-2 rounded-lg border border-purple-200 bg-purple-50 px-4 py-3 text-sm text-purple-800">
+              <Info className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>
+                Refund ({summary.refundState}): revenue dikembalikan
+                {rupiah(summary.refundReversal)}, COGS historis
+                {rupiah(summary.historicalCogs)} tetap terjadi
+                {summary.cogsReversal > 0
+                  ? `, ${rupiah(summary.cogsReversal)} di antaranya dibalik dari refund sebagian`
+                  : ""}
+                . COGS yang ditahan: {rupiah(summary.retainedCogs)}. Refund
+                tidak mengembalikan stok produk/bahan baku secara otomatis.
+              </span>
+            </div>
+          )}
+
           {summary.unpaidCompleted.orders > 0 && (
             <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
               <Info className="h-4 w-4 mt-0.5 shrink-0" />
@@ -326,10 +371,20 @@ export default function ProfitabilityPage() {
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {[
               { label: "Net Sales", value: rupiah(summary.netSales), icon: TrendingUp },
-              { label: "COGS (HPP Historis)", value: rupiah(summary.cogs), icon: Wallet },
+              { label: "COGS (HPP Historis)", value: rupiah(summary.historicalCogs), icon: Wallet },
+              ...(summary.cogsReversal > 0
+                ? [{ label: "COGS Dibalik (Refund)", value: rupiah(summary.cogsReversal), icon: Wallet }]
+                : []),
+              { label: "COGS Ditahan", value: rupiah(summary.retainedCogs), icon: Wallet },
+              ...(summary.refundReversal > 0
+                ? [{ label: "Refund", value: rupiah(summary.refundReversal), icon: Wallet }]
+                : []),
               {
                 label: "Gross Profit",
-                value: rupiah(summary.grossProfit),
+                value:
+                  summary.grossProfit === null
+                    ? "Tidak diketahui"
+                    : rupiah(summary.grossProfit),
                 icon: TrendingUp,
               },
               { label: "Gross Margin", value: pct(summary.grossMarginPct), icon: Percent },
@@ -455,15 +510,9 @@ export default function ProfitabilityPage() {
                             {pct(p.foodCostPct)}
                           </td>
                           <td className="py-2 text-right">
-                            {p.uncostedItems > 0 || p.legacyItems > 0 ? (
-                              <Badge className="bg-amber-100 text-amber-800">
-                                {p.costedItems > 0 ? "PARTIAL" : "UNCOSTED"}
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-green-100 text-green-800">
-                                FULL
-                              </Badge>
-                            )}
+                            <Badge className={cogsBadge(p.cogsState).className}>
+                              {cogsBadge(p.cogsState).label}
+                            </Badge>
                           </td>
                         </tr>
                       ))}

@@ -63,6 +63,27 @@ export class ShiftNotOpenError extends AppError {
   }
 }
 
+/**
+ * H1 — ingredient (BOM) consumption failure at order completion.
+ *
+ * Distinct `code`s so the UI can explain the exact blocker instead of a
+ * generic failure:
+ *   INGREDIENT_RECIPE_REQUIRED    — INGREDIENT-costed product has no active recipe
+ *   INGREDIENT_RECIPE_INACTIVE    — recipe exists but is deactivated
+ *   INGREDIENT_NOT_FOUND          — recipe references an ingredient that is gone
+ *   INGREDIENT_INACTIVE           — recipe references a deactivated ingredient
+ *   INSUFFICIENT_INGREDIENT_STOCK — branch stock < required consumption
+ *
+ * 409 matches the existing product-stock insufficiency (ConflictError) so the
+ * completion endpoint's HTTP semantics are unchanged; the `code` differentiates.
+ */
+export class IngredientCompletionError extends AppError {
+  constructor(code: string, message: string) {
+    super(message, 409, code);
+    this.name = "IngredientCompletionError";
+  }
+}
+
 export class PaymentError extends AppError {
   constructor(message: string = "Payment failed") {
     super(message, 422, "PAYMENT_ERROR");

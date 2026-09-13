@@ -23,20 +23,19 @@ import {
 // + authorized branch scoped. Uses the shared src/lib/csv.ts helper.
 // ============================================================
 
-function costStatus(row: {
-  costedItems: number;
-  uncostedItems: number;
-  legacyItems: number;
-}): string {
-  if (row.legacyItems > 0 && row.costedItems === 0 && row.uncostedItems === 0) {
-    return "LEGACY";
-  }
-  if (row.costedItems > 0 && row.uncostedItems === 0 && row.legacyItems === 0) {
-    return "FULL";
-  }
-  if (row.costedItems > 0) return "PARTIAL";
-  return "UNCOSTED";
-}
+/**
+ * H2.3 — CSV Cost Status. Maps the derived coverage state (H2.1) to the
+ * CSV's historical labels so existing consumers keep working, and adds the
+ * new PENDING state for COGS that is not yet incurred (PAID, not COMPLETED).
+ * Unknown/uncovered COGS is exported as an empty gross profit, never as 0.
+ */
+const COGS_STATE_LABEL: Record<string, string> = {
+  COVERED: "FULL",
+  PARTIAL: "PARTIAL",
+  PENDING_COGS: "PENDING",
+  UNCOVERED: "UNCOSTED",
+  LEGACY: "LEGACY",
+};
 
 export async function GET(request: NextRequest) {
   try {
@@ -105,6 +104,9 @@ export async function GET(request: NextRequest) {
       "Food Cost %",
       "Jumlah Order",
       "Cost Status",
+      // H3 — refund-aware cost columns (appended to keep old consumers working).
+      "COGS Reversal",
+      "Retained COGS",
     ];
 
     const rows = report.products.map((p) => [
@@ -119,7 +121,9 @@ export async function GET(request: NextRequest) {
       p.grossMarginPct ?? "",
       p.foodCostPct ?? "",
       p.orderCount,
-      costStatus(p),
+      COGS_STATE_LABEL[p.cogsState] ?? p.cogsState,
+      p.cogsReversal,
+      p.retainedCogs,
     ]);
 
     const fileName = `profitability-report-${period}-${new Date()

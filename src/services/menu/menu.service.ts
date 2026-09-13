@@ -1,5 +1,11 @@
+import { Prisma, type IngredientUnit } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ConflictError, ValidationError } from "@/lib/errors";
+import type {
+  BomItemDto,
+  BomItemInput,
+  SaveBomInput,
+} from "./menu-bom.types";
 import { auditService } from "@/services/audit/audit.service";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
@@ -894,6 +900,255 @@ export class MenuService {
     if (!addon) throw new NotFoundError("Addon not found");
 
     return prisma.productAddon.delete({ where: { id: addonId } });
+  }
+
+  // ============================================================
+  // H4.1 — ADDON / OPTION MINI-BOM (composition only)
+  //
+  // Stores composition ONLY — never touches pricing, HPP, COGS,
+  // inventory consumption or the historical snapshot (H4.2+).
+  // Tenant scope is transitive through the owning product; the client's
+  // restaurantId is never trusted, and the addon/option must belong to
+  // the product that the route scoped it to.
+  // ============================================================
+
+  /**
+   * Validate + normalize BOM lines. Shared by addon and option BOMs so both
+   * obey exactly the same rules (mirrors recipeService.saveRecipe).
+   */
+  private async validateBomItems(
+    items: BomItemInput[],
+    restaurantId: string
+  ): Promise<
+    Array<{ ingredientId: string; quantity: Prisma.Decimal; unit: IngredientUnit }>
+  > {
+    if (items.length === 0) return [];
+
+    const ingredientIds = items.map((i) => i.ingredientId);
+    if (new Set(ingredientIds).size !== ingredientIds.length) {
+      throw new ValidationError("Bahan baku tidak boleh duplikat");
+    }
+
+    const ingredients = await prisma.ingredient.findMany({
+      where: { id: { in: ingredientIds }, restaurantId },
+      select: { id: true, name: true, baseUnit: true, isActive: true },
+    });
+    if (ingredients.length !== ingredientIds.length) {
+      throw new ValidationError("Satu atau lebih bahan baku tidak valid");
+    }
+    const ingredientById = new Map(ingredients.map((i) => [i.id, i]));
+
+    return items.map((item) => {
+      const ingredient = ingredientById.get(item.ingredientId)!;
+      if (!ingredient.isActive) {
+        throw new ValidationError(
+          `Bahan baku ${ingredient.name} tidak aktif`
+        );
+      }
+
+      let qty: Prisma.Decimal;
+      try {
+        qty = new Prisma.Decimal(item.quantity);
+      } catch {
+        throw new ValidationError(
+          "Quantity harus berupa angka desimal yang valid"
+        );
+      }
+      if (!qty.isFinite() || qty.isNegative() || qty.isZero()) {
+        throw new ValidationError("Quantity harus lebih besar dari 0");
+      }
+      // Decimal(18,3) upper bound — reject before the DB would round/err.
+      if (qty.greaterThan(new Prisma.Decimal("999999999999999.999"))) {
+        throw new ValidationError("Quantity melebihi batas maksimum");
+      }
+
+      if (item.unit !== ingredient.baseUnit) {
+        throw new ValidationError(
+          `Unit untuk ${ingredient.name} harus ${ingredient.baseUnit}`
+        );
+      }
+
+      return {
+        ingredientId: item.ingredientId,
+        quantity: qty,
+        unit: item.unit,
+      };
+    });
+  }
+
+  /** Addon must belong to the restaurant AND to the given product. */
+  private async resolveAddon(
+    addonId: string,
+    productId: string,
+    restaurantId: string
+  ) {
+    const product = await prisma.product.findFirst({
+      where: { id: productId, restaurantId },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundError("Produk tidak ditemukan");
+
+    const addon = await prisma.productAddon.findFirst({
+      where: { id: addonId, productId },
+      select: { id: true },
+    });
+    if (!addon) throw new NotFoundError("Addon tidak ditemukan");
+    return addon;
+  }
+
+  /** Option must belong to the restaurant AND to the given option group. */
+  private async resolveOption(
+    optionId: string,
+    groupId: string,
+    restaurantId: string
+  ) {
+    const group = await prisma.productOptionGroup.findFirst({
+      where: { id: groupId },
+      select: { id: true, product: { select: { restaurantId: true } } },
+    });
+    if (!group || group.product.restaurantId !== restaurantId) {
+      throw new NotFoundError("Option group tidak ditemukan");
+    }
+
+    const option = await prisma.productOption.findFirst({
+      where: { id: optionId, optionGroupId: groupId },
+      select: { id: true },
+    });
+    if (!option) throw new NotFoundError("Option tidak ditemukan");
+    return option;
+  }
+
+  // ---- Addon BOM -------------------------------------------------
+
+  async getAddonBom(
+    addonId: string,
+    productId: string,
+    restaurantId: string
+  ): Promise<BomItemDto[]> {
+    await this.resolveAddon(addonId, productId, restaurantId);
+    return this.listBom("addon", addonId);
+  }
+
+  async saveAddonBom(
+    addonId: string,
+    productId: string,
+    restaurantId: string,
+    input: SaveBomInput
+  ): Promise<BomItemDto[]> {
+    await this.resolveAddon(addonId, productId, restaurantId);
+    const data = await this.validateBomItems(input.items, restaurantId);
+    await prisma.$transaction(async (tx) => {
+      await tx.addonIngredient.deleteMany({ where: { addonId } });
+      if (data.length > 0) {
+        await tx.addonIngredient.createMany({
+          data: data.map((d) => ({ addonId, ...d })),
+        });
+      }
+    });
+    return this.getAddonBom(addonId, productId, restaurantId);
+  }
+
+  async deleteAddonBom(
+    addonId: string,
+    productId: string,
+    restaurantId: string
+  ): Promise<void> {
+    await this.resolveAddon(addonId, productId, restaurantId);
+    await prisma.addonIngredient.deleteMany({ where: { addonId } });
+  }
+
+  async deleteAddonBomLine(
+    addonId: string,
+    productId: string,
+    restaurantId: string,
+    ingredientId: string
+  ): Promise<void> {
+    await this.resolveAddon(addonId, productId, restaurantId);
+    await prisma.addonIngredient.deleteMany({
+      where: { addonId, ingredientId },
+    });
+  }
+
+  // ---- Option BOM ------------------------------------------------
+
+  async getOptionBom(
+    optionId: string,
+    groupId: string,
+    restaurantId: string
+  ): Promise<BomItemDto[]> {
+    await this.resolveOption(optionId, groupId, restaurantId);
+    return this.listBom("option", optionId);
+  }
+
+  async saveOptionBom(
+    optionId: string,
+    groupId: string,
+    restaurantId: string,
+    input: SaveBomInput
+  ): Promise<BomItemDto[]> {
+    await this.resolveOption(optionId, groupId, restaurantId);
+    const data = await this.validateBomItems(input.items, restaurantId);
+    await prisma.$transaction(async (tx) => {
+      await tx.optionIngredient.deleteMany({ where: { optionId } });
+      if (data.length > 0) {
+        await tx.optionIngredient.createMany({
+          data: data.map((d) => ({ optionId, ...d })),
+        });
+      }
+    });
+    return this.getOptionBom(optionId, groupId, restaurantId);
+  }
+
+  async deleteOptionBom(
+    optionId: string,
+    groupId: string,
+    restaurantId: string
+  ): Promise<void> {
+    await this.resolveOption(optionId, groupId, restaurantId);
+    await prisma.optionIngredient.deleteMany({ where: { optionId } });
+  }
+
+  async deleteOptionBomLine(
+    optionId: string,
+    groupId: string,
+    restaurantId: string,
+    ingredientId: string
+  ): Promise<void> {
+    await this.resolveOption(optionId, groupId, restaurantId);
+    await prisma.optionIngredient.deleteMany({
+      where: { optionId, ingredientId },
+    });
+  }
+
+  /** BOM reader (composition only — no WAC/cost/stock fields). */
+  private async listBom(
+    owner: "addon" | "option",
+    ownerId: string
+  ): Promise<BomItemDto[]> {
+    const include = {
+      ingredient: { select: { id: true, name: true, baseUnit: true } },
+    } as const;
+    const rows =
+      owner === "addon"
+        ? await prisma.addonIngredient.findMany({
+            where: { addonId: ownerId },
+            include,
+            orderBy: { createdAt: "asc" },
+          })
+        : await prisma.optionIngredient.findMany({
+            where: { optionId: ownerId },
+            include,
+            orderBy: { createdAt: "asc" },
+          });
+
+    return rows.map((r) => ({
+      id: r.id,
+      ingredientId: r.ingredientId,
+      ingredientName: r.ingredient.name,
+      baseUnit: r.ingredient.baseUnit,
+      quantity: r.quantity.toString(),
+      unit: r.unit,
+    }));
   }
 }
 

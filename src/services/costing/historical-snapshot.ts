@@ -1,4 +1,11 @@
 import { Prisma, OrderItemCostStatus } from "@prisma/client";
+import {
+  aggregateSelectionCost,
+  extractSelection,
+  type ComponentReason,
+  type ComponentRow,
+  type SelectionCost,
+} from "./customization-selection";
 
 // ============================================================
 // F.5 — HISTORICAL COGS SNAPSHOT (server-side, in-transaction)
@@ -21,6 +28,14 @@ import { Prisma, OrderItemCostStatus } from "@prisma/client";
 // - WAC of literal 0 IS a valid zero cost (SNAPSHOTTED, hpp 0).
 // - Batched single query → no N+1; snapshot rows inserted via one
 //   createMany.
+//
+// H4.3 — the frozen cost now also includes the selected addon/option mini-BOM:
+//   hppUnit  = baseHpp + addonHpp + optionHpp
+//   hppTotal = hppUnit × OrderItem.quantity
+// The selection comes from OrderItem.customizations (tolerant parse, IDs +
+// quantities only) and is resolved against the SAME branch WAC. An incomplete
+// selection (missing BOM/WAC, inactive ingredient/component, unknown id,
+// malformed JSON) freezes NULL — never a base-only downgrade and never 0.
 // ============================================================
 
 const ROUND = Prisma.Decimal.ROUND_HALF_UP;
@@ -29,6 +44,12 @@ export interface SnapshotCandidateItem {
   orderItemId: string;
   productId: string;
   quantity: number;
+  /**
+   * H4.3 — the RAW stored `OrderItem.customizations` value (Json or the
+   * double-encoded JSON string written by order creation). Only selected
+   * addon/option IDs + quantities are trusted; display prices are ignored.
+   */
+  customizations?: unknown;
 }
 
 interface ComputedSnapshot {
@@ -155,7 +176,8 @@ export function buildSnapshotRows(
   perProduct: Map<
     string,
     { hpp: Prisma.Decimal | null; status: OrderItemCostStatus }
-  >
+  >,
+  perItemSelection?: Map<string, SelectionCost>
 ): ComputedSnapshot[] {
   // No branch → WAC cannot be resolved. NEW orders short on branch context get
   // NO_BRANCH (never LEGACY — LEGACY is reserved for pre-F.5 orders, which
@@ -185,6 +207,37 @@ export function buildSnapshotRows(
         .mul(new Prisma.Decimal(item.quantity))
         .toDecimalPlaces(2, ROUND) as Prisma.Decimal;
     }
+
+    // H4.3 — fold the selected addon/option mini-BOM into the frozen cost.
+    // Items with no customization selection keep the exact F.5/G.1 result.
+    let status: OrderItemCostStatus = cost.status;
+    const selection = perItemSelection?.get(item.orderItemId);
+    if (selection && selection.hasSelection) {
+      if (hppUnit == null) {
+        // Base cost already unresolvable — keep the existing base status.
+        status = cost.status;
+      } else if (
+        selection.complete &&
+        selection.addonHpp != null &&
+        selection.optionHpp != null
+      ) {
+        const unit = hppUnit
+          .add(selection.addonHpp)
+          .add(selection.optionHpp)
+          .toDecimalPlaces(2, ROUND) as Prisma.Decimal;
+        hppUnit = unit;
+        hppTotal = unit
+          .mul(new Prisma.Decimal(item.quantity))
+          .toDecimalPlaces(2, ROUND) as Prisma.Decimal;
+        status = "SNAPSHOTTED";
+      } else {
+        // Incomplete customization → UNKNOWN cost: never base-only, never 0.
+        hppUnit = null;
+        hppTotal = null;
+        status = selectionStatusFromReasons(selection.reasons);
+      }
+    }
+
     return {
       orderItemId: item.orderItemId,
       branchId,
@@ -192,9 +245,23 @@ export function buildSnapshotRows(
       quantity: item.quantity,
       hppUnit,
       hppTotal,
-      status: cost.status,
+      status,
     };
   });
+}
+
+/**
+ * Map the H4.2 component reasons onto the existing OrderItemCostStatus enum
+ * (no schema change). Every component fault means "cost data unavailable",
+ * which the enum expresses as MISSING_WAC; only a genuinely inactive
+ * INGREDIENT maps to INACTIVE_INGREDIENT. H2 coverage treats all of these as
+ * UNCOVERED (never as zero COGS), which is the financial requirement.
+ */
+function selectionStatusFromReasons(
+  reasons: ComponentReason[]
+): OrderItemCostStatus {
+  if (reasons.includes("INACTIVE_INGREDIENT")) return "INACTIVE_INGREDIENT";
+  return "MISSING_WAC";
 }
 
 /**
@@ -213,7 +280,14 @@ export async function createOrderItemCostSnapshots(
   const { restaurantId, orderId, branchId, items } = input;
   if (items.length === 0) return;
 
-  const rows = buildSnapshotRows(items, branchId, await loadPerProductHpp(tx, input));
+  const perProduct = await loadPerProductHpp(tx, input);
+  // H4.3 — selected addon/option mini-BOMs (one batched lookup, scoped to the
+  // order's branch WAC). No branch → nothing to resolve (NO_BRANCH applies).
+  const perItemSelection = branchId
+    ? await loadSelectionCosts(tx, { branchId, items })
+    : undefined;
+
+  const rows = buildSnapshotRows(items, branchId, perProduct, perItemSelection);
 
   await tx.orderItemCostSnapshot.createMany({
     data: rows.map((r) => ({
@@ -236,6 +310,160 @@ export async function createOrderItemCostSnapshots(
  * Only ACTIVE recipes contribute; Product.recipe returns at most one row
  * (productId is unique).
  */
+/**
+ * H4.3 — minimal BOM sub-select: the line quantity + its ingredient with the
+ * ORDER BRANCH's WAC (one row).
+ */
+function bomSelect(branchId: string) {
+  return {
+    quantity: true,
+    unit: true,
+    ingredient: {
+      select: {
+        id: true,
+        name: true,
+        baseUnit: true,
+        isActive: true,
+        branchIngredients: {
+          where: { branchId },
+          select: { averageCost: true },
+          take: 1,
+        },
+      },
+    },
+  } as const;
+}
+
+interface ScopedComponentRow {
+  productId: string;
+  /** For an option, the product reached through its option group. */
+  component: ComponentRow;
+}
+
+/**
+ * H4.3 — resolve every selected addon/option for the order in FOUR bounded
+ * queries (one per component type across the whole order, never per item):
+ *
+ *   1. productAddon  WHERE id IN (selected addon ids) AND productId IN (order products)
+ *   2. productOption WHERE id IN (selected option ids) AND optionGroup.productId IN (order products)
+ *
+ * `productId` scoping enforces tenant isolation transitively (the products
+ * came from a restaurant-scoped order) and prevents a foreign addon/option
+ * from ever costing this item. The branch WAC is bound in the sub-select.
+ */
+async function loadSelectionCosts(
+  tx: Prisma.TransactionClient,
+  input: { branchId: string; items: SnapshotCandidateItem[] }
+): Promise<Map<string, SelectionCost>> {
+  const result = new Map<string, SelectionCost>();
+  const parsed = input.items.map((item) => ({
+    item,
+    selection: extractSelection(item.customizations),
+  }));
+
+  const addonIds = [
+    ...new Set(parsed.flatMap((p) => p.selection.addons.map((a) => a.addonId))),
+  ];
+  const optionIds = [
+    ...new Set(parsed.flatMap((p) => p.selection.options.map((o) => o.optionId))),
+  ];
+  const anyMalformed = parsed.some((p) => p.selection.malformed);
+  if (addonIds.length === 0 && optionIds.length === 0 && !anyMalformed) {
+    return result;
+  }
+
+  const productIds = [...new Set(input.items.map((i) => i.productId))];
+  const bom = bomSelect(input.branchId);
+
+  const [addons, options] = await Promise.all([
+    addonIds.length
+      ? tx.productAddon.findMany({
+          where: { id: { in: addonIds }, productId: { in: productIds } },
+          select: {
+            id: true,
+            productId: true,
+            name: true,
+            price: true,
+            isActive: true,
+            ingredients: { select: bom },
+          },
+        })
+      : Promise.resolve([]),
+    optionIds.length
+      ? tx.productOption.findMany({
+          where: {
+            id: { in: optionIds },
+            group: { productId: { in: productIds } },
+          },
+          select: {
+            id: true,
+            name: true,
+            priceAdjustment: true,
+            isActive: true,
+            group: { select: { productId: true } },
+            ingredients: { select: bom },
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const addonById = new Map<string, ScopedComponentRow>(
+    addons.map((a) => [
+      a.id,
+      {
+        productId: a.productId,
+        component: {
+          id: a.id,
+          name: a.name,
+          isActive: a.isActive,
+          // Selling price only — never used as cost.
+          sellingPrice: a.price,
+          ingredients: a.ingredients as unknown as ComponentRow["ingredients"],
+        },
+      },
+    ])
+  );
+  const optionById = new Map<string, ScopedComponentRow>(
+    options.map((o) => [
+      o.id,
+      {
+        productId: o.group.productId,
+        component: {
+          id: o.id,
+          name: o.name,
+          isActive: o.isActive,
+          sellingPrice: o.priceAdjustment,
+          ingredients: o.ingredients as unknown as ComponentRow["ingredients"],
+        },
+      },
+    ])
+  );
+
+  for (const { item, selection } of parsed) {
+    // Scope each selected component to THIS order item's product.
+    const scopedAddons = new Map<string, ComponentRow>();
+    for (const a of selection.addons) {
+      const row = addonById.get(a.addonId);
+      if (row && row.productId === item.productId) {
+        scopedAddons.set(a.addonId, row.component);
+      }
+    }
+    const scopedOptions = new Map<string, ComponentRow>();
+    for (const o of selection.options) {
+      const row = optionById.get(o.optionId);
+      if (row && row.productId === item.productId) {
+        scopedOptions.set(o.optionId, row.component);
+      }
+    }
+    result.set(
+      item.orderItemId,
+      aggregateSelectionCost(selection, scopedAddons, scopedOptions)
+    );
+  }
+
+  return result;
+}
+
 async function loadPerProductHpp(
   tx: Prisma.TransactionClient,
   input: { restaurantId: string; branchId: string | null; items: SnapshotCandidateItem[] }

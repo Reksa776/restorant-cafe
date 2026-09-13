@@ -79,6 +79,25 @@ export interface ProductWithCustomization extends Product {
   addons: ProductAddon[];
 }
 
+/**
+ * H4.1 — one mini-BOM line (addon/option composition). Composition only:
+ * the API never returns averageCost / WAC / HPP / stock.
+ */
+export interface BomItem {
+  id: string;
+  ingredientId: string;
+  ingredientName: string;
+  baseUnit: string;
+  quantity: string;
+  unit: string;
+}
+
+export interface BomItemInput {
+  ingredientId: string;
+  quantity: string;
+  unit: string;
+}
+
 // Recipe / BOM (F.3) — composition only, never cost/stock fields.
 export interface RecipeItem {
   id: string;
@@ -288,5 +307,44 @@ export const menuService = {
 
   async deleteRecipe(productId: string): Promise<void> {
     await api.delete(`/admin/menu/products/${productId}/recipe`);
+  },
+
+  // Addon / Option mini-BOM (H4.1) — komposisi bahan, bukan HPP/WAC.
+  async getAddonBom(productId: string, addonId: string): Promise<BomItem[]> {
+    const response = await api.get(
+      `/menu/products/${productId}/addons/${addonId}/bom`
+    );
+    return response.data.data.items;
+  },
+
+  async saveAddonBom(
+    productId: string,
+    addonId: string,
+    items: BomItemInput[]
+  ): Promise<BomItem[]> {
+    const response = await api.put(
+      `/menu/products/${productId}/addons/${addonId}/bom`,
+      { items }
+    );
+    return response.data.data.items;
+  },
+
+  async getOptionBom(groupId: string, optionId: string): Promise<BomItem[]> {
+    const response = await api.get(
+      `/menu/option-groups/${groupId}/options/${optionId}/bom`
+    );
+    return response.data.data.items;
+  },
+
+  async saveOptionBom(
+    groupId: string,
+    optionId: string,
+    items: BomItemInput[]
+  ): Promise<BomItem[]> {
+    const response = await api.put(
+      `/menu/option-groups/${groupId}/options/${optionId}/bom`,
+      { items }
+    );
+    return response.data.data.items;
   },
 };

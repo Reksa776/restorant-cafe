@@ -169,6 +169,10 @@ export class MenuEngineeringService {
         discount: hist?.discount ?? 0,
         netSales: hist?.netSales ?? 0,
         historicalCogs,
+        // H3 — refund-aware: profit uses RETAINED COGS (partial refunds release
+        // cost; a full refund keeps all of it).
+        cogsReversal: hist?.cogsReversal ?? 0,
+        retainedCogs: hist?.retainedCogs ?? historicalCogs,
         grossProfit: hist?.grossProfit ?? null,
         grossMarginPct: hist?.grossMarginPct ?? null,
         foodCostPct: hist?.foodCostPct ?? null,
@@ -180,6 +184,7 @@ export class MenuEngineeringService {
         costedItems: hist?.costedItems ?? 0,
         uncostedItems: hist?.uncostedItems ?? 0,
         legacyItems: hist?.legacyItems ?? 0,
+        pendingItems: hist?.pendingItems ?? 0,
         classification: "NO_DATA",
         classificationReason: null,
         insight: CLASSIFICATION_INSIGHTS.NO_DATA,
@@ -225,7 +230,7 @@ export class MenuEngineeringService {
     const pageStart = (page - 1) * limit;
     const paginatedProducts = visibleRows.slice(pageStart, pageStart + limit);
 
-    const summary = this.buildSummary(rows);
+    const summary = this.buildSummary(rows, firstProfitability.summary.coverage);
     const classification = this.buildClassificationCounts(visibleRows);
 
     return {
@@ -334,7 +339,10 @@ export class MenuEngineeringService {
         AND o.\`createdAt\` >= ${range.start}
         AND o.\`createdAt\` <= ${range.end}
         AND o.\`status\` <> 'CANCELLED'
-        AND o.\`paymentStatus\` = 'PAID'
+        AND (
+          o.\`paymentStatus\` = 'PAID'
+          OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = o.\`id\` AND pm.\`status\` = 'REFUNDED')
+        )
         ${branchFilters?.length ? Prisma.sql`AND o.\`branchId\` IN (${Prisma.join([...branchFilters])})` : Prisma.empty}
       GROUP BY o.\`branchId\`
     `;
@@ -366,7 +374,10 @@ export class MenuEngineeringService {
         AND o.\`createdAt\` >= ${range.start}
         AND o.\`createdAt\` <= ${range.end}
         AND o.\`status\` <> 'CANCELLED'
-        AND o.\`paymentStatus\` = 'PAID'
+        AND (
+          o.\`paymentStatus\` = 'PAID'
+          OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = o.\`id\` AND pm.\`status\` = 'REFUNDED')
+        )
         AND s.\`status\` <> 'SNAPSHOTTED'
         ${branchFilters?.length ? Prisma.sql`AND o.\`branchId\` IN (${Prisma.join([...branchFilters])})` : Prisma.empty}
       GROUP BY s.\`productId\`, s.\`status\`
@@ -483,18 +494,36 @@ export class MenuEngineeringService {
     row.negativeMargin = result.negativeMargin;
   }
 
-  private buildSummary(rows: MenuEngineeringProductRow[]): MenuEngineeringReport["summary"] {
+  private buildSummary(
+    rows: MenuEngineeringProductRow[],
+    coverage: ProfitabilityReport["summary"]["coverage"]
+  ): MenuEngineeringReport["summary"] {
     const sold = rows.filter((r) => r.qtySold > 0);
     const totalNetSales = num(sold.reduce((s, r) => s + r.netSales, 0));
     const historicalCogs = num(sold.reduce((s, r) => s + r.historicalCogs, 0));
-    const grossProfit = num(totalNetSales - historicalCogs);
+    // H3 — the profit-bearing cost is RETAINED COGS (partial refunds release
+    // cost; a full refund keeps all of it).
+    const retainedCogs = num(sold.reduce((s, r) => s + r.retainedCogs, 0));
+    // H2 — the summary COGS is the covered (known) COGS; when coverage is
+    // incomplete the gross profit is UNKNOWN (null), never revenue − 0.
+    const coverageComplete =
+      coverage.uncostedOrderItems +
+        coverage.legacyOrderItems +
+        coverage.pendingOrderItems ===
+      0;
+    const grossProfit = coverageComplete
+      ? num(totalNetSales - retainedCogs)
+      : null;
     return {
       totalNetSales,
       historicalCogs,
       grossProfit,
       grossMarginPct:
-        totalNetSales > 0 ? num((grossProfit / totalNetSales) * 100) : null,
+        grossProfit !== null && totalNetSales > 0
+          ? num((grossProfit / totalNetSales) * 100)
+          : null,
       productCount: rows.length,
+      coverageComplete,
     };
   }
 
@@ -534,25 +563,44 @@ export class MenuEngineeringService {
           qtySold: 0,
           netSales: 0,
           cogs: 0,
+          cogsReversal: 0,
           grossProfit: null,
           grossMarginPct: null,
           productCount: 0,
+          costedItems: 0,
+          uncostedItems: 0,
+          legacyItems: 0,
+          pendingItems: 0,
+          coverageComplete: true,
         };
         groups.set(key, g);
       }
       g.qtySold += r.qtySold;
       if (r.qtySold > 0) {
         g.netSales = num(g.netSales + r.netSales);
-        g.cogs = num(g.cogs + r.historicalCogs);
+        // H3 — category cost is the RETAINED (refund-aware) cost.
+        g.cogs = num(g.cogs + r.retainedCogs);
+        g.cogsReversal = num(g.cogsReversal + r.cogsReversal);
       }
       g.productCount += 1;
+      g.costedItems += r.costedItems;
+      g.uncostedItems += r.uncostedItems;
+      g.legacyItems += r.legacyItems;
+      g.pendingItems += r.pendingItems;
     }
     const result: MenuEngineeringCategoryRow[] = [];
     for (const g of groups.values()) {
+      g.coverageComplete =
+        g.uncostedItems + g.legacyItems + g.pendingItems === 0;
       if (g.qtySold > 0) {
-        g.grossProfit = num(g.netSales - g.cogs);
+        // H2 — unknown COGS is never turned into a full-margin profit.
+        g.grossProfit = g.coverageComplete
+          ? num(g.netSales - g.cogs)
+          : null;
         g.grossMarginPct =
-          g.netSales > 0 ? num((g.grossProfit / g.netSales) * 100) : null;
+          g.grossProfit !== null && g.netSales > 0
+            ? num((g.grossProfit / g.netSales) * 100)
+            : null;
       }
       result.push(g);
     }
@@ -572,7 +620,8 @@ export class MenuEngineeringService {
       qtySold: branchQtyMap.get(b.branchId) ?? 0,
       netSales: num(b.netSales),
       cogs: num(b.cogs),
-      grossProfit: num(b.grossProfit),
+      // H2 — preserve null (unknown) instead of coercing it to 0.
+      grossProfit: b.grossProfit === null ? null : num(b.grossProfit),
       grossMarginPct: b.grossMarginPct,
     }));
   }

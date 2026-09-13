@@ -33,6 +33,10 @@ export interface MenuEngineeringProductRow {
   discount: number;
   netSales: number;
   historicalCogs: number;
+  /** H3 — COGS released by refunds allocated to this product. */
+  cogsReversal: number;
+  /** H3 — historicalCogs − cogsReversal (the cost still retained). */
+  retainedCogs: number;
   grossProfit: number | null;
   grossMarginPct: number | null;
   foodCostPct: number | null;
@@ -44,6 +48,8 @@ export interface MenuEngineeringProductRow {
   costedItems: number;
   uncostedItems: number;
   legacyItems: number;
+  /** H2 — PAID but not COMPLETED items (COGS not yet incurred). */
+  pendingItems: number;
   classification: MenuEngineeringClassification;
   classificationReason: string | null;
   insight: string;
@@ -57,9 +63,17 @@ export interface MenuEngineeringCategoryRow {
   qtySold: number;
   netSales: number;
   cogs: number;
+  /** H3 — COGS released by refunds in this category. */
+  cogsReversal: number;
   grossProfit: number | null;
   grossMarginPct: number | null;
   productCount: number;
+  /** H2 — coverage buckets (disjoint) so unknown COGS is never shown as 0. */
+  costedItems: number;
+  uncostedItems: number;
+  legacyItems: number;
+  pendingItems: number;
+  coverageComplete: boolean;
 }
 
 export interface MenuEngineeringBranchRow {
@@ -70,7 +84,8 @@ export interface MenuEngineeringBranchRow {
   qtySold: number;
   netSales: number;
   cogs: number;
-  grossProfit: number;
+  /** H2 — null when the branch's COGS coverage is incomplete (unknown). */
+  grossProfit: number | null;
   grossMarginPct: number | null;
 }
 
@@ -86,9 +101,12 @@ export interface MenuEngineeringThreshold {
 export interface MenuEngineeringSummary {
   totalNetSales: number;
   historicalCogs: number;
-  grossProfit: number;
+  /** H2 — null when COGS coverage is incomplete (unknown, never 0). */
+  grossProfit: number | null;
   grossMarginPct: number | null;
   productCount: number;
+  /** H2 — true only when every in-scope item has a SNAPSHOTTED COGS. */
+  coverageComplete: boolean;
 }
 
 export interface MenuEngineeringCoverage {
@@ -96,6 +114,8 @@ export interface MenuEngineeringCoverage {
   costedOrderItems: number;
   uncostedOrderItems: number;
   legacyOrderItems: number;
+  /** H2 — PAID but not COMPLETED (COGS not yet incurred). */
+  pendingOrderItems: number;
 }
 
 export interface MenuEngineeringClassificationCounts {

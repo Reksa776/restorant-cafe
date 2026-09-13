@@ -101,6 +101,9 @@ export interface CostingListItemDto {
   categoryId: string;
   categoryName: string;
   sellingPrice: string;
+  /** Total CURRENT HPP. Equals `baseHpp` in the product-level view (no
+   * customization selection); a selection-aware call returns the full
+   * base + addon + option total. */
   hpp: string | null;
   grossProfit: string | null;
   grossMarginPct: string | null;
@@ -112,12 +115,102 @@ export interface CostingListItemDto {
   costingMode: CostingMode;
   /** G.1 — stored manual HPP for this branch (null when unset). */
   manualHpp: string | null;
+  // ----------------------------------------------------------------
+  // H4.2 — HPP breakdown. `hpp` stays the authoritative total; these are
+  // additive so the admin UI can label each component. Addon/option HPP is
+  // null when the component cost could not be resolved (never a fake 0).
+  // ----------------------------------------------------------------
+  /** Base product HPP: recipe × WAC (INGREDIENT) or manualHpp (MANUAL). */
+  baseHpp: string | null;
+  /** Selected addon HPP (0 in the product-level view — nothing selected). */
+  addonHpp: string | null;
+  /** Selected option HPP (0 in the product-level view — nothing selected). */
+  optionHpp: string | null;
+  /** baseHpp + addonHpp + optionHpp — null when any part is incomplete. */
+  totalHpp: string | null;
+}
+
+// ----------------------------------------------------------------
+// H4.2 — addon / option components (mini-BOM costing).
+// ----------------------------------------------------------------
+
+export const componentKinds = ["ADDON", "OPTION"] as const;
+export type ComponentKindDto = (typeof componentKinds)[number];
+
+export const componentStatuses = ["COMPLETE", "INCOMPLETE"] as const;
+export type ComponentStatus = (typeof componentStatuses)[number];
+
+/** Why a component's HPP is unknown. Never means "cost = 0". */
+export const componentReasons = [
+  "NO_BOM",
+  "MISSING_WAC",
+  "INACTIVE_INGREDIENT",
+  "INACTIVE_COMPONENT",
+  "NOT_FOUND",
+  "INVALID_QUANTITY",
+  "MALFORMED_CUSTOMIZATION",
+] as const;
+export type ComponentReason = (typeof componentReasons)[number];
+
+/** Per-ingredient line of an addon/option mini-BOM. */
+export interface CostingComponentItemDto {
+  ingredientId: string;
+  ingredientName: string;
+  baseUnit: string;
+  quantity: string;
+  unit: string;
+  wac: string | null;
+  cost: string | null;
+  zeroCost: boolean;
+  missingReason: MissingReason | null;
+}
+
+/**
+ * ONE addon/option with its per-1-unit HPP. `sellingPrice` is display-only —
+ * it is the addon price / option price adjustment and is NEVER used as cost.
+ */
+export interface CostingComponentDto {
+  kind: ComponentKindDto;
+  id: string;
+  name: string;
+  sellingPrice: string;
+  /** HPP for ONE unit — null when incomplete (never fabricated 0). */
+  hpp: string | null;
+  status: ComponentStatus;
+  reasons: ComponentReason[];
+  items: CostingComponentItemDto[];
 }
 
 /** Detail — list row + the recipe lines that produced the HPP. */
 export interface CostingDetailDto extends CostingListItemDto {
   recipeId: string | null;
   items: CostingItemDto[];
+  /** H4.2 — configured active addons of this product, with per-unit HPP. */
+  addons: CostingComponentDto[];
+  /** H4.2 — configured active options of this product, with per-unit HPP. */
+  options: CostingComponentDto[];
+}
+
+/**
+ * H4.2 — selection-aware HPP (base + selected addons + selected options).
+ * This is the value a completion will freeze (H4.3) and the value the
+ * addon/option stock consumption will mirror (H4.4).
+ */
+export interface SelectionCostingDto {
+  productId: string;
+  branchId: string;
+  costingMode: CostingMode;
+  sellingPrice: string;
+  baseHpp: string | null;
+  addonHpp: string | null;
+  optionHpp: string | null;
+  totalHpp: string | null;
+  costStatus: CostStatus;
+  reasons: ComponentReason[];
+  addons: CostingComponentDto[];
+  options: CostingComponentDto[];
+  /** Per-unit customization subtotal, before OrderItem.quantity. */
+  customizationHpp: string | null;
 }
 
 export interface CostingListResponse {

@@ -16,6 +16,34 @@ async function openShiftOf(restaurantId: string, userId: string) {
   });
 }
 
+/** H3 — 2dp money rounding (ROUND_HALF_UP-equivalent on non-negative totals). */
+function round2(v: number): number {
+  return Math.round((v + Number.EPSILON) * 100) / 100;
+}
+
+/** Half-cent tolerance for Decimal comparisons. */
+const MONEY_EPSILON = 0.005;
+
+/**
+ * H4.5-B2 — COLLECTED payment statuses. Refund eligibility (both at request
+ * and at approval) must only ever count money actually collected, using the
+ * SAME basis as revenue reporting. PENDING / FAILED / EXPIRED / CANCELLED /
+ * UNPAID payments are never refundable.
+ */
+const COLLECTED_PAYMENT_STATUSES = ["PAID", "REFUNDED"] as const;
+
+/** H3.2 — a client may request quantities only; prices come from the DB. */
+export interface RefundItemAllocationInput {
+  orderItemId: string;
+  quantity: number;
+}
+
+interface ResolvedAllocation {
+  orderItemId: string;
+  quantity: number;
+  amount: number;
+}
+
 // ============================================================
 // Approval service — refunds & cancellations
 // ============================================================
@@ -41,12 +69,13 @@ export class ApprovalService {
     orderId: string;
     amount: number;
     reason: string;
+    // H3.2 — optional quantity-based allocation. When present, the refund
+    // amount is derived SERVER-SIDE from the order items (the client may only
+    // ask for quantities); every allocation is validated against the item.
+    items?: RefundItemAllocationInput[];
     // Server-validated branch scope; when set the order must belong to it.
     branchFilters?: string[] | null;
   }) {
-    if (!Number.isFinite(input.amount) || input.amount <= 0) {
-      throw new ValidationError("Jumlah refund harus lebih dari 0");
-    }
     if (!input.reason || input.reason.trim().length < 5) {
       throw new ValidationError("Alasan refund minimal 5 karakter");
     }
@@ -54,7 +83,19 @@ export class ApprovalService {
     const order = await prisma.order.findFirst({
       where: { id: input.orderId, restaurantId: input.restaurantId },
       include: {
-        payments: { where: { status: "PAID" } },
+        // H3.0 — REFUNDED payments are included too: a refunded payment still
+        // represents money that was collected (and may be partially refunded).
+        // H4.5-B2 — collected-only basis (never PENDING/FAILED/EXPIRED/etc.).
+        payments: { where: { status: { in: [...COLLECTED_PAYMENT_STATUSES] } } },
+        items: {
+          select: {
+            id: true,
+            productId: true,
+            quantity: true,
+            unitPrice: true,
+            totalPrice: true,
+          },
+        },
       },
     });
     if (!order) {
@@ -75,24 +116,53 @@ export class ApprovalService {
       throw new ConflictError("Belum ada pembayaran lunas untuk order ini");
     }
 
+    // H3.0 — refundable = total collected (PAID + REFUNDED payments) minus
+    // every already-APPROVED refund. Never derived from one payment alone, and
+    // never from the original payment amount only (that allowed over-refund).
+    const totalPaid = round2(
+      order.payments.reduce((sum, p) => sum + Number(p.amount), 0)
+    );
+    const approvedAgg = await prisma.refund.aggregate({
+      where: { orderId: order.id, status: "APPROVED" },
+      _sum: { amount: true },
+    });
+    const alreadyRefunded = round2(Number(approvedAgg._sum.amount ?? 0));
+    const refundableAmount = round2(totalPaid - alreadyRefunded);
+    if (refundableAmount <= MONEY_EPSILON) {
+      throw new ConflictError("Order ini sudah direfund penuh");
+    }
+
     // Only a KASIR (cash) payment can be refunded in cash from a drawer; an
     // online payment (QRIS/VA) refund stays admin-approved without a drawer.
     const cashPayment = order.payments.find((p) => p.method === "KASIR");
-    const paidTotal = order.payments.reduce(
-      (sum, p) => sum + Number(p.amount),
-      0
-    );
-    if (input.amount > paidTotal) {
-      throw new ValidationError(
-        `Jumlah refund melebihi total pembayaran (Rp${paidTotal.toLocaleString("id-ID")})`
-      );
-    }
 
-    const pending = await prisma.refund.findFirst({
-      where: { orderId: order.id, status: "PENDING" },
-    });
-    if (pending) {
-      throw new ConflictError("Refund untuk order ini masih menunggu persetujuan");
+    // H3.2 — quantity-based allocation (validated + priced server-side).
+    const allocations = await this.resolveRefundAllocations(
+      order,
+      input.items
+    );
+
+    let refundAmount: number;
+    if (allocations) {
+      refundAmount = allocations.totalAmount;
+      if (refundAmount <= MONEY_EPSILON) {
+        throw new ValidationError("Total refund tidak valid");
+      }
+      if (refundAmount > refundableAmount + MONEY_EPSILON) {
+        throw new ConflictError(
+          `Jumlah refund melebihi sisa yang dapat direfund (Rp${refundableAmount.toLocaleString("id-ID")})`
+        );
+      }
+    } else {
+      if (!Number.isFinite(input.amount) || input.amount <= 0) {
+        throw new ValidationError("Jumlah refund harus lebih dari 0");
+      }
+      if (input.amount > refundableAmount + MONEY_EPSILON) {
+        throw new ConflictError(
+          `Jumlah refund melebihi sisa yang dapat direfund (Rp${refundableAmount.toLocaleString("id-ID")})`
+        );
+      }
+      refundAmount = round2(input.amount);
     }
 
     // The refund is drawer-linked to the shift that COLLECTED the cash
@@ -108,24 +178,50 @@ export class ApprovalService {
       }
     }
 
-    const refund = await prisma.refund.create({
-      data: {
-        restaurantId: input.restaurantId,
-        // The refund belongs to the ORDER's branch (same principle as
-        // payments following their order).
-        branchId: order.branchId,
-        orderId: order.id,
-        paymentId: cashPayment?.id || null,
-        shiftId: refundShiftId,
-        amount: input.amount,
-        reason: input.reason,
-        status: "PENDING",
-        requestedByCashierId: input.userId,
-      },
-      include: {
-        order: { select: { orderNumber: true } },
-        requester: { select: { id: true, name: true } },
-      },
+    // H2 (G8) / H3.0 — the "one PENDING refund per order" check and the insert
+    // are atomic under a per-order row lock, so two concurrent requests can
+    // never both create a PENDING refund (which would also bypass the
+    // cumulative over-refund guard).
+    const refund = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM \`order\` WHERE id = ${order.id} FOR UPDATE`;
+      const pending = await tx.refund.findFirst({
+        where: { orderId: order.id, status: "PENDING" },
+      });
+      if (pending) {
+        throw new ConflictError(
+          "Refund untuk order ini masih menunggu persetujuan"
+        );
+      }
+      return tx.refund.create({
+        data: {
+          restaurantId: input.restaurantId,
+          // The refund belongs to the ORDER's branch (same principle as
+          // payments following their order).
+          branchId: order.branchId,
+          orderId: order.id,
+          paymentId: cashPayment?.id || null,
+          shiftId: refundShiftId,
+          amount: refundAmount,
+          reason: input.reason,
+          status: "PENDING",
+          requestedByCashierId: input.userId,
+          ...(allocations
+            ? {
+                items: {
+                  create: allocations.items.map((i) => ({
+                    orderItemId: i.orderItemId,
+                    quantity: i.quantity,
+                    amount: i.amount,
+                  })),
+                },
+              }
+            : {}),
+        },
+        include: {
+          order: { select: { orderNumber: true } },
+          requester: { select: { id: true, name: true } },
+        },
+      });
     });
 
     emitRealtime(
@@ -152,13 +248,92 @@ export class ApprovalService {
       entityId: refund.id,
       details: {
         orderNumber: order.orderNumber,
-        amount: input.amount,
+        amount: refundAmount,
         reason: input.reason,
         shiftId: refund.shiftId,
+        itemAllocations: allocations?.items.length ?? 0,
       },
     });
 
     return refund;
+  }
+
+  /**
+   * H3.2 — validate + price a quantity-based refund allocation. The client
+   * may only request quantities; every price comes from the database
+   * (effective unit price = OrderItem.totalPrice / OrderItem.quantity, so any
+   * line discount is respected). Returns null for a legacy amount-only refund.
+   */
+  private async resolveRefundAllocations(
+    order: {
+      id: string;
+      items: Array<{
+        id: string;
+        quantity: number;
+        totalPrice: unknown;
+      }>;
+    },
+    input: RefundItemAllocationInput[] | undefined
+  ): Promise<{ items: ResolvedAllocation[]; totalAmount: number } | null> {
+    if (!input || input.length === 0) return null;
+
+    const itemMap = new Map(order.items.map((i) => [i.id, i]));
+    const seen = new Set<string>();
+    for (const raw of input) {
+      if (!raw || typeof raw.orderItemId !== "string") {
+        throw new ValidationError("orderItemId tidak valid");
+      }
+      if (seen.has(raw.orderItemId)) {
+        throw new ValidationError("Item refund duplikat");
+      }
+      seen.add(raw.orderItemId);
+      const item = itemMap.get(raw.orderItemId);
+      // Ownership: the item must belong to THIS order (never trust the client).
+      if (!item) {
+        throw new ValidationError("Item tidak ditemukan pada order ini");
+      }
+      if (!Number.isInteger(raw.quantity) || raw.quantity <= 0) {
+        throw new ValidationError("Jumlah item refund harus bilangan bulat > 0");
+      }
+      if (raw.quantity > item.quantity) {
+        throw new ValidationError("Jumlah item refund melebihi jumlah dibeli");
+      }
+    }
+
+    // Remaining per-item quantity = purchased − already-APPROVED allocations.
+    const approvedAlloc = await prisma.refundItem.groupBy({
+      by: ["orderItemId"],
+      where: {
+        orderItemId: { in: input.map((i) => i.orderItemId) },
+        refund: { status: "APPROVED" },
+      },
+      _sum: { quantity: true },
+    });
+    const allocatedMap = new Map(
+      approvedAlloc.map((r) => [r.orderItemId, Number(r._sum.quantity ?? 0)])
+    );
+
+    const resolved: ResolvedAllocation[] = [];
+    let totalAmount = 0;
+    for (const raw of input) {
+      const item = itemMap.get(raw.orderItemId)!;
+      const already = allocatedMap.get(raw.orderItemId) ?? 0;
+      if (raw.quantity > item.quantity - already) {
+        throw new ConflictError(
+          "Jumlah item refund melebihi sisa yang dapat direfund"
+        );
+      }
+      const unit =
+        item.quantity > 0 ? Number(item.totalPrice) / item.quantity : 0;
+      const lineAmount = round2(unit * raw.quantity);
+      totalAmount = round2(totalAmount + lineAmount);
+      resolved.push({
+        orderItemId: raw.orderItemId,
+        quantity: raw.quantity,
+        amount: lineAmount,
+      });
+    }
+    return { items: resolved, totalAmount };
   }
 
   /**
@@ -188,6 +363,7 @@ export class ApprovalService {
       include: {
         order: { select: { id: true, orderNumber: true, status: true } },
         payment: true,
+        items: { select: { id: true, orderItemId: true, quantity: true } },
       },
     });
     if (!refund) {
@@ -196,8 +372,13 @@ export class ApprovalService {
 
     const decided = await prisma.$transaction(async (tx) => {
       const status: RequestStatus = input.approve ? "APPROVED" : "REJECTED";
-      const updated = await tx.refund.update({
-        where: { id: refund.id },
+      // H2 (G8) — GUARDED transition: only ONE request may move this refund
+      // PENDING → APPROVED/REJECTED. The refund row was read as PENDING above
+      // (outside the tx), so a concurrent approval / double-click would
+      // otherwise both pass and double-apply the side effects below; the
+      // conditional updateMany loses the race and throws instead.
+      const transitioned = await tx.refund.updateMany({
+        where: { id: refund.id, status: "PENDING" },
         data: {
           status,
           decisionNote: input.decisionNote || null,
@@ -207,23 +388,72 @@ export class ApprovalService {
           approvedAt: input.approve ? new Date() : null,
         },
       });
+      if (transitioned.count === 0) {
+        throw new ConflictError("Permintaan refund sudah diproses");
+      }
 
       if (input.approve) {
-        const payment = refund.payment;
-        const amount = Number(refund.amount);
-        const paid = payment ? Number(payment.amount) : 0;
+        const amount = round2(Number(refund.amount));
 
-        // Mark the collected cash payment refunded (never delete the row —
-        // history is preserved).
-        if (payment) {
-          await tx.payment.update({
-            where: { id: payment.id },
-            data: { status: amount >= paid ? "REFUNDED" : "PAID" },
+        // H3.3 — freeze each allocation's reversed COGS from the immutable
+        // OrderItemCostSnapshot (hppUnit × quantity). The snapshot is NEVER
+        // mutated; NULL marks an item whose cost is not covered (never 0).
+        if (refund.items.length > 0) {
+          const orderItems = await tx.orderItem.findMany({
+            where: { id: { in: refund.items.map((i) => i.orderItemId) } },
+            select: {
+              id: true,
+              costSnapshot: { select: { status: true, hppUnit: true } },
+            },
           });
+          const snapMap = new Map(
+            orderItems.map((oi) => [oi.id, oi.costSnapshot])
+          );
+          for (const item of refund.items) {
+            const snap = snapMap.get(item.orderItemId);
+            const reversedCogs =
+              snap && snap.status === "SNAPSHOTTED" && snap.hppUnit != null
+                ? round2(Number(snap.hppUnit) * item.quantity)
+                : null;
+            await tx.refundItem.update({
+              where: { id: item.id },
+              data: { reversedCogs },
+            });
+          }
+        }
+
+        // H3.0 — aggregate financial state across ALL payments (never one
+        // KASIR payment). A REFUNDED payment still counts as collected, so a
+        // QRIS/VA refund no longer flips the whole order to UNPAID.
+        const orderPayments = await tx.payment.findMany({
+          where: {
+            orderId: refund.orderId,
+            status: { in: [...COLLECTED_PAYMENT_STATUSES] },
+          },
+          select: { id: true, amount: true, status: true, method: true },
+        });
+        const totalPaid = round2(
+          orderPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+        );
+        const approvedAgg = await tx.refund.aggregate({
+          where: { orderId: refund.orderId, status: "APPROVED" },
+          _sum: { amount: true },
+        });
+        const cumulativeRefunded = round2(Number(approvedAgg._sum.amount ?? 0));
+        const netPaid = round2(totalPaid - cumulativeRefunded);
+
+        // Immutable refund ledger — exactly one row per successful approval
+        // (the guarded transition above guarantees a single winner).
+        const targetPayment =
+          refund.payment ??
+          orderPayments.find((p) => p.status === "PAID") ??
+          orderPayments[0] ??
+          null;
+        if (targetPayment && amount > 0) {
           await tx.paymentTransaction.create({
             data: {
-              paymentId: payment.id,
-              provider: "cashier",
+              paymentId: targetPayment.id,
+              provider: targetPayment.method === "KASIR" ? "cashier" : "refund",
               type: "refund",
               status: "REFUNDED",
               amount: -amount,
@@ -237,17 +467,28 @@ export class ApprovalService {
           });
         }
 
-        // The order is no longer fully paid once its cash payment was fully
-        // refunded (or its payment status mirrors the refund).
-        const remainingPaid = amount >= paid ? 0 : paid - amount;
+        // Fully refunded → collected payments are marked REFUNDED (history
+        // preserved, never deleted). Partially refunded → they stay PAID.
+        if (netPaid <= MONEY_EPSILON) {
+          await tx.payment.updateMany({
+            where: { orderId: refund.orderId, status: "PAID" },
+            data: { status: "REFUNDED" },
+          });
+        }
+
+        // The order reflects the NET collected balance. A fully refunded
+        // COMPLETED order becomes UNPAID but REMAINS representable in
+        // profitability (its frozen COGS is retained, never zeroed).
         await tx.order.update({
           where: { id: refund.orderId },
-          data: {
-            paymentStatus: remainingPaid > 0 ? "PAID" : "UNPAID",
-          },
+          data: { paymentStatus: netPaid > MONEY_EPSILON ? "PAID" : "UNPAID" },
         });
       }
 
+      const updated = await tx.refund.findUnique({ where: { id: refund.id } });
+      if (!updated) {
+        throw new NotFoundError("Permintaan refund tidak ditemukan");
+      }
       return updated;
     });
 
@@ -325,26 +566,32 @@ export class ApprovalService {
           : "Order sudah dibatalkan"
       );
     }
-    const pending = await prisma.cancellationRequest.findFirst({
-      where: { orderId: order.id, status: "PENDING" },
-    });
-    if (pending) {
-      throw new ConflictError("Permintaan pembatalan masih menunggu persetujuan");
-    }
-
-    const request = await prisma.cancellationRequest.create({
-      data: {
-        restaurantId: input.restaurantId,
-        branchId: order.branchId,
-        orderId: order.id,
-        reason: input.reason,
-        status: "PENDING",
-        requestedByCashierId: input.userId,
-      },
-      include: {
-        order: { select: { orderNumber: true } },
-        requester: { select: { id: true, name: true } },
-      },
+    // H2 (G8) — atomic "one PENDING cancellation per order" check + insert
+    // under a per-order row lock (same pattern as requestRefund).
+    const request = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM \`order\` WHERE id = ${order.id} FOR UPDATE`;
+      const pending = await tx.cancellationRequest.findFirst({
+        where: { orderId: order.id, status: "PENDING" },
+      });
+      if (pending) {
+        throw new ConflictError(
+          "Permintaan pembatalan masih menunggu persetujuan"
+        );
+      }
+      return tx.cancellationRequest.create({
+        data: {
+          restaurantId: input.restaurantId,
+          branchId: order.branchId,
+          orderId: order.id,
+          reason: input.reason,
+          status: "PENDING",
+          requestedByCashierId: input.userId,
+        },
+        include: {
+          order: { select: { orderNumber: true } },
+          requester: { select: { id: true, name: true } },
+        },
+      });
     });
 
     emitRealtime(
@@ -416,8 +663,10 @@ export class ApprovalService {
 
     const decided = await prisma.$transaction(async (tx) => {
       const status: RequestStatus = input.approve ? "APPROVED" : "REJECTED";
-      const updated = await tx.cancellationRequest.update({
-        where: { id: request.id },
+      // H2 (G8) — GUARDED transition: only ONE request may decide a PENDING
+      // cancellation request (concurrent approvals / double-click).
+      const transitioned = await tx.cancellationRequest.updateMany({
+        where: { id: request.id, status: "PENDING" },
         data: {
           status,
           decisionNote: input.decisionNote || null,
@@ -427,12 +676,49 @@ export class ApprovalService {
           approvedAt: input.approve ? new Date() : null,
         },
       });
+      if (transitioned.count === 0) {
+        throw new ConflictError("Permintaan pembatalan sudah diproses");
+      }
 
       if (input.approve) {
-        await tx.order.update({
-          where: { id: order.id },
+        // H3.7 — a PAID order can NOT be cancelled while it still holds
+        // collected money. The payment must be resolved/refunded first; we
+        // never silently turn PAID → CANCELLED (which would drop the revenue
+        // with no financial event) and never auto-create a refund here.
+        const orderPayments = await tx.payment.findMany({
+          where: {
+            orderId: order.id,
+            status: { in: [...COLLECTED_PAYMENT_STATUSES] },
+          },
+          select: { amount: true },
+        });
+        const totalPaid = round2(
+          orderPayments.reduce((sum, p) => sum + Number(p.amount), 0)
+        );
+        const approvedAgg = await tx.refund.aggregate({
+          where: { orderId: order.id, status: "APPROVED" },
+          _sum: { amount: true },
+        });
+        const netPaid = round2(
+          totalPaid - Number(approvedAgg._sum.amount ?? 0)
+        );
+        if (netPaid > MONEY_EPSILON) {
+          throw new ConflictError(
+            "Order sudah dibayar — selesaikan refund terlebih dahulu sebelum membatalkan"
+          );
+        }
+
+        // GUARDED order transition: never overwrite a concurrent COMPLETED /
+        // CANCELLED terminal state with this cancellation.
+        const orderUpdated = await tx.order.updateMany({
+          where: { id: order.id, status: { notIn: ["COMPLETED", "CANCELLED"] } },
           data: { status: "CANCELLED" },
         });
+        if (orderUpdated.count === 0) {
+          throw new ConflictError(
+            "Status order sudah berubah — pembatalan tidak dapat diterapkan"
+          );
+        }
         await tx.orderStatusHistory.create({
           data: {
             orderId: order.id,
@@ -457,6 +743,12 @@ export class ApprovalService {
         });
       }
 
+      const updated = await tx.cancellationRequest.findUnique({
+        where: { id: request.id },
+      });
+      if (!updated) {
+        throw new NotFoundError("Permintaan pembatalan tidak ditemukan");
+      }
       return updated;
     });
 

@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ConflictError, NotFoundError, ValidationError } from "@/lib/errors";
+import { ConflictError, IngredientCompletionError, NotFoundError, ValidationError } from "@/lib/errors";
+import { extractSelection } from "@/services/costing/customization-selection";
 
 // ============================================================
 // Ingredient Stock Service
@@ -17,6 +18,9 @@ import { ConflictError, NotFoundError, ValidationError } from "@/lib/errors";
 export const IngredientStockRefType = {
   STOCK_ADJUSTMENT: "STOCK_ADJUSTMENT",
   PURCHASE_RECEIVE: "PURCHASE_RECEIVE",
+  // H1 — an Order reaching COMPLETED consumes the recipe/BOM of its products
+  // (INGREDIENT costing mode only). refId = orderId.
+  ORDER_COMPLETED: "ORDER_COMPLETED",
 } as const;
 
 export type IngredientMovementType = "IN" | "OUT" | "ADJUSTMENT";
@@ -135,6 +139,416 @@ export async function applyIngredientStockMovement(
   });
 
   return { balanceAfter: Number(balanceAfter) };
+}
+
+// ============================================================
+// H1 — Order BOM consumption
+// ============================================================
+
+export interface OrderConsumptionItem {
+  productId: string;
+  quantity: number;
+  /**
+   * H4.4 — the RAW stored `OrderItem.customizations` value (Json or the
+   * double-encoded JSON string written by order creation). Only selected
+   * addon/option IDs + quantities are trusted; display prices are ignored.
+   */
+  customizations?: unknown;
+}
+
+interface AggregatedRequirement {
+  ingredientId: string;
+  ingredientName: string;
+  baseUnit: string;
+  /** Total required quantity in the ingredient's baseUnit (Decimal maths). */
+  quantity: Prisma.Decimal;
+}
+
+/** BOM line shape needed for consumption (WAC is irrelevant to stock). */
+interface ConsumptionBomLine {
+  quantity: Prisma.Decimal;
+  ingredient: { id: string; name: string; baseUnit: string; isActive: boolean } | null;
+}
+
+interface AddonConsumptionRow {
+  id: string;
+  productId: string;
+  name: string;
+  isActive: boolean;
+  ingredients: ConsumptionBomLine[];
+}
+
+interface OptionConsumptionRow {
+  id: string;
+  name: string;
+  isActive: boolean;
+  group: { productId: string };
+  ingredients: ConsumptionBomLine[];
+}
+
+/** Addon/option mini-BOM sub-select shared by both component queries. */
+const CONSUMPTION_BOM_SELECT = {
+  quantity: true,
+  ingredient: {
+    select: { id: true, name: true, baseUnit: true, isActive: true },
+  },
+} as const;
+
+/** Trim a Decimal to its plain string form (2.000 → "2", 2.500 → "2.5"). */
+function formatQty(value: Prisma.Decimal): string {
+  return value.toFixed();
+}
+
+/**
+ * H1 — consume the recipe/BOM of every ordered product when an order reaches
+ * COMPLETED.
+ *
+ * MUST be called inside the SAME interactive transaction as the guarded
+ * READY → COMPLETED transition (order.service updateOrderStatus). Every check
+ * and every ledger write below is part of that transaction, so a failure
+ * throws and rolls back the WHOLE completion — the order stays READY, no HPP
+ * snapshot, no product stock movement, no ingredient stock movement.
+ *
+ * Rules (Phase H1 + H4.4 spec):
+ * - costingMode INGREDIENT → an ACTIVE recipe with at least one item is
+ *   REQUIRED, and every referenced ingredient must exist and be ACTIVE.
+ *   Missing/inactive configuration BLOCKS completion (never silently skipped,
+ *   never treated as an empty BOM).
+ * - costingMode MANUAL → the BASE recipe is NOT consumed (manualHpp is
+ *   financial costing only, a manualHpp of 0 stays valid), but ADDON and
+ *   OPTION mini-BOMs ARE still consumed.
+ * - Selected addons/options come ONLY from the stored
+ *   OrderItem.customizations (tolerant parse; IDs + quantities only). An
+ *   unknown, inactive or foreign component, a missing BOM, a malformed
+ *   payload or an unusable addon quantity BLOCKS completion — never silently
+ *   ignored, never a base-only downgrade.
+ * - required = Σ RecipeItem.qty × OrderItem.qty
+ *            + Σ AddonIngredient.qty × addon qty × OrderItem.qty
+ *            + Σ OptionIngredient.qty × OrderItem.qty        (option qty ≡ 1)
+ *   aggregated per ingredient across ALL order items (ONE movement each).
+ * - BranchIngredient.stock is read under the existing `FOR UPDATE` lock; a
+ *   shortage BLOCKS completion with a detailed message (never negative
+ *   stock). The balance + ledger write is delegated to the single existing
+ *   engine, applyIngredientStockMovement().
+ *
+ * No migration: the ledger's refType is a free string.
+ */
+export async function consumeOrderIngredients(
+  tx: Prisma.TransactionClient,
+  input: {
+    restaurantId: string;
+    branchId: string;
+    items: OrderConsumptionItem[];
+    refId?: string | null;
+    reason?: string | null;
+    userId?: string | null;
+  }
+): Promise<void> {
+  const { restaurantId, branchId, items } = input;
+  if (items.length === 0) return;
+
+  const productIds = [...new Set(items.map((i) => i.productId))];
+
+  // Parse the stored customization of every item (IDs + quantities only).
+  const parsed = items.map((item) => ({
+    item,
+    selection: extractSelection(item.customizations),
+  }));
+  const addonIds = [
+    ...new Set(parsed.flatMap((p) => p.selection.addons.map((a) => a.addonId))),
+  ];
+  const optionIds = [
+    ...new Set(parsed.flatMap((p) => p.selection.options.map((o) => o.optionId))),
+  ];
+
+  // ONE batched query per table: product + recipe + items + ingredient flags +
+  // the ORDER BRANCH's costing mode, plus the SELECTED addon/option mini-BOMs.
+  // Scoping by `productId IN (order products)` enforces tenant isolation
+  // transitively and prevents a cross-product / cross-tenant component from
+  // ever consuming stock. No N+1.
+  const [productRows, addonRows, optionRows] = await Promise.all([
+    tx.product.findMany({
+      where: { id: { in: productIds }, restaurantId },
+      select: {
+        id: true,
+        name: true,
+        recipe: {
+          select: {
+            id: true,
+            isActive: true,
+            items: {
+              select: {
+                quantity: true,
+                ingredient: {
+                  select: { id: true, name: true, baseUnit: true, isActive: true },
+                },
+              },
+            },
+          },
+        },
+        branchProducts: {
+          where: { branchId },
+          select: { costingMode: true },
+          take: 1,
+        },
+      },
+    }),
+    addonIds.length
+      ? tx.productAddon.findMany({
+          where: { id: { in: addonIds }, productId: { in: productIds } },
+          select: {
+            id: true,
+            productId: true,
+            name: true,
+            isActive: true,
+            ingredients: { select: CONSUMPTION_BOM_SELECT },
+          },
+        })
+      : Promise.resolve([] as never[]),
+    optionIds.length
+      ? tx.productOption.findMany({
+          where: { id: { in: optionIds }, group: { productId: { in: productIds } } },
+          select: {
+            id: true,
+            name: true,
+            isActive: true,
+            group: { select: { productId: true } },
+            ingredients: { select: CONSUMPTION_BOM_SELECT },
+          },
+        })
+      : Promise.resolve([] as never[]),
+  ]);
+
+  const products = productRows;
+  const addons = addonRows as unknown as AddonConsumptionRow[];
+  const options = optionRows as unknown as OptionConsumptionRow[];
+
+  const productById = new Map(products.map((p) => [p.id, p]));
+  const addonById = new Map(addons.map((a) => [a.id, a]));
+  const optionById = new Map(options.map((o) => [o.id, o]));
+
+  // Aggregate the required quantity per ingredient (Decimal maths only).
+  const required = new Map<string, AggregatedRequirement>();
+
+  const addRequirement = (
+    ingredient: { id: string; name: string; baseUnit: string },
+    quantity: Prisma.Decimal
+  ) => {
+    const existing = required.get(ingredient.id);
+    if (existing) {
+      existing.quantity = existing.quantity.add(quantity);
+      return;
+    }
+    required.set(ingredient.id, {
+      ingredientId: ingredient.id,
+      ingredientName: ingredient.name,
+      baseUnit: ingredient.baseUnit,
+      quantity,
+    });
+  };
+
+  const requireIngredientActive = (
+    ingredient: ConsumptionBomLine["ingredient"],
+    label: string
+  ): { id: string; name: string; baseUnit: string } => {
+    if (!ingredient) {
+      throw new IngredientCompletionError(
+        "INGREDIENT_NOT_FOUND",
+        `Bahan baku pada ${label} tidak ditemukan — pesanan tidak dapat diselesaikan.`
+      );
+    }
+    if (!ingredient.isActive) {
+      throw new IngredientCompletionError(
+        "INGREDIENT_INACTIVE",
+        `Bahan baku ${ingredient.name} tidak aktif — aktifkan kembali bahan tersebut sebelum pesanan bisa diselesaikan.`
+      );
+    }
+    return ingredient;
+  };
+
+  for (const { item, selection } of parsed) {
+    const product = productById.get(item.productId);
+    if (!product) {
+      // An ordered product that cannot be resolved here is an unresolved BOM —
+      // completion is blocked rather than assuming an empty recipe.
+      throw new IngredientCompletionError(
+        "INGREDIENT_RECIPE_REQUIRED",
+        "Resep bahan baku untuk produk yang dipesan tidak ditemukan — pesanan tidak dapat diselesaikan."
+      );
+    }
+
+    // ---- BASE recipe — skipped entirely in MANUAL mode. ------------------
+    const costingMode = product.branchProducts[0]?.costingMode ?? "INGREDIENT";
+    if (costingMode !== "MANUAL") {
+      const recipe = product.recipe;
+      if (!recipe) {
+        throw new IngredientCompletionError(
+          "INGREDIENT_RECIPE_REQUIRED",
+          `Resep untuk ${product.name} belum dibuat — produk ini memakai HPP dari bahan baku, jadi resep wajib diisi sebelum pesanan bisa diselesaikan.`
+        );
+      }
+      if (!recipe.isActive) {
+        throw new IngredientCompletionError(
+          "INGREDIENT_RECIPE_INACTIVE",
+          `Resep untuk ${product.name} tidak aktif — aktifkan resep atau ubah metode HPP menjadi Manual sebelum pesanan bisa diselesaikan.`
+        );
+      }
+      if (recipe.items.length === 0) {
+        throw new IngredientCompletionError(
+          "INGREDIENT_RECIPE_REQUIRED",
+          `Resep untuk ${product.name} belum memiliki bahan — lengkapi resep sebelum pesanan bisa diselesaikan.`
+        );
+      }
+
+      const orderQty = new Prisma.Decimal(item.quantity);
+      for (const recipeItem of recipe.items) {
+        const ingredient = requireIngredientActive(
+          recipeItem.ingredient,
+          `resep ${product.name}`
+        );
+        addRequirement(ingredient, recipeItem.quantity.mul(orderQty));
+      }
+    }
+
+    // A non-empty payload that cannot be interpreted at all is an unresolved
+    // BOM — never treated as "no customization".
+    if (selection.malformed) {
+      throw new IngredientCompletionError(
+        "MALFORMED_CUSTOMIZATION",
+        `Data pilihan pada ${product.name} tidak dapat dibaca — pesanan tidak dapat diselesaikan.`
+      );
+    }
+
+    // ---- ADDON mini-BOM (consumed in BOTH costing modes). ----------------
+    const orderQty = new Prisma.Decimal(item.quantity);
+    for (const selected of selection.addons) {
+      const addon = addonById.get(selected.addonId);
+      if (!addon || addon.productId !== item.productId) {
+        throw new IngredientCompletionError(
+          "ADDON_NOT_FOUND",
+          `Addon pada ${product.name} tidak ditemukan — pesanan tidak dapat diselesaikan.`
+        );
+      }
+      if (!addon.isActive) {
+        throw new IngredientCompletionError(
+          "ADDON_INACTIVE",
+          `Addon ${addon.name} tidak aktif — aktifkan kembali atau ubah pilihan sebelum pesanan bisa diselesaikan.`
+        );
+      }
+      if (selected.invalidQuantity) {
+        throw new IngredientCompletionError(
+          "INVALID_ADDON_QUANTITY",
+          `Jumlah addon ${addon.name} tidak valid — pesanan tidak dapat diselesaikan.`
+        );
+      }
+      if (addon.ingredients.length === 0) {
+        throw new IngredientCompletionError(
+          "ADDON_BOM_REQUIRED",
+          `Komposisi bahan addon ${addon.name} belum diisi — pesanan tidak dapat diselesaikan.`
+        );
+      }
+
+      const addonQty = new Prisma.Decimal(selected.quantity);
+      for (const line of addon.ingredients) {
+        const ingredient = requireIngredientActive(
+          line.ingredient,
+          `addon ${addon.name}`
+        );
+        addRequirement(ingredient, line.quantity.mul(addonQty).mul(orderQty));
+      }
+    }
+
+    // ---- OPTION mini-BOM (option selection quantity is implicitly 1). ----
+    for (const selected of selection.options) {
+      const option = optionById.get(selected.optionId);
+      if (!option || option.group.productId !== item.productId) {
+        throw new IngredientCompletionError(
+          "OPTION_NOT_FOUND",
+          `Pilihan pada ${product.name} tidak ditemukan — pesanan tidak dapat diselesaikan.`
+        );
+      }
+      if (!option.isActive) {
+        throw new IngredientCompletionError(
+          "OPTION_INACTIVE",
+          `Pilihan ${option.name} tidak aktif — aktifkan kembali atau ubah pilihan sebelum pesanan bisa diselesaikan.`
+        );
+      }
+      if (option.ingredients.length === 0) {
+        throw new IngredientCompletionError(
+          "OPTION_BOM_REQUIRED",
+          `Komposisi bahan pilihan ${option.name} belum diisi — pesanan tidak dapat diselesaikan.`
+        );
+      }
+
+      for (const line of option.ingredients) {
+        const ingredient = requireIngredientActive(
+          line.ingredient,
+          `pilihan ${option.name}`
+        );
+        addRequirement(ingredient, line.quantity.mul(orderQty));
+      }
+    }
+  }
+
+  if (required.size === 0) return;
+
+  // Deterministic order (sorted ingredientId) so concurrent completions take
+  // the BranchIngredient row locks in the SAME order → no deadlock.
+  const requirements = [...required.values()].sort((a, b) =>
+    a.ingredientId < b.ingredientId ? -1 : a.ingredientId > b.ingredientId ? 1 : 0
+  );
+
+  // Lock every needed BranchIngredient row, then validate, then apply. The
+  // read is separate from the write ONLY to produce the detailed shortage
+  // message (available vs required); the write itself is delegated to
+  // applyIngredientStockMovement so there is exactly one stock-mutation engine.
+  const ingredientIds = requirements.map((r) => r.ingredientId);
+  const lockedRows = await tx.$queryRaw<
+    Array<{ ingredientId: string; stock: number | bigint | string }>
+  >(Prisma.sql`SELECT \`ingredientId\`, \`stock\` FROM \`branchingredient\`
+      WHERE \`branchId\` = ${branchId}
+        AND \`ingredientId\` IN (${Prisma.join(ingredientIds)})
+      FOR UPDATE`);
+
+  const stockByIngredient = new Map<string, Prisma.Decimal>();
+  for (const row of lockedRows) {
+    const raw = row.stock;
+    stockByIngredient.set(
+      row.ingredientId,
+      raw === null || raw === undefined
+        ? new Prisma.Decimal(0)
+        : new Prisma.Decimal(typeof raw === "bigint" ? raw.toString() : raw)
+    );
+  }
+
+  for (const req of requirements) {
+    if (req.quantity.isZero()) continue;
+    const available =
+      stockByIngredient.get(req.ingredientId) ?? new Prisma.Decimal(0);
+    if (available.lessThan(req.quantity)) {
+      throw new IngredientCompletionError(
+        "INSUFFICIENT_INGREDIENT_STOCK",
+        `Stok bahan baku ${req.ingredientName} tidak cukup. Tersedia ${formatQty(available)} ${req.baseUnit}, diperlukan ${formatQty(req.quantity)} ${req.baseUnit}.`
+      );
+    }
+  }
+
+  // Apply one OUT movement per ingredient through the single existing engine
+  // (it re-acquires the same rows this transaction already locked).
+  for (const req of requirements) {
+    if (req.quantity.isZero()) continue;
+    await applyIngredientStockMovement(tx, {
+      restaurantId,
+      branchId,
+      ingredientId: req.ingredientId,
+      type: "OUT",
+      quantity: -Number(req.quantity),
+      refType: IngredientStockRefType.ORDER_COMPLETED,
+      refId: input.refId ?? null,
+      reason: input.reason ?? null,
+      userId: input.userId ?? null,
+    });
+  }
 }
 
 // ============================================================

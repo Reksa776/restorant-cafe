@@ -121,20 +121,20 @@ export function resolveReportRange(
 }
 
 /**
- * Base (payment-status-free) order scope shared by every report: restaurant,
- * authorized branches, date range, cancelled-excluded + the order-level
- * filters (order type, payment method). Used to build the "activity" set.
+ * Date-free order scope shared by every report: restaurant, authorized
+ * branches, cancelled-excluded + the order-level filters (order type, payment
+ * method). `reportBaseWhere` adds the creation-date bound for the activity
+ * set; `revenueScopeWhere` adds the revenue set without a date bound (used for
+ * refund attribution by approval date).
  */
-function reportBaseWhere(
+function reportScopeWhere(
   restaurantId: string,
-  range: ReportRange,
   branchFilters?: string[] | null,
   filters?: ReportFilters
 ) {
   return {
     restaurantId,
     ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
-    createdAt: { gte: range.start, lte: range.end },
     status: { not: "CANCELLED" as const },
     ...(filters?.orderType ? { orderType: filters.orderType } : {}),
     ...(filters?.paymentMethod
@@ -147,6 +147,18 @@ function reportBaseWhere(
           },
         }
       : {}),
+  };
+}
+
+export function reportBaseWhere(
+  restaurantId: string,
+  range: ReportRange,
+  branchFilters?: string[] | null,
+  filters?: ReportFilters
+) {
+  return {
+    ...reportScopeWhere(restaurantId, branchFilters, filters),
+    createdAt: { gte: range.start, lte: range.end },
   };
 }
 
@@ -167,10 +179,15 @@ function reportActivityWhere(
 }
 
 /**
- * The "revenue set": ALWAYS paymentStatus = PAID. Revenue metrics (totals,
- * items, order types, best sellers, product sales) are computed from this set
- * so a non-PAID status filter never books failed/expired/unpaid activity as
- * sales.
+ * The "revenue set": PAID, OR collected-then-refunded. Revenue metrics
+ * (totals, items, order types, best sellers, product sales) are computed from
+ * this set so a non-PAID status filter never books failed/expired/unpaid
+ * activity as sales.
+ *
+ * H3.4 — a fully refunded COMPLETED order becomes paymentStatus = UNPAID, but
+ * it must STAY in the revenue set so its revenue is reversed (not dropped) and
+ * its incurred COGS remains representable. Partially refunded orders are still
+ * PAID and were always included.
  */
 function revenueWhere(
   restaurantId: string,
@@ -180,7 +197,30 @@ function revenueWhere(
 ) {
   return {
     ...reportBaseWhere(restaurantId, range, branchFilters, filters),
-    paymentStatus: "PAID" as const,
+    OR: [
+      { paymentStatus: "PAID" as const },
+      { payments: { some: { status: "REFUNDED" as const } } },
+    ],
+  };
+}
+
+/**
+ * H4.5-B1 — the revenue set WITHOUT the order-creation date bound. Used as the
+ * ORDER scope for refund attribution: a refund is attributed to its APPROVAL
+ * date, so the refundable/refunded order may have been created in an earlier
+ * period. Original SALES still use `revenueWhere` (order date bounded).
+ */
+function revenueScopeWhere(
+  restaurantId: string,
+  branchFilters?: string[] | null,
+  filters?: ReportFilters
+) {
+  return {
+    ...reportScopeWhere(restaurantId, branchFilters, filters),
+    OR: [
+      { paymentStatus: "PAID" as const },
+      { payments: { some: { status: "REFUNDED" as const } } },
+    ],
   };
 }
 
@@ -188,6 +228,137 @@ function revenueWhere(
 function num(v: unknown): number {
   const n = Number(v ?? 0);
   return Math.round(n * 100) / 100;
+}
+
+// ============================================================
+// H3 PATCH — refund-aware net revenue (single source of truth).
+//
+// The previous `netSales = totalSales − tax − serviceCharge − refund`
+// subtracted a refund (which already contains the tax/service charge) from a
+// PRODUCT-revenue base, so a FULLY refunded order produced negative net sales.
+// The refund is now applied on the same basis it was collected:
+//
+//   productRevenue(order) = grandTotal − tax − serviceCharge
+//   refundRevenue(order)  = refundedAmount × productRevenue / grandTotal
+//                           (capped at productRevenue)
+//   netSales              = Σ productRevenue − Σ refundRevenue
+//
+// For an order without tax/service charge this is exactly `grandTotal − refund`
+// (the previous behaviour), and a fully refunded order is exactly 0 for every
+// order type (DINE_IN / TAKEAWAY / DELIVERY).
+// ============================================================
+export interface RefundRevenueBucket {
+  productRevenue: number;
+  refundRevenue: number;
+  netSales: number;
+}
+
+export interface RefundRevenueResult {
+  total: RefundRevenueBucket;
+  byBranch: Map<string, RefundRevenueBucket>;
+}
+
+/**
+ * Row-level source of `netSales` and `retainedCogs` revenue math. Scoped to the
+ * same revenue set as every other report (non-cancelled, PAID or collected-and-
+ * refunded) so a fully refunded COMPLETED order stays representable.
+ *
+ * H4.5-B1 — REFUND IMPACT IS ATTRIBUTED TO THE REFUND APPROVAL DATE. Product
+ * revenue stays on the order-creation basis; refund revenue is aggregated from
+ * refunds APPROVED in the period (regardless of when the underlying order was
+ * created), so a cross-period refund is visible in the period it was approved.
+ */
+export async function computeRefundRevenue(scope: {
+  restaurantId: string;
+  start: Date;
+  end: Date;
+  branchFilters?: string[] | null;
+  extraOrderFilter?: Prisma.Sql;
+}): Promise<RefundRevenueResult> {
+  // H4.5-B1 — product revenue and refund revenue are aggregated on SEPARATE
+  // attribution bases and then unioned:
+  //   productRevenue → orders CREATED in the period (original sales).
+  //   refundRevenue  → refunds APPROVED in the period (refund impact), on the
+  //                    underlying order's product-revenue basis — the order
+  //                    itself may have been created in an EARLIER period.
+  // This is what lets a September report see an August order's September
+  // refund, while August sales stay attributed to August (and the refund is
+  // never double-counted: August's product revenue and September's refund
+  // revenue are disjoint).
+  const branchFragment = scope.branchFilters?.length
+    ? Prisma.sql`AND o.\`branchId\` IN (${Prisma.join([...scope.branchFilters])})`
+    : Prisma.empty;
+  const rows = await prisma.$queryRaw<
+    Array<{
+      branchId: string | null;
+      productRevenue: number | bigint | string;
+      refundRevenue: number | bigint | string;
+    }>
+  >`
+    SELECT t.\`branchId\` AS branchId,
+           COALESCE(SUM(t.\`productRevenue\`), 0) AS productRevenue,
+           COALESCE(SUM(t.\`refundRevenue\`), 0) AS refundRevenue
+    FROM (
+      SELECT o.\`branchId\` AS branchId,
+             (o.\`grandTotal\` - o.\`tax\` - o.\`serviceCharge\`) AS productRevenue,
+             0 AS refundRevenue
+      FROM \`order\` o
+      WHERE o.\`restaurantId\` = ${scope.restaurantId}
+        AND o.\`createdAt\` >= ${scope.start}
+        AND o.\`createdAt\` <= ${scope.end}
+        AND o.\`status\` <> 'CANCELLED'
+        AND (
+          o.\`paymentStatus\` = 'PAID'
+          OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = o.\`id\` AND pm.\`status\` = 'REFUNDED')
+        )
+        ${branchFragment}
+        ${scope.extraOrderFilter ?? Prisma.empty}
+      UNION ALL
+      SELECT o.\`branchId\` AS branchId,
+             0 AS productRevenue,
+             CASE WHEN o.\`grandTotal\` > 0
+               THEN LEAST(rf.\`refunded\` / o.\`grandTotal\`, 1)
+                    * (o.\`grandTotal\` - o.\`tax\` - o.\`serviceCharge\`)
+               ELSE 0 END AS refundRevenue
+      FROM (
+        SELECT r.\`orderId\` AS orderId, SUM(r.\`amount\`) AS refunded
+        FROM \`refund\` r
+        WHERE r.\`status\` = 'APPROVED'
+          AND r.\`approvedAt\` >= ${scope.start}
+          AND r.\`approvedAt\` <= ${scope.end}
+        GROUP BY r.\`orderId\`
+      ) rf
+      JOIN \`order\` o ON o.\`id\` = rf.\`orderId\`
+      WHERE o.\`restaurantId\` = ${scope.restaurantId}
+        AND o.\`status\` <> 'CANCELLED'
+        AND (
+          o.\`paymentStatus\` = 'PAID'
+          OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = o.\`id\` AND pm.\`status\` = 'REFUNDED')
+        )
+        ${branchFragment}
+        ${scope.extraOrderFilter ?? Prisma.empty}
+    ) t
+    GROUP BY t.\`branchId\`
+  `;
+
+  const byBranch = new Map<string, RefundRevenueBucket>();
+  const total: RefundRevenueBucket = {
+    productRevenue: 0,
+    refundRevenue: 0,
+    netSales: 0,
+  };
+  for (const r of rows) {
+    const productRevenue = num(r.productRevenue);
+    const refundRevenue = num(r.refundRevenue);
+    const netSales = Math.round((productRevenue - refundRevenue) * 100) / 100;
+    if (r.branchId) {
+      byBranch.set(r.branchId, { productRevenue, refundRevenue, netSales });
+    }
+    total.productRevenue = num(total.productRevenue + productRevenue);
+    total.refundRevenue = num(total.refundRevenue + refundRevenue);
+    total.netSales = num(total.netSales + netSales);
+  }
+  return { total, byBranch };
 }
 
 // ============================================================
@@ -211,7 +382,10 @@ function orderFragment(
     AND \`createdAt\` >= ${range.start}
     AND \`createdAt\` <= ${range.end}
     AND \`status\` <> 'CANCELLED'
-    AND \`paymentStatus\` = 'PAID'
+    AND (
+      \`paymentStatus\` = 'PAID'
+      OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = \`order\`.\`id\` AND pm.\`status\` = 'REFUNDED')
+    )
     ${branchFragment(branchFilters)}
     ${filters?.orderType ? Prisma.sql`AND \`orderType\` = ${filters.orderType}` : Prisma.empty}
     ${filters?.paymentMethod ? Prisma.sql`AND \`id\` IN (SELECT \`orderId\` FROM \`payment\` WHERE \`method\` = ${filters.paymentMethod} AND \`status\` = 'PAID')` : Prisma.empty}
@@ -754,6 +928,7 @@ export class ReportService {
       bestSellerRows,
       categoryProductRows,
       hourlyRows,
+      refundRevenue,
     ] = await Promise.all([
       prisma.order.aggregate({
         where: soldWhere,
@@ -772,13 +947,15 @@ export class ReportService {
         _sum: { quantity: true },
       }),
       // APPROVED refunds booked in the period (net revenue adjustment).
+      // H4.5-B1 — attributed by APPROVAL date: the order may have been created
+      // in an earlier period, so the order scope is date-free (revenue set).
       prisma.refund.aggregate({
         where: {
           restaurantId,
           ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
           status: "APPROVED",
           approvedAt: { gte: range.start, lte: range.end },
-          order: { is: soldWhere },
+          order: { is: revenueScopeWhere(restaurantId, branchFilters, filters) },
         },
         _sum: { amount: true },
       }),
@@ -837,6 +1014,17 @@ export class ReportService {
         GROUP BY HOUR(\`createdAt\`)
         ORDER BY hour ASC
       `,
+      // H3 PATCH — refund-aware net revenue (product-revenue basis).
+      computeRefundRevenue({
+        restaurantId,
+        start: range.start,
+        end: range.end,
+        branchFilters,
+        extraOrderFilter: Prisma.sql`
+          ${filters?.orderType ? Prisma.sql`AND o.\`orderType\` = ${filters.orderType}` : Prisma.empty}
+          ${filters?.paymentMethod ? Prisma.sql`AND o.\`id\` IN (SELECT \`orderId\` FROM \`payment\` WHERE \`method\` = ${filters.paymentMethod} AND \`status\` = 'PAID')` : Prisma.empty}
+        `,
+      }),
     ]);
 
     const totalSales = num(orderAgg._sum.grandTotal);
@@ -1010,9 +1198,14 @@ export class ReportService {
         totalTax,
         totalServiceCharge,
         totalRefund,
-        // Net = product revenue after discount + APPROVED refunds, before tax
-        // and service charge (matches the previous formula when refund = 0).
-        netSales: totalSales - totalTax - totalServiceCharge - totalRefund,
+        // H3.4 — explicit refund-aware naming (aliases of the existing totals).
+        grossRevenue: totalSales,
+        refundReversal: totalRefund,
+        // H3 PATCH — product revenue (grandTotal − tax − serviceCharge) less the
+        // product-revenue share of approved refunds. Equal to the previous
+        // formula when there is no tax/service charge, and exactly 0 for a
+        // fully refunded order (never negative).
+        netSales: refundRevenue.total.netSales,
       },
       paymentBreakdown: buckets,
       orderType,
@@ -1701,6 +1894,7 @@ export class ReportService {
       refundRows,
       orderTypeRows,
       productRows,
+      refundRevenue,
     ] = await Promise.all([
       prisma.branch.findMany({
         where: {
@@ -1733,7 +1927,10 @@ export class ReportService {
           AND o.\`createdAt\` >= ${range.start}
           AND o.\`createdAt\` <= ${range.end}
           AND o.\`status\` <> 'CANCELLED'
-          AND o.\`paymentStatus\` = 'PAID'
+          AND (
+            o.\`paymentStatus\` = 'PAID'
+            OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = o.\`id\` AND pm.\`status\` = 'REFUNDED')
+          )
           AND o.\`branchId\` IS NOT NULL
           ${branchFragment(branchFilters)}
         GROUP BY o.\`branchId\`
@@ -1749,7 +1946,10 @@ export class ReportService {
           AND o.\`createdAt\` >= ${range.start}
           AND o.\`createdAt\` <= ${range.end}
           AND o.\`status\` <> 'CANCELLED'
-          AND o.\`paymentStatus\` = 'PAID'
+          AND (
+            o.\`paymentStatus\` = 'PAID'
+            OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = o.\`id\` AND pm.\`status\` = 'REFUNDED')
+          )
           AND o.\`branchId\` IS NOT NULL
           ${branchFragment(branchFilters)}
         GROUP BY o.\`branchId\`
@@ -1829,11 +2029,21 @@ export class ReportService {
           AND o.\`createdAt\` >= ${range.start}
           AND o.\`createdAt\` <= ${range.end}
           AND o.\`status\` <> 'CANCELLED'
-          AND o.\`paymentStatus\` = 'PAID'
+          AND (
+            o.\`paymentStatus\` = 'PAID'
+            OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = o.\`id\` AND pm.\`status\` = 'REFUNDED')
+          )
           AND o.\`branchId\` IS NOT NULL
           ${branchFragment(branchFilters)}
         GROUP BY o.\`branchId\`, oi.\`productId\`
       `,
+      // H3 PATCH — refund-aware net revenue per outlet.
+      computeRefundRevenue({
+        restaurantId,
+        start: range.start,
+        end: range.end,
+        branchFilters,
+      }),
     ]);
 
     const orderMap = new Map(
@@ -1946,7 +2156,12 @@ export class ReportService {
         serviceCharge,
         refund,
         totalSales: total,
-        netSales: Math.round((total - tax - serviceCharge - refund) * 100) / 100,
+        // H3 PATCH — product revenue less the product-revenue share of refunds
+        // (never negative from a full refund). Falls back to the legacy formula
+        // only when the branch has no rows in the refund-aware aggregate.
+        netSales:
+          refundRevenue.byBranch.get(b.id)?.netSales ??
+          Math.round((total - tax - serviceCharge - refund) * 100) / 100,
         aov: orders > 0 ? Math.round((total / orders) * 100) / 100 : 0,
         cash: pmt?.cash ?? 0,
         qris: pmt?.qris ?? 0,

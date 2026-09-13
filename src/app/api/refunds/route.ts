@@ -46,12 +46,36 @@ export async function POST(request: NextRequest) {
       throw new ValidationError("Alasan refund wajib diisi");
     }
 
+    // H3.2 — optional quantity-based allocation. The client supplies only
+    // orderItemId + quantity; every price/HPP is resolved server-side.
+    let items: Array<{ orderItemId: string; quantity: number }> | undefined;
+    if (body.items !== undefined) {
+      if (!Array.isArray(body.items)) {
+        throw new ValidationError("items harus berupa array");
+      }
+      items = body.items.map((raw: unknown) => {
+        if (!raw || typeof raw !== "object") {
+          throw new ValidationError("Item refund tidak valid");
+        }
+        const it = raw as { orderItemId?: unknown; quantity?: unknown };
+        if (typeof it.orderItemId !== "string") {
+          throw new ValidationError("orderItemId wajib diisi");
+        }
+        const qty = Number(it.quantity);
+        if (!Number.isInteger(qty) || qty <= 0) {
+          throw new ValidationError("quantity refund harus bilangan bulat > 0");
+        }
+        return { orderItemId: it.orderItemId, quantity: qty };
+      });
+    }
+
     const refund = await approvalService.requestRefund({
       restaurantId: ctx.restaurantId,
       userId: ctx.userId,
       orderId: body.orderId,
       amount,
       reason: body.reason,
+      items,
       branchFilters: authorizedBranches(ctx),
     });
 

@@ -22,6 +22,7 @@ import {
   applyStockMovement,
   StockRefType,
 } from "@/services/stock/stock.service";
+import { consumeOrderIngredients } from "@/services/ingredient/ingredient-stock.service";
 import { createOrderItemCostSnapshots } from "@/services/costing/historical-snapshot";
 
 // ============================================================
@@ -193,20 +194,25 @@ export class OrderService {
     }
 
     // Validate branch products: a product hidden for this branch cannot be
-    // ordered from it (only when a branch is active).
+    // ordered from it (only when a branch is active). The same rows carry the
+    // branch price override (H0) — effective price = override ?? Product.price
+    // (override = 0 is a VALID free price, so `??` is required, never `||`).
+    const priceOverrideByProduct = new Map<string, Prisma.Decimal | null>();
     if (branchId) {
       const branchProducts = await prisma.branchProduct.findMany({
         where: {
           branchId,
           productId: { in: uniqueProductIds },
-          isAvailable: false,
         },
-        select: { productId: true },
+        select: { productId: true, isAvailable: true, priceOverride: true },
       });
-      if (branchProducts.length > 0) {
+      if (branchProducts.some((bp) => !bp.isAvailable)) {
         throw new ValidationError(
           "Beberapa produk tidak tersedia di cabang ini"
         );
+      }
+      for (const bp of branchProducts) {
+        priceOverrideByProduct.set(bp.productId, bp.priceOverride);
       }
     }
 
@@ -357,14 +363,18 @@ export class OrderService {
         }
       }
 
+      // H0 — effective base price is the branch override when set
+      // (override ?? Product.price; an override of 0 is a valid free price).
+      const effectiveBasePrice =
+        priceOverrideByProduct.get(item.productId) ?? product.price;
       const unitPrice =
-        Number(product.price) + selectionPriceAdj + addonPrice;
+        Number(effectiveBasePrice) + selectionPriceAdj + addonPrice;
       const totalPrice = unitPrice * item.quantity;
       subtotal += totalPrice;
 
       const customizations = {
         productName: product.name,
-        basePrice: Number(product.price),
+        basePrice: Number(effectiveBasePrice),
         selections: validatedSelections,
         addons: validatedAddons,
         notes: item.notes || null,
@@ -591,20 +601,25 @@ export class OrderService {
     }
 
     // Branch product availability: a product hidden for this branch cannot be
-    // ordered from it (only enforced when a branch is resolved).
+    // ordered from it (only enforced when a branch is resolved). The same rows
+    // carry the branch price override (H0) — effective base price =
+    // override ?? Product.price (an override of 0 is a valid free price).
+    const priceOverrideByProduct = new Map<string, Prisma.Decimal | null>();
     if (resolvedBranchId) {
-      const hidden = await prisma.branchProduct.findMany({
+      const branchProducts = await prisma.branchProduct.findMany({
         where: {
           branchId: resolvedBranchId,
           productId: { in: uniqueProductIds },
-          isAvailable: false,
         },
-        select: { productId: true },
+        select: { productId: true, isAvailable: true, priceOverride: true },
       });
-      if (hidden.length > 0) {
+      if (branchProducts.some((bp) => !bp.isAvailable)) {
         throw new ValidationError(
           "Beberapa produk tidak tersedia di cabang ini"
         );
+      }
+      for (const bp of branchProducts) {
+        priceOverrideByProduct.set(bp.productId, bp.priceOverride);
       }
     }
 
@@ -660,7 +675,11 @@ export class OrderService {
     let subtotal = 0;
     const orderItems = input.items.map((item) => {
       const product = productMap.get(item.productId)!;
-      const basePrice = Number(product.price);
+      // H0 — effective base price is the branch override when set
+      // (override ?? Product.price; an override of 0 is a valid free price).
+      const basePrice = Number(
+        priceOverrideByProduct.get(item.productId) ?? product.price
+      );
 
       // Validate and calculate selections (variants)
       let selectionPriceAdj = 0;
@@ -1372,6 +1391,23 @@ export class OrderService {
         );
       }
 
+      // H3.6 — an APPROVED refund means the money was already returned for
+      // this order, so it must NOT be completed (which would consume stock and
+      // freeze COGS for a sale that no longer exists). Read INSIDE this same
+      // transaction so a concurrent refund approval cannot slip through; the
+      // throw rolls back the status flip and every side effect below.
+      if (order.status !== "COMPLETED" && input.status === "COMPLETED") {
+        const approvedRefund = await tx.refund.findFirst({
+          where: { orderId: id, status: "APPROVED" },
+          select: { id: true },
+        });
+        if (approvedRefund) {
+          throw new ConflictError(
+            "Order memiliki refund yang sudah disetujui dan tidak dapat diselesaikan."
+          );
+        }
+      }
+
       const fresh = await tx.order.findUnique({
         where: { id },
         include: {
@@ -1409,6 +1445,8 @@ export class OrderService {
             orderItemId: item.id,
             productId: item.productId,
             quantity: item.quantity,
+            // H4.3 — freeze the actual HPP of the selected addon/option BOM.
+            customizations: item.customizations,
           })),
         });
       }
@@ -1437,7 +1475,9 @@ export class OrderService {
         // Aggregate quantity per product across order items
         const freshItems = await tx.orderItem.findMany({
           where: { orderId: id },
-          select: { productId: true, quantity: true },
+          // H4.4 — the stored customizations drive addon/option BOM
+          // consumption (IDs + quantities only; never client prices).
+          select: { productId: true, quantity: true, customizations: true },
         });
         const qtyByProduct = new Map<string, number>();
         for (const item of freshItems) {
@@ -1475,6 +1515,27 @@ export class OrderService {
             throw error;
           }
         }
+
+        // H1 + H4.4 — ingredient (BOM) consumption, in the SAME guarded
+        // transaction as the status flip above. INGREDIENT-costed products
+        // consume RecipeItem × OrderItem quantity from BranchIngredient.stock
+        // (with an IngredientStockMovement ledger row); MANUAL-costed products
+        // skip the BASE recipe but still consume their selected addon/option
+        // mini-BOMs. A missing/inactive recipe, ingredient or component, or
+        // insufficient branch stock, THROWS here and rolls back the entire
+        // completion (order stays READY, no snapshot, no partial stock).
+        await consumeOrderIngredients(tx, {
+          restaurantId,
+          branchId: order.branchId,
+          items: freshItems.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            customizations: item.customizations,
+          })),
+          refId: order.id,
+          reason: input.notes ?? null,
+          userId: changedBy ?? undefined,
+        });
       }
 
       // Free table when order is completed or cancelled

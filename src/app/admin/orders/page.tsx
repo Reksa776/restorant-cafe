@@ -12,6 +12,7 @@ import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import {
   normalizeApiError,
+  getErrorMessage,
   isUnauthorized,
   isShiftNotOpen,
   type NormalizedApiError,
@@ -176,7 +177,9 @@ export default function OrdersPage() {
       loadOrders();
     } catch (err) {
       console.error("Failed to update order status:", err);
-      toast.error("Gagal mengupdate status pesanan");
+      // Surface the server's reason (e.g. ingredient shortage / missing recipe)
+      // so the cashier knows WHY completion was rejected.
+      toast.error(getErrorMessage(err) || "Gagal mengupdate status pesanan");
     } finally {
       setIsUpdating(false);
     }

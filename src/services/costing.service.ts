@@ -27,6 +27,14 @@ export interface CostingListItem {
   costingMode: CostingMode;
   /** G.1 — stored manual HPP for this branch (null when unset). */
   manualHpp: string | null;
+  /** H4.2 — base HPP (recipe × WAC, or manualHpp). */
+  baseHpp: string | null;
+  /** H4.2 — selected addon HPP (0 at product level — nothing selected). */
+  addonHpp: string | null;
+  /** H4.2 — selected option HPP (0 at product level — nothing selected). */
+  optionHpp: string | null;
+  /** H4.2 — baseHpp + addonHpp + optionHpp. */
+  totalHpp: string | null;
 }
 
 export interface CostingItem {
@@ -41,9 +49,39 @@ export interface CostingItem {
   missingReason: MissingReason | null;
 }
 
+/** H4.2 — one addon/option mini-BOM line (cost data only). */
+export interface CostingComponentItem {
+  ingredientId: string;
+  ingredientName: string;
+  baseUnit: string;
+  quantity: string;
+  unit: string;
+  wac: string | null;
+  cost: string | null;
+  zeroCost: boolean;
+  missingReason: MissingReason | null;
+}
+
+/** H4.2 — one addon/option with its per-1-unit HPP. */
+export interface CostingComponent {
+  kind: "ADDON" | "OPTION";
+  id: string;
+  name: string;
+  /** Selling price / price adjustment — display only, never a cost. */
+  sellingPrice: string;
+  hpp: string | null;
+  status: "COMPLETE" | "INCOMPLETE";
+  reasons: string[];
+  items: CostingComponentItem[];
+}
+
 export interface CostingDetail extends CostingListItem {
   recipeId: string | null;
   items: CostingItem[];
+  /** H4.2 — active addons of this product, with per-unit HPP. */
+  addons: CostingComponent[];
+  /** H4.2 — active options of this product, with per-unit HPP. */
+  options: CostingComponent[];
 }
 
 export interface CostingListResponse {

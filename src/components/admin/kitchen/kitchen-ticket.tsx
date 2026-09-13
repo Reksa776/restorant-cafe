@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { Order } from "@/services/order.service";
 import { orderService } from "@/services/order.service";
+import { getErrorMessage } from "@/lib/api-error-handler";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 
@@ -133,8 +134,11 @@ export function KitchenTicket({
       }
       onActionDone();
     } catch (err: unknown) {
+      // Surface the server's reason (e.g. "Stok bahan baku Meat tidak cukup")
+      // instead of the generic axios message.
       const msg =
-        err instanceof Error ? err.message : "Gagal mengupdate status";
+        getErrorMessage(err) ||
+        (err instanceof Error ? err.message : "Gagal mengupdate status");
       toast.error(msg);
     } finally {
       setLoading(false);

@@ -31,6 +31,7 @@ import {
   type OptionGroup,
   type ProductOption,
   type ProductAddon,
+  type BomItemInput,
 } from "@/services/menu.service";
 import {
   ingredientService,
@@ -82,6 +83,25 @@ interface RecipeRow {
   quantity: string;
 }
 
+/** One editable mini-BOM row (addon/option composition). Unit always follows
+ * the ingredient's baseUnit — same rule as the product recipe (no conversion). */
+interface BomRow {
+  key: string;
+  ingredientId: string;
+  quantity: string;
+}
+
+/** Which addon/option the mini-BOM dialog is editing. `parentId` is the
+ * owning product (addon) or option group (option) — needed by the route. */
+interface BomTarget {
+  kind: "addon" | "option";
+  id: string;
+  parentId: string;
+  name: string;
+  /** Selling price, shown next to the composition to keep price ≠ HPP clear. */
+  sellingPrice: number;
+}
+
 // ============================================================
 // Main Page
 // ============================================================
@@ -122,6 +142,12 @@ export default function MenuPage() {
   const [recipeRows, setRecipeRows] = useState<RecipeRow[]>([]);
   const [isRecipeLoading, setIsRecipeLoading] = useState(false);
   const [isRecipeSaving, setIsRecipeSaving] = useState(false);
+
+  // Addon / Option mini-BOM (Komposisi Bahan) — H4.1
+  const [bomTarget, setBomTarget] = useState<BomTarget | null>(null);
+  const [bomRows, setBomRows] = useState<BomRow[]>([]);
+  const [isBomLoading, setIsBomLoading] = useState(false);
+  const [isBomSaving, setIsBomSaving] = useState(false);
 
   // Option Group dialog
   const [isGroupDialogOpen, setIsGroupDialogOpen] = useState(false);
@@ -615,6 +641,113 @@ export default function MenuPage() {
   };
 
   // ============================================================
+  // Addon / Option mini-BOM handlers (H4.1)
+  //
+  // Composition only. Nothing here computes HPP/WAC or touches stock —
+  // the mini-BOM is stored now and consumed by costing in a later phase.
+  // ============================================================
+
+  const ensureIngredients = useCallback(async () => {
+    if (recipeIngredients.length > 0) return;
+    try {
+      const res = await ingredientService.list({ isActive: "true", limit: 100 });
+      setRecipeIngredients(res.items);
+    } catch {
+      toast.error("Gagal memuat bahan baku");
+    }
+  }, [recipeIngredients.length]);
+
+  const openBom = async (target: BomTarget) => {
+    setBomTarget(target);
+    setBomRows([]);
+    setIsBomLoading(true);
+    try {
+      await ensureIngredients();
+      const items =
+        target.kind === "addon"
+          ? await menuService.getAddonBom(target.parentId, target.id)
+          : await menuService.getOptionBom(target.parentId, target.id);
+      setBomRows(
+        items.map((it) => ({
+          key: crypto.randomUUID(),
+          ingredientId: it.ingredientId,
+          quantity: it.quantity,
+        }))
+      );
+    } catch (error) {
+      console.error("Failed to load BOM:", error);
+      toast.error(apiErrorMessage(error, "Gagal memuat komposisi bahan"));
+    } finally {
+      setIsBomLoading(false);
+    }
+  };
+
+  const addBomRow = () => {
+    if (recipeIngredients.length === 0) {
+      toast.error("Belum ada bahan baku. Tambahkan bahan baku terlebih dahulu.");
+      return;
+    }
+    setBomRows((rows) => [
+      ...rows,
+      { key: crypto.randomUUID(), ingredientId: "", quantity: "" },
+    ]);
+  };
+
+  const updateBomRow = (key: string, patch: Partial<BomRow>) => {
+    setBomRows((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  };
+
+  const removeBomRow = (key: string) => {
+    setBomRows((rows) => rows.filter((r) => r.key !== key));
+  };
+
+  const handleSaveBom = async () => {
+    if (!bomTarget) return;
+    const filled = bomRows.filter(
+      (r) => r.ingredientId !== "" && r.quantity.trim() !== ""
+    );
+    if (filled.length !== bomRows.length) {
+      toast.error("Semua baris harus lengkap (bahan + quantity)");
+      return;
+    }
+    const seen = new Set(filled.map((r) => r.ingredientId));
+    if (seen.size !== filled.length) {
+      toast.error("Bahan baku tidak boleh duplikat");
+      return;
+    }
+    for (const r of filled) {
+      if (!(Number(r.quantity) > 0)) {
+        toast.error("Quantity harus lebih besar dari 0");
+        return;
+      }
+    }
+    setIsBomSaving(true);
+    try {
+      const items: BomItemInput[] = filled.map((r) => {
+        const ing = recipeIngredients.find((i) => i.id === r.ingredientId);
+        return {
+          ingredientId: r.ingredientId,
+          quantity: r.quantity.trim(),
+          unit: ing?.baseUnit ?? "",
+        };
+      });
+      if (bomTarget.kind === "addon") {
+        await menuService.saveAddonBom(bomTarget.parentId, bomTarget.id, items);
+      } else {
+        await menuService.saveOptionBom(bomTarget.parentId, bomTarget.id, items);
+      }
+      toast.success("Komposisi bahan berhasil disimpan");
+      setBomTarget(null);
+      setBomRows([]);
+    } catch (error) {
+      console.error("Failed to save BOM:", error);
+      toast.error(apiErrorMessage(error, "Gagal menyimpan komposisi bahan"));
+    } finally {
+      setIsBomSaving(false);
+    }
+  };
+
+  // ============================================================
   // Render
   // ============================================================
 
@@ -675,6 +808,7 @@ export default function MenuPage() {
           }}
           onDeleteAddon={handleDeleteAddon}
           onToggleAddon={handleToggleAddon}
+          onManageBom={(target) => openBom(target)}
         />
       ) : (
         <Tabs defaultValue="categories">
@@ -1115,6 +1249,146 @@ export default function MenuPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Addon / Option mini-BOM (Komposisi Bahan) dialog — H4.1 */}
+      <Dialog
+        open={!!bomTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBomTarget(null);
+            setBomRows([]);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Komposisi Bahan — {bomTarget?.kind === "addon" ? "Addon" : "Option"}{" "}
+              {bomTarget?.name}
+            </DialogTitle>
+            <DialogDescription>
+              Komposisi bahan baku per 1 unit. HPP dihitung dari harga rata-rata
+              (WAC) bahan baku, bukan dari harga jual.
+            </DialogDescription>
+          </DialogHeader>
+
+          {bomTarget && (
+            <div className="rounded-md border bg-gray-50 px-3 py-2 text-sm">
+              <span className="text-gray-500">Harga jual</span>{" "}
+              <span className="font-semibold">
+                {bomTarget.kind === "option" && bomTarget.sellingPrice > 0 ? "+" : ""}
+                {formatPrice(bomTarget.sellingPrice)}
+              </span>
+            </div>
+          )}
+
+          <div className="space-y-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+              Komposisi bahan (BOM)
+            </p>
+
+            {isBomLoading ? (
+              <div className="flex items-center justify-center py-6 text-gray-500">
+                <Loader2 className="h-5 w-5 animate-spin mr-2" /> Memuat komposisi...
+              </div>
+            ) : bomRows.length === 0 ? (
+              <p className="py-3 text-sm text-gray-500">
+                Belum ada komposisi bahan. Tambahkan bahan baku untuk komponen ini.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <div className="grid grid-cols-[1fr_100px_80px_36px] gap-2 text-xs font-medium text-gray-500">
+                  <span>Bahan Baku</span>
+                  <span>Qty / unit</span>
+                  <span>Satuan</span>
+                  <span />
+                </div>
+                {bomRows.map((row) => {
+                  const usedIds = new Set(
+                    bomRows.filter((r) => r.key !== row.key).map((r) => r.ingredientId)
+                  );
+                  const selected = recipeIngredients.find((i) => i.id === row.ingredientId);
+                  return (
+                    <div
+                      key={row.key}
+                      className="grid grid-cols-[1fr_100px_80px_36px] items-center gap-2"
+                    >
+                      <Select
+                        value={row.ingredientId || "__none__"}
+                        onValueChange={(v) =>
+                          updateBomRow(row.key, {
+                            ingredientId: v && v !== "__none__" ? v : "",
+                          })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Pilih bahan" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Pilih bahan...</SelectItem>
+                          {recipeIngredients
+                            .filter((i) => !usedIds.has(i.id))
+                            .map((ing) => (
+                              <SelectItem key={ing.id} value={ing.id}>
+                                {ing.name} ({ing.baseUnit})
+                              </SelectItem>
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        type="number"
+                        step="any"
+                        min="0"
+                        inputMode="decimal"
+                        value={row.quantity}
+                        onChange={(e) => updateBomRow(row.key, { quantity: e.target.value })}
+                        placeholder="0.020"
+                      />
+                      <div className="flex h-9 items-center justify-center rounded-md border bg-gray-50 text-sm text-gray-600">
+                        {selected?.baseUnit ?? "—"}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-9 w-9 p-0"
+                        onClick={() => removeBomRow(row.key)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={addBomRow}
+              disabled={isBomLoading || isBomSaving}
+            >
+              <Plus className="h-4 w-4 mr-1" /> Tambah Bahan
+            </Button>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setBomTarget(null);
+                setBomRows([]);
+              }}
+              disabled={isBomSaving}
+            >
+              Batal
+            </Button>
+            <Button onClick={handleSaveBom} disabled={isBomLoading || isBomSaving}>
+              {isBomSaving && <Loader2 className="h-4 w-4 animate-spin mr-1" />}
+              Simpan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Per-branch availability / price override dialog */}
       <BranchAvailabilityDialog
         product={
@@ -1174,6 +1448,8 @@ interface CustomizationViewProps {
   onAddAddon: () => void;
   onDeleteAddon: (addonId: string) => void;
   onToggleAddon: (addon: ProductAddon) => void;
+  /** Open the mini-BOM (Komposisi Bahan) editor for an addon or option. */
+  onManageBom: (target: BomTarget) => void;
 }
 
 function CustomizationView({
@@ -1191,6 +1467,7 @@ function CustomizationView({
   onAddAddon,
   onDeleteAddon,
   onToggleAddon,
+  onManageBom,
 }: CustomizationViewProps) {
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
@@ -1278,6 +1555,23 @@ function CustomizationView({
                                 )}
                               </div>
                               <div className="flex items-center gap-1">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-7 text-[11px] px-2"
+                                  title="Komposisi bahan (BOM)"
+                                  onClick={() =>
+                                    onManageBom({
+                                      kind: "option",
+                                      id: opt.id,
+                                      parentId: group.id,
+                                      name: opt.name,
+                                      sellingPrice: opt.priceAdjustment,
+                                    })
+                                  }
+                                >
+                                  Komposisi
+                                </Button>
                                 <Button variant="ghost" size="sm" className="h-7" onClick={() => onToggleOption(group.id, opt)}>
                                   {opt.isActive ? <ToggleRight className="h-3.5 w-3.5" /> : <ToggleLeft className="h-3.5 w-3.5" />}
                                 </Button>
@@ -1326,6 +1620,23 @@ function CustomizationView({
                     <span className="text-sm text-gray-500">{formatPrice(addon.price)}</span>
                   </div>
                   <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-[11px] px-2"
+                      title="Komposisi bahan (BOM)"
+                      onClick={() =>
+                        onManageBom({
+                          kind: "addon",
+                          id: addon.id,
+                          parentId: product.id,
+                          name: addon.name,
+                          sellingPrice: addon.price,
+                        })
+                      }
+                    >
+                      Komposisi
+                    </Button>
                     <Button variant="ghost" size="sm" onClick={() => onToggleAddon(addon)}>
                       {addon.isActive ? <ToggleRight className="h-4 w-4" /> : <ToggleLeft className="h-4 w-4" />}
                     </Button>
