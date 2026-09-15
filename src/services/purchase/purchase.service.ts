@@ -5,6 +5,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "@/lib/errors";
+import { round2 } from "@/lib/money";
 import {
   applyStockMovement,
   StockRefType,
@@ -33,10 +34,6 @@ import {
 // ============================================================
 
 const PURCHASE_STATUSES = ["DRAFT", "RECEIVED", "CANCELLED"] as const;
-
-function round2(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
-}
 
 export interface PurchaseItemInput {
   productId: string;

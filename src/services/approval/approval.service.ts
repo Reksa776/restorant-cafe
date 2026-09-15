@@ -1,8 +1,15 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ConflictError, NotFoundError, ValidationError } from "@/lib/errors";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { auditService } from "@/services/audit/audit.service";
+import { round2, MONEY_EPSILON } from "@/lib/money";
+import { applyStockMovement } from "@/services/stock/stock.service";
+import {
+  applyIngredientStockMovement,
+  IngredientStockRefType,
+} from "@/services/ingredient/ingredient-stock.service";
 import type { RequestStatus } from "@prisma/client";
 
 // ============================================================
@@ -16,14 +23,6 @@ async function openShiftOf(restaurantId: string, userId: string) {
   });
 }
 
-/** H3 — 2dp money rounding (ROUND_HALF_UP-equivalent on non-negative totals). */
-function round2(v: number): number {
-  return Math.round((v + Number.EPSILON) * 100) / 100;
-}
-
-/** Half-cent tolerance for Decimal comparisons. */
-const MONEY_EPSILON = 0.005;
-
 /**
  * H4.5-B2 — COLLECTED payment statuses. Refund eligibility (both at request
  * and at approval) must only ever count money actually collected, using the
@@ -31,6 +30,13 @@ const MONEY_EPSILON = 0.005;
  * UNPAID payments are never refundable.
  */
 const COLLECTED_PAYMENT_STATUSES = ["PAID", "REFUNDED"] as const;
+
+/** H5.1 — clamp a refund ratio to the 0..1 interval (Decimal-safe). */
+function clampUnitInterval(value: Prisma.Decimal): Prisma.Decimal {
+  if (value.lt(0)) return new Prisma.Decimal(0);
+  if (value.gt(1)) return new Prisma.Decimal(1);
+  return value;
+}
 
 /** H3.2 — a client may request quantities only; prices come from the DB. */
 export interface RefundItemAllocationInput {
@@ -483,6 +489,31 @@ export class ApprovalService {
           where: { id: refund.orderId },
           data: { paymentStatus: netPaid > MONEY_EPSILON ? "PAID" : "UNPAID" },
         });
+
+        // H5 — STOCK RESTORE on refund approval.
+        // Restore product + ingredient stock for the refunded quantities.
+        // Only when: (a) the order has a branchId (stock was deducted at
+        // COMPLETED time), (b) the order was COMPLETED (stock was actually
+        // consumed), and (c) the refund has quantity-based allocations.
+        // Idempotency: the guarded PENDING→APPROVED transition above
+        // guarantees this block runs exactly once per refund.
+        if (
+          refund.items.length > 0
+        ) {
+          const fullOrder = await tx.order.findUnique({
+            where: { id: refund.orderId },
+            select: { id: true, branchId: true, status: true, restaurantId: true },
+          });
+          if (fullOrder && fullOrder.branchId && fullOrder.status === "COMPLETED") {
+            await this.restoreStockForRefund(tx, {
+              restaurantId: input.restaurantId,
+              branchId: fullOrder.branchId,
+              orderId: refund.orderId,
+              refundItems: refund.items,
+              adminId: input.adminId,
+            });
+          }
+        }
       }
 
       const updated = await tx.refund.findUnique({ where: { id: refund.id } });
@@ -741,6 +772,21 @@ export class ApprovalService {
           where: { orderId: order.id, status: { in: ["UNPAID", "PENDING"] } },
           data: { status: "FAILED" },
         });
+
+        // H5 — STOCK RESTORE on cancellation of a COMPLETED order.
+        // Restore product + ingredient stock for ALL order items.
+        // Only when the order was COMPLETED (stock was actually consumed).
+        // Non-COMPLETED orders never had stock deducted, so nothing to restore.
+        // Idempotency: the guarded PENDING→APPROVED transition above
+        // guarantees this block runs exactly once per cancellation.
+        if (order.status === "COMPLETED" && order.branchId) {
+          await this.restoreStockForCancellation(tx, {
+            restaurantId: input.restaurantId,
+            branchId: order.branchId,
+            orderId: order.id,
+            adminId: input.adminId,
+          });
+        }
       }
 
       const updated = await tx.cancellationRequest.findUnique({
@@ -800,6 +846,266 @@ export class ApprovalService {
     });
 
     return decided;
+  }
+
+  // ----------------------------------------------------------
+  // H5 — STOCK RESTORE HELPERS
+  // ----------------------------------------------------------
+
+  /**
+   * H5 — Restore product + ingredient stock for refund allocations.
+   * H5.1 — ingredient restoration no longer resolves the CURRENT BOM. It
+   * EXACTLY reverses the historical IngredientStockMovement ledger written
+   * when the order reached COMPLETED (see
+   * reverseHistoricalIngredientConsumption).
+   *
+   * Called inside the decideRefund transaction. For each RefundItem:
+   * 1. Restore BranchProduct.stock (IN movement, quantity = RefundItem.quantity)
+   *    — unchanged H5 behaviour, through the existing StockMovement engine.
+   * 2. Restore BranchIngredient.stock from the historical ORDER_COMPLETED
+   *    movements, proportional to the order quantity refunded so far.
+   *
+   * This restores PHYSICAL stock only — it does NOT modify reversedCogs,
+   * financial revenue, or any cost snapshot.
+   *
+   * Idempotency: guaranteed by the guarded PENDING→APPROVED transition
+   * that must succeed before this method is called (the updateMany with
+   * status: PENDING ensures exactly one winner).
+   */
+  private async restoreStockForRefund(
+    tx: Prisma.TransactionClient,
+    input: {
+      restaurantId: string;
+      branchId: string;
+      orderId: string;
+      refundItems: Array<{ orderItemId: string; quantity: number }>;
+      adminId: string;
+    }
+  ): Promise<void> {
+    const { restaurantId, branchId, orderId, refundItems, adminId } = input;
+
+    // ALL order items — needed for the product aggregation AND for the
+    // order-quantity denominator of the ingredient restoration ratio.
+    const allOrderItems = await tx.orderItem.findMany({
+      where: { orderId },
+      select: { id: true, productId: true, quantity: true },
+    });
+    const orderItemMap = new Map(allOrderItems.map((oi) => [oi.id, oi]));
+    const totalOrderQty = allOrderItems.reduce(
+      (sum, oi) => sum.add(oi.quantity),
+      new Prisma.Decimal(0)
+    );
+
+    // Aggregate refunded quantity per product (same product may appear in
+    // multiple RefundItems if refunded in batches).
+    const refundQtyByProduct = new Map<string, number>();
+    let thisRefundQty = new Prisma.Decimal(0);
+
+    for (const ri of refundItems) {
+      const orderItem = orderItemMap.get(ri.orderItemId);
+      if (!orderItem) continue; // defensive — should never happen
+      refundQtyByProduct.set(
+        orderItem.productId,
+        (refundQtyByProduct.get(orderItem.productId) ?? 0) + ri.quantity
+      );
+      thisRefundQty = thisRefundQty.add(ri.quantity);
+    }
+
+    // 1. Restore BranchProduct.stock via atomic StockMovement IN.
+    for (const [pid, qty] of refundQtyByProduct) {
+      if (qty <= 0) continue;
+      await applyStockMovement(tx, {
+        restaurantId,
+        branchId,
+        productId: pid,
+        type: "IN",
+        quantity: qty,
+        refType: "REFUND_RESTORE",
+        refId: orderId,
+        reason: `Refund restore — order ${orderId}`,
+        userId: adminId,
+      });
+    }
+
+    // 2. Restore BranchIngredient.stock from the HISTORICAL ledger.
+    //
+    // refundRatio = RefundItem.quantity / OrderItem.quantity, applied to the
+    // ingredient consumption recorded at COMPLETED time. The ledger is
+    // aggregated per ingredient for the whole order, so the ratio is a
+    // quantity-weighted aggregate:
+    //   fraction = Σ approved RefundItem.quantity / Σ OrderItem.quantity
+    // Restoration is INCREMENTAL (this approval's fraction minus every
+    // previously approved refund's fraction), so cumulative restorations can
+    // never exceed what the order actually consumed.
+    if (totalOrderQty.gt(0)) {
+      // Includes THIS refund: its allocations were flipped to APPROVED by the
+      // guarded transition above, in this same transaction.
+      const approvedAgg = await tx.refundItem.aggregate({
+        where: { refund: { orderId, status: "APPROVED" } },
+        _sum: { quantity: true },
+      });
+      const cumRefunded = new Prisma.Decimal(approvedAgg._sum.quantity ?? 0);
+      const cumBefore = cumRefunded.sub(thisRefundQty);
+
+      await this.reverseHistoricalIngredientConsumption(tx, {
+        restaurantId,
+        orderId,
+        fractionBefore: clampUnitInterval(cumBefore.div(totalOrderQty)),
+        fractionAfter: clampUnitInterval(cumRefunded.div(totalOrderQty)),
+        refType: "REFUND_RESTORE",
+        adminId,
+      });
+    }
+  }
+
+  /**
+   * H5 — Restore product + ingredient stock for a cancelled COMPLETED order.
+   *
+   * Called inside the decideCancellation transaction. Restores ALL order
+   * items' stock (the full order was consumed at COMPLETED time).
+   *
+   * Idempotency: guaranteed by the guarded PENDING→APPROVED transition.
+   */
+  private async restoreStockForCancellation(
+    tx: Prisma.TransactionClient,
+    input: {
+      restaurantId: string;
+      branchId: string;
+      orderId: string;
+      adminId: string;
+    }
+  ): Promise<void> {
+    const { restaurantId, branchId, orderId, adminId } = input;
+
+    // Load ALL order items (full order restoration).
+    const orderItems = await tx.orderItem.findMany({
+      where: { orderId },
+      select: { id: true, productId: true, quantity: true },
+    });
+
+    // Aggregate quantity per product.
+    const qtyByProduct = new Map<string, number>();
+    for (const item of orderItems) {
+      qtyByProduct.set(
+        item.productId,
+        (qtyByProduct.get(item.productId) ?? 0) + item.quantity
+      );
+    }
+
+    // 1. Restore BranchProduct.stock via atomic StockMovement IN.
+    for (const [pid, qty] of qtyByProduct) {
+      if (qty <= 0) continue;
+      await applyStockMovement(tx, {
+        restaurantId,
+        branchId,
+        productId: pid,
+        type: "IN",
+        quantity: qty,
+        refType: "CANCELLATION_RESTORE",
+        refId: orderId,
+        reason: `Cancellation restore — order ${orderId}`,
+        userId: adminId,
+      });
+    }
+
+    // 2. Restore BranchIngredient.stock — EXACT reversal of the historical
+    // ORDER_COMPLETED ledger (the entire order was consumed at COMPLETED
+    // time). No current BOM is resolved; a missing ledger is a no-op.
+    await this.reverseHistoricalIngredientConsumption(tx, {
+      restaurantId,
+      orderId,
+      fractionBefore: new Prisma.Decimal(0),
+      fractionAfter: new Prisma.Decimal(1),
+      refType: "CANCELLATION_RESTORE",
+      adminId,
+    });
+  }
+
+  /**
+   * H5.1 — reverse HISTORICAL ingredient consumption.
+   *
+   * SOURCE OF TRUTH: the IngredientStockMovement rows with refType =
+   * ORDER_COMPLETED and refId = orderId, written once (one movement per
+   * ingredient) when the order reached COMPLETED. The CURRENT Recipe /
+   * RecipeItem / AddonIngredient / OptionIngredient are NEVER consulted, so
+   * later master-data edits (recipe grams, addon/option BOM, deactivated
+   * ingredient, deactivated product, product removed from the branch) can
+   * never distort the restoration.
+   *
+   * `fractionBefore` / `fractionAfter` are the proportion of the order's
+   * historical consumption already restored BEFORE / once this approval
+   * lands (0..1, clamped by the caller). Only the difference is restored:
+   * - fraction 0 → 1 reverses every movement exactly (× 1),
+   * - a partial refund reverses its proportional share,
+   * - cumulative restorations never exceed the historical consumption,
+   * - restoring the same share twice applies nothing.
+   *
+   * With no historical movement (order never COMPLETED, or a ledger-less
+   * legacy order) this is a NO-OP — quantities are never invented.
+   *
+   * Physical stock only — no financial field, snapshot or COGS is touched.
+   * Runs inside the caller's approval transaction, so any failure rolls the
+   * whole refund/cancellation decision back.
+   */
+  private async reverseHistoricalIngredientConsumption(
+    tx: Prisma.TransactionClient,
+    input: {
+      restaurantId: string;
+      orderId: string;
+      /** 0..1 — already restored by previous approvals. */
+      fractionBefore: Prisma.Decimal;
+      /** 0..1 — restored once this approval lands. */
+      fractionAfter: Prisma.Decimal;
+      refType: string;
+      adminId: string;
+    }
+  ): Promise<void> {
+    const { restaurantId, orderId, refType, adminId } = input;
+
+    // Historical ingredient consumption of THIS order (authorized order id),
+    // scoped to the authenticated restaurant.
+    const movements = await tx.ingredientStockMovement.findMany({
+      where: {
+        restaurantId,
+        refType: IngredientStockRefType.ORDER_COMPLETED,
+        refId: orderId,
+      },
+      select: { ingredientId: true, branchId: true, quantity: true },
+    });
+    if (movements.length === 0) return; // no history → nothing to restore
+
+    // The whole order is being restored and nothing was restored before →
+    // exact reversal (never a proportional approximation).
+    const exactFullReversal =
+      input.fractionAfter.gte(1) && input.fractionBefore.isZero();
+    const fraction = input.fractionAfter.sub(input.fractionBefore);
+    if (!exactFullReversal && fraction.lte(0)) return;
+
+    // Deterministic order (sorted ingredientId) — same deadlock-prevention
+    // pattern as consumeOrderIngredients.
+    const ordered = [...movements].sort((a, b) =>
+      a.ingredientId < b.ingredientId ? -1 : a.ingredientId > b.ingredientId ? 1 : 0
+    );
+
+    for (const movement of ordered) {
+      // Historical consumption is stored as a negative OUT quantity.
+      const consumed = new Prisma.Decimal(movement.quantity).abs();
+      if (consumed.isZero()) continue;
+      const restore = exactFullReversal ? consumed : consumed.mul(fraction);
+      if (restore.lte(0)) continue;
+      await applyIngredientStockMovement(tx, {
+        restaurantId,
+        // The branch that actually consumed the ingredient (historical).
+        branchId: movement.branchId,
+        ingredientId: movement.ingredientId,
+        type: "IN",
+        quantity: Number(restore),
+        refType,
+        refId: orderId,
+        reason: `${refType} — order ${orderId}`,
+        userId: adminId,
+      });
+    }
   }
 
   // ----------------------------------------------------------

@@ -31,6 +31,12 @@ export interface Order {
   tax: string;
   serviceCharge: string;
   grandTotal: string;
+  /**
+   * Promo/voucher code applied by the SERVER when the order was created
+   * (null/absent when no promo was used). Display-only on the print bill —
+   * the discount amount always stays the server value on the order.
+   */
+  promoCode?: string | null;
   visitorCount?: number | null;
   notes?: string;
   createdAt: string;

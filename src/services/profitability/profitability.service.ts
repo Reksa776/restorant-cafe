@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ValidationError } from "@/lib/errors";
+import { round2, num, MONEY_EPSILON } from "@/lib/money";
 import {
   resolveReportRange,
   computeRefundRevenue,
@@ -34,17 +35,6 @@ import type {
 // ============================================================
 
 const ROUND = Prisma.Decimal.ROUND_HALF_UP;
-
-function num(v: unknown): number {
-  return Math.round((Number(v ?? 0) + Number.EPSILON) * 100) / 100;
-}
-
-/** H3 — half-cent tolerance for Decimal comparisons. */
-const MONEY_EPSILON = 0.005;
-
-function round2(v: number): number {
-  return Math.round((v + Number.EPSILON) * 100) / 100;
-}
 
 /**
  * H2.1 — derive the coverage state from the DISJOINT buckets.

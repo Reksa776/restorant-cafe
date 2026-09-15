@@ -34,6 +34,7 @@ import { costingService } from "@/services/costing/costing.service";
 import type { CostingListItemDto } from "@/services/costing/costing.types";
 import { authorizedBranches } from "@/lib/auth-helpers";
 import type { AuthenticatedContext } from "@/lib/auth-helpers";
+import { num } from "@/lib/money";
 import {
   MIN_ORDER_COUNT,
   MIN_QTY_SOLD,
@@ -57,10 +58,6 @@ import type {
   MenuEngineeringThreshold,
   MenuEngineeringRequest,
 } from "./menu-engineering.types";
-
-function num(v: unknown): number {
-  return Math.round((Number(v ?? 0) + Number.EPSILON) * 100) / 100;
-}
 
 export class MenuEngineeringService {
   async getMenuEngineeringReport(

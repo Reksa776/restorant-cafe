@@ -12,6 +12,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Loader2,
   RefreshCw,
   AlertCircle,
@@ -194,6 +202,10 @@ export default function ReportsPage() {
       { label: "Net Sales", value: rupiah(s.netSales), icon: TrendingUp },
     ];
   }, [report]);
+
+  // Promo performance (additive report field) — defensive against an older
+  // payload so the section never breaks the page.
+  const promoPerformance = report?.promoPerformance ?? [];
 
   return (
     <div className="space-y-6">
@@ -479,6 +491,63 @@ export default function ReportsPage() {
                     </div>
                   ))}
                 </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Promo performance — real usage only (claims excluded). */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Promo Performance</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {promoPerformance.length === 0 ? (
+                <p className="text-sm text-gray-500 py-4 text-center">
+                  Belum ada penggunaan promo pada periode ini.
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Promo</TableHead>
+                      <TableHead className="text-right">Order</TableHead>
+                      <TableHead className="text-right">Usage</TableHead>
+                      <TableHead className="text-right">Diskon</TableHead>
+                      <TableHead className="text-right">Revenue</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {promoPerformance.map((promo) => (
+                      <TableRow key={promo.promoId}>
+                        <TableCell>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono text-xs font-semibold bg-gray-100 rounded px-1.5 py-0.5">
+                              {promo.code}
+                            </span>
+                            <span className="font-medium">{promo.name}</span>
+                            {!promo.isActive && (
+                              <Badge className="bg-gray-100 text-gray-600">
+                                Nonaktif
+                              </Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {promo.orders}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {promo.usage}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {rupiah(promo.totalDiscount)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {rupiah(promo.revenue)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               )}
             </CardContent>
           </Card>

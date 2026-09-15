@@ -82,12 +82,27 @@ function CustomerHeader() {
             <ShoppingCart className="h-4.5 w-4.5" />
             <CartBadge />
           </Link>
+          {/* Akun Saya — the account page itself shows the login dialog for
+              guests, so this link is safe for both states. */}
+          <Link
+            href="/account"
+            className={`text-xs font-medium transition-colors py-1 ${
+              pathname === "/account"
+                ? "text-brand-primary"
+                : "text-gray-400 hover:text-brand-primary/70"
+            }`}
+          >
+            Akun
+          </Link>
           {isHydrated &&
             (customer ? (
               <div className="flex items-center gap-1">
-                <span className="hidden sm:inline text-xs font-medium text-gray-700 max-w-[120px] truncate">
+                <Link
+                  href="/account"
+                  className="hidden sm:inline text-xs font-medium text-gray-700 hover:text-brand-primary max-w-[120px] truncate"
+                >
                   {customer.name || customer.email}
-                </span>
+                </Link>
                 <button
                   type="button"
                   onClick={async () => {

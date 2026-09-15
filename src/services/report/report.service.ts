@@ -1,6 +1,7 @@
 import { Prisma, PaymentStatus, OrderType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ValidationError } from "@/lib/errors";
+import { num } from "@/lib/money";
 
 // ============================================================
 // Sales report aggregation (server-side only — never trusts client
@@ -224,11 +225,7 @@ function revenueScopeWhere(
   };
 }
 
-/** Round a numeric/Decimal/bigint to a safe JS number (2dp). */
-function num(v: unknown): number {
-  const n = Number(v ?? 0);
-  return Math.round(n * 100) / 100;
-}
+
 
 // ============================================================
 // H3 PATCH — refund-aware net revenue (single source of truth).
@@ -392,6 +389,89 @@ function orderFragment(
   `;
 }
 
+/**
+ * Max number of points a densified daily series may contain. A range longer
+ * than this stays sparse — a chart with thousands of points is useless and the
+ * payload would balloon for no benefit.
+ */
+const MAX_DAILY_SERIES_POINTS = 366;
+
+/**
+ * Dense day keys (`YYYY-MM-DD`, UTC parts) covering [start, end].
+ *
+ * The keys are derived from UTC date parts because the grouped queries bucket on
+ * the STORED `createdAt` value (Prisma writes DateTime as UTC) — the same basis
+ * the existing `HOUR(createdAt)` aggregation uses. Keeping both sides on UTC
+ * means the densified keys line up exactly with the grouped rows and with the
+ * range boundary, so no day is duplicated or dropped.
+ * Returns `null` when the range is too long to densify.
+ */
+function buildDailyKeys(start: Date, end: Date): string[] | null {
+  const cursor = new Date(
+    Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate())
+  );
+  const last = Date.UTC(
+    end.getUTCFullYear(),
+    end.getUTCMonth(),
+    end.getUTCDate()
+  );
+  const keys: string[] = [];
+  while (cursor.getTime() <= last) {
+    if (keys.length >= MAX_DAILY_SERIES_POINTS) return null;
+    keys.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return keys;
+}
+
+/**
+ * Merge grouped daily rows into a dense, ascending series. Days without orders
+ * are filled with zeros so the chart axis has no holes. When the range is too
+ * long to densify, the sparse grouped rows are returned as-is.
+ */
+function densifyDailySeries(
+  range: ReportRange,
+  rows: Array<{
+    day: Date | string;
+    orders: number | bigint;
+    value: number | string;
+  }>
+): Array<{ date: string; orders: number; value: number }> {
+  const toKey = (day: Date | string): string => {
+    if (day instanceof Date) {
+      // Defensive: drivers that hand a DATE back as a Date object build it at
+      // LOCAL midnight, so local date parts (never toISOString) are correct.
+      const year = day.getFullYear();
+      const month = String(day.getMonth() + 1).padStart(2, "0");
+      const date = String(day.getDate()).padStart(2, "0");
+      return `${year}-${month}-${date}`;
+    }
+    // The queries select `DATE_FORMAT(..., '%Y-%m-%d')`, so this is a plain
+    // "YYYY-MM-DD" string with no timezone conversion involved.
+    return String(day).slice(0, 10);
+  };
+
+  const grouped = new Map(
+    rows.map((row) => [
+      toKey(row.day),
+      { orders: Number(row.orders), value: num(row.value) },
+    ])
+  );
+
+  const keys = buildDailyKeys(range.start, range.end);
+  if (!keys) {
+    return [...grouped.entries()]
+      .map(([date, v]) => ({ date, orders: v.orders, value: v.value }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  return keys.map((date) => ({
+    date,
+    orders: grouped.get(date)?.orders ?? 0,
+    value: grouped.get(date)?.value ?? 0,
+  }));
+}
+
 export class ReportService {
   // ============================================================
   // WAVE 6 — LAPORAN PEMBELIAN
@@ -458,7 +538,7 @@ export class ReportService {
         ? Prisma.sql`AND p.\`branchId\` IN (${Prisma.join([...branchFilters])})`
         : Prisma.empty;
 
-    const [agg, receivedCountAll, cancelledCountAll, itemAgg, detailRows, productRows, supplierRows] =
+    const [agg, receivedCountAll, cancelledCountAll, itemAgg, detailRows, productRows, supplierRows, dailyRows] =
       await Promise.all([
         prisma.purchase.aggregate({
           where,
@@ -575,6 +655,32 @@ export class ReportService {
           GROUP BY s.\`id\`, s.\`name\`
           ORDER BY totalValue DESC
         `,
+        // Daily trend (purchase value + count per day) over the SAME scoped
+        // set as the summary, grouped the same way as the sales report's daily
+        // series (`DATE_FORMAT` string, no driver timezone conversion).
+        // Purchase has no paid/unpaid state, so this is purchase VALUE
+        // (planned + received), never a cash-flow claim.
+        prisma.$queryRaw<
+          Array<{
+            day: Date | string;
+            orders: number | bigint;
+            value: number | string;
+          }>
+        >`
+          SELECT DATE_FORMAT(p.\`createdAt\`, '%Y-%m-%d') AS day,
+                 COUNT(*) AS orders,
+                 COALESCE(SUM(p.\`total\`), 0) AS value
+          FROM \`purchase\` p
+          WHERE p.\`restaurantId\` = ${restaurantId}
+            AND p.\`createdAt\` >= ${range.start}
+            AND p.\`createdAt\` <= ${range.end}
+            ${pBranchSql}
+            ${branchId ? Prisma.sql`AND p.\`branchId\` = ${branchId}` : Prisma.empty}
+            ${supplierId ? Prisma.sql`AND p.\`supplierId\` = ${supplierId}` : Prisma.empty}
+            ${status ? Prisma.sql`AND p.\`status\` = ${status}` : Prisma.empty}
+          GROUP BY DATE_FORMAT(p.\`createdAt\`, '%Y-%m-%d')
+          ORDER BY day ASC
+        `,
       ]);
 
     // Created-by resolution: RECEIVED purchases expose the receiving user via
@@ -655,6 +761,12 @@ export class ReportService {
         numberOfPurchases: Number(r.purchases),
         quantity: num(r.qty),
         totalValue: num(r.totalValue),
+      })),
+      // Densified daily purchasing trend (same convention as the sales report).
+      dailySeries: densifyDailySeries(range, dailyRows).map((d) => ({
+        date: d.date,
+        purchases: d.orders,
+        value: d.value,
       })),
       pagination: {
         page,
@@ -928,6 +1040,7 @@ export class ReportService {
       bestSellerRows,
       categoryProductRows,
       hourlyRows,
+      dailyRows,
       refundRevenue,
     ] = await Promise.all([
       prisma.order.aggregate({
@@ -1013,6 +1126,36 @@ export class ReportService {
           ${filters?.paymentMethod ? Prisma.sql`AND \`id\` IN (SELECT \`orderId\` FROM \`payment\` WHERE \`method\` = ${filters.paymentMethod} AND \`status\` = 'PAID')` : Prisma.empty}
         GROUP BY HOUR(\`createdAt\`)
         ORDER BY hour ASC
+      `,
+      // Daily trend (sales + order count per day) — same revenue set as the
+      // summary, so Σ value across the series equals summary.totalSales.
+      // `DATE_FORMAT` (not `DATE()`) so the day arrives as a plain string that
+      // no driver-level Date/timezone conversion can shift by a day. Grouped on
+      // the stored value, the same basis as the hourly query above.
+      prisma.$queryRaw<
+        Array<{
+          day: Date | string;
+          orders: number | bigint;
+          value: number | string;
+        }>
+      >`
+        SELECT DATE_FORMAT(\`createdAt\`, '%Y-%m-%d') AS day,
+               COUNT(*) AS orders,
+               COALESCE(SUM(\`grandTotal\`), 0) AS value
+        FROM \`order\`
+        WHERE \`restaurantId\` = ${restaurantId}
+          ${branchFragment(branchFilters)}
+          AND \`createdAt\` >= ${range.start}
+          AND \`createdAt\` <= ${range.end}
+          AND \`status\` <> 'CANCELLED'
+          AND (
+            \`paymentStatus\` = 'PAID'
+            OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = \`order\`.\`id\` AND pm.\`status\` = 'REFUNDED')
+          )
+          ${filters?.orderType ? Prisma.sql`AND \`orderType\` = ${filters.orderType}` : Prisma.empty}
+          ${filters?.paymentMethod ? Prisma.sql`AND \`id\` IN (SELECT \`orderId\` FROM \`payment\` WHERE \`method\` = ${filters.paymentMethod} AND \`status\` = 'PAID')` : Prisma.empty}
+        GROUP BY DATE_FORMAT(\`createdAt\`, '%Y-%m-%d')
+        ORDER BY day ASC
       `,
       // H3 PATCH — refund-aware net revenue (product-revenue basis).
       computeRefundRevenue({
@@ -1174,6 +1317,87 @@ export class ReportService {
       revenue: Number(row.revenue),
     }));
 
+    // Daily trend — densified so the chart axis has no holes. `sales` uses the
+    // same refund-aware revenue basis as summary.totalSales.
+    const dailySeries = densifyDailySeries(range, dailyRows).map((d) => ({
+      date: d.date,
+      orders: d.orders,
+      sales: d.value,
+    }));
+
+    // ------------------------------------------------------------
+    // Promo performance (F4) — REAL promo usage only.
+    //
+    // Uses the SAME revenue set as every other sales metric (status !=
+    // CANCELLED, PAID or collected-then-refunded, order date inside the
+    // range, branch + order-type + payment-method filters applied):
+    //  - ORDERS   = valid orders that actually carry the promo (Order.promoId)
+    //  - USAGE    = PromoUsage rows WITH an order attached — a CLAIM has
+    //               orderId = NULL and is NEVER counted as usage
+    //  - DISCOUNT = Σ persisted Order.discount (never recomputed from
+    //               Promo.type / Promo.value)
+    //  - REVENUE  = Σ Order.grandTotal — the same gross-revenue basis as
+    //               summary.totalSales / grossRevenue
+    //
+    // Two grouped aggregations + one bounded promo lookup: no N+1, no order
+    // rows pulled into memory.
+    // ------------------------------------------------------------
+    const [promoOrderRows, promoUsageRows] = await Promise.all([
+      prisma.order.groupBy({
+        by: ["promoId"],
+        where: { ...soldWhere, promoId: { not: null } },
+        _count: { _all: true },
+        _sum: { discount: true, grandTotal: true },
+        orderBy: { _sum: { discount: "desc" } },
+        take: 50,
+      }),
+      prisma.promoUsage.groupBy({
+        by: ["promoId"],
+        where: { orderId: { not: null }, order: { is: soldWhere } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const promoIds = promoOrderRows
+      .map((row) => row.promoId)
+      .filter((id): id is string => id !== null);
+    const promoRows = promoIds.length
+      ? await prisma.promo.findMany({
+          where: { id: { in: promoIds }, restaurantId },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            type: true,
+            isActive: true,
+          },
+        })
+      : [];
+    const promoById = new Map(promoRows.map((promo) => [promo.id, promo]));
+    const usageByPromo = new Map(
+      promoUsageRows.map((row) => [row.promoId, row._count._all])
+    );
+
+    const promoPerformance = promoOrderRows
+      .map((row) => {
+        const promo = row.promoId ? promoById.get(row.promoId) : undefined;
+        // Tenant safety: a promo that is not this restaurant's is never
+        // surfaced (orders are already restaurant-scoped).
+        if (!promo) return null;
+        return {
+          promoId: promo.id,
+          code: promo.code,
+          name: promo.name,
+          type: promo.type,
+          isActive: promo.isActive,
+          orders: row._count._all,
+          usage: usageByPromo.get(promo.id) ?? 0,
+          totalDiscount: num(row._sum.discount),
+          revenue: num(row._sum.grandTotal),
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
+
     const paidCount = paidOrderCount;
     return {
       period,
@@ -1212,6 +1436,8 @@ export class ReportService {
       bestSellingProducts,
       bestCategories,
       busiestHours,
+      dailySeries,
+      promoPerformance,
     };
   }
 

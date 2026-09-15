@@ -8,6 +8,7 @@ import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import { OrderScanner } from "@/components/admin/order-scanner";
+import { DashboardAnalytics } from "@/components/admin/analytics/dashboard-analytics";
 import {
   ShoppingCart,
   Clock,
@@ -221,6 +222,9 @@ export default function DashboardPage() {
         </Card>
       </div>
       )}
+
+      {/* Analytics — role-aware (kasir tidak melihat COGS/pembelian) */}
+      <DashboardAnalytics />
 
       {/* Recent Orders */}
       <Card>

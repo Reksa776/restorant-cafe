@@ -180,6 +180,8 @@ function CustomizationModal({
   product,
   onClose,
   onAdd,
+  relatedProducts,
+  onSelectRelated,
   initialSelections,
   initialAddons,
   initialQuantity,
@@ -188,6 +190,13 @@ function CustomizationModal({
   product: Product;
   onClose: () => void;
   onAdd: (state: CustomizationState) => void;
+  /**
+   * "Sering Dibeli Bersama" for THIS product — fetched by the parent from
+   * the existing server-side recommendation engine (productId context).
+   * Optional: absent/empty simply omits the section.
+   */
+  relatedProducts?: Product[];
+  onSelectRelated?: (product: Product) => void;
   initialSelections?: Record<string, string | string[]>;
   initialAddons?: Record<string, number>;
   initialQuantity?: number;
@@ -491,6 +500,50 @@ function CustomizationModal({
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent resize-none"
             />
           </div>
+
+          {/* Sering Dibeli Bersama — passing productId activates the
+              EXISTING "frequently bought together" tier server-side; the
+              remaining tiers backfill when co-purchase data is thin, so the
+              section is never broken/empty just because FBT has no data.
+              Inactive / unavailable / other-restaurant products are already
+              filtered by the API, and the viewed product is filtered out by
+              the parent (it may legitimately appear via favorites/best
+              sellers). */}
+          {relatedProducts && relatedProducts.length > 0 && (
+            <div>
+              <h3 className="text-sm font-medium mb-2">
+                Sering Dibeli Bersama
+              </h3>
+              <div className="space-y-1.5">
+                {relatedProducts.map((related) => (
+                  <button
+                    key={related.id}
+                    type="button"
+                    onClick={() => onSelectRelated?.(related)}
+                    className="w-full flex items-center justify-between gap-2 p-3 rounded-lg border border-gray-200 hover:border-brand-accent transition-colors text-left"
+                  >
+                    <span className="min-w-0">
+                      <span className="block text-sm truncate">
+                        {related.name}
+                      </span>
+                      <span className="block text-xs text-gray-500">
+                        Rp{Number(related.price).toLocaleString("id-ID")}
+                      </span>
+                    </span>
+                    <span
+                      className={`flex-shrink-0 text-xs font-medium rounded-full px-2.5 py-1 ${
+                        isSoldOut(related)
+                          ? "text-gray-400 bg-gray-100"
+                          : "text-brand-primary border border-brand-primary/30"
+                      }`}
+                    >
+                      {isSoldOut(related) ? "Habis" : "Tambah"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Sticky Footer */}
@@ -781,6 +834,15 @@ function MenuContent() {
   >("popular");
   // F4 — "🔥 Terlaris" (real sales from the server-side aggregation).
   const [bestSellers, setBestSellers] = useState<Product[]>([]);
+  // FBT — "Sering Dibeli Bersama" for the product currently open in the
+  // customization modal (productId context of the existing engine). The
+  // result is KEYED by the product it was fetched for, so the previously
+  // opened product's list can never flash during a new fetch — no clearing
+  // setState needed.
+  const [relatedForProduct, setRelatedForProduct] = useState<{
+    productId: string;
+    products: Product[];
+  } | null>(null);
 
   // F5 — menu filtering (search, category, Terlaris/Rekomendasi quick views,
   // Tersedia / Sold Out). All filters are applied CLIENT-SIDE over the
@@ -1068,6 +1130,62 @@ function MenuContent() {
       setCustomizingProduct(product);
     });
   }, [products, items]);
+
+  // "Sering Dibeli Bersama" — when a product is OPENED (productId context),
+  // ask the EXISTING recommendation engine for that product's picks. The
+  // server aggregates everything (frequently-bought-together first, then the
+  // existing fallback tiers); no order data reaches the browser, no client-
+  // side aggregation, no polling. Guests and logged-in customers share this
+  // exact call — personalization (tier 2) still applies when a session
+  // cookie is present, and the API stays restaurant + branch scoped.
+  // Keyed on PRIMITIVE ids only, so it runs once per opened product (no
+  // reload loop) and a stale response can never overwrite a newer product.
+  useEffect(() => {
+    const openProductId = customizingProduct?.id;
+    const scopedRestaurantId = restaurant?.id;
+    if (!openProductId || !scopedRestaurantId) return;
+
+    let cancelled = false;
+
+    api
+      .get("/public/menu/recommendations", {
+        params: {
+          restaurantId: scopedRestaurantId,
+          productId: openProductId,
+          limit: 4,
+          branchCode:
+            tableContext?.branchCode ?? customerBranch?.branchCode ?? undefined,
+        },
+      })
+      .then((res) => {
+        if (cancelled) return;
+        setRelatedForProduct({
+          productId: openProductId,
+          products: (res.data.data.products || [])
+            .map((p: Product) => normalizeProduct(p))
+            // Never recommend the product being viewed as itself. The engine
+            // already dedupes across tiers; this only drops the viewed
+            // product (it can appear via favorites/best sellers/fallback).
+            .filter((p: Product) => p.id !== openProductId)
+            .slice(0, 3),
+        });
+      })
+      .catch(() => {
+        // Progressive enhancement — a failure must never break the modal.
+        if (!cancelled) {
+          setRelatedForProduct({ productId: openProductId, products: [] });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    customizingProduct?.id,
+    restaurant?.id,
+    tableContext?.branchCode,
+    customerBranch?.branchCode,
+  ]);
 
   /**
    * Get total quantity of a simple product in cart (no customization).
@@ -1719,9 +1837,25 @@ function MenuContent() {
       {/* Customization Modal */}
       {customizingProduct && (
         <CustomizationModal
+          // Remount per product so switching (e.g. via "Sering Dibeli
+          // Bersama") always starts from a clean customization state.
+          key={customizingProduct.id}
           product={customizingProduct}
           onClose={() => { setCustomizingProduct(null); setEditingCartItemIndex(null); }}
           onAdd={(state) => handleCustomizeAdd(customizingProduct, state)}
+          relatedProducts={
+            // Only show the list fetched for THIS product (see state above).
+            relatedForProduct?.productId === customizingProduct.id
+              ? relatedForProduct.products
+              : []
+          }
+          onSelectRelated={(related) => {
+            // Reuse the EXISTING add flow: a product that needs options opens
+            // this same modal for it (fresh state via the key above); a
+            // simple product goes straight to the cart (handleAdd).
+            setEditingCartItemIndex(null);
+            handleAdd(related);
+          }}
           initialSelections={
             editingCartItemIndex !== null && items[editingCartItemIndex]
               ? (() => {

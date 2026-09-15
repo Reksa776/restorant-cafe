@@ -18,6 +18,13 @@ import { useBranchContext } from "@/hooks/use-branch-context";
 // hint, never an authorization boundary). "Semua Cabang" is offered only
 // to non-scoped users; branch-scoped users (e.g. kasir) can only switch
 // between the branches they are assigned to.
+//
+// Like the sidebar BranchSelector, a change triggers a full page reload.
+// `useBranchContext` is NOT a React context (there is no Provider), so
+// `setBranchId` only updates this component's own state + localStorage;
+// other consumers (the page's data fetch, Dashboard Analytics) would never
+// learn about the change. Reloading makes every page refetch scoped to the
+// new branch — simple and race-free, and it is the documented behaviour.
 // ============================================================
 
 export function ReportBranchFilter() {
@@ -51,7 +58,12 @@ export function ReportBranchFilter() {
       <Building2 className="h-4 w-4 shrink-0 text-gray-400" />
       <Select
         value={value}
-        onValueChange={(v) => setBranchId(v === "ALL" ? null : v)}
+        onValueChange={(v) => {
+          setBranchId(v === "ALL" ? null : v);
+          // Reload so every page refetches scoped to the new branch. Simple
+          // and race-free — admin data is server-scoped via x-branch-id.
+          window.location.reload();
+        }}
       >
         <SelectTrigger className="w-auto min-w-[150px] text-sm">
           <SelectValue>{triggerLabel}</SelectValue>

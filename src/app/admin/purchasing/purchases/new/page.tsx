@@ -41,6 +41,59 @@ function emptyIngredientItem(): DraftIngredientItem {
   return { ingredientId: "", quantity: "1", unit: "", unitCost: "" };
 }
 
+/** The ingredient list endpoint caps `limit` at 100 (GetIngredientsSchema). */
+const INGREDIENT_PAGE_SIZE = 100;
+/** Remaining pages are fetched in small batches to avoid request bursts. */
+const INGREDIENT_FETCH_CONCURRENCY = 5;
+
+/**
+ * Loads EVERY active ingredient by paging through the existing list endpoint.
+ *
+ * Each request stays within the API's max `limit` of 100: page 1 reveals
+ * `totalPages`, then the remaining pages are fetched in bounded batches.
+ * Results are de-duplicated by id and filtered to active ingredients only.
+ */
+async function fetchAllActiveIngredients(): Promise<Ingredient[]> {
+  const first = await ingredientService.list({
+    isActive: "true",
+    page: 1,
+    limit: INGREDIENT_PAGE_SIZE,
+  });
+
+  const byId = new Map<string, Ingredient>();
+  for (const item of first.items) byId.set(item.id, item);
+
+  const totalPages = Math.max(1, first.totalPages);
+  for (
+    let start = 2;
+    start <= totalPages;
+    start += INGREDIENT_FETCH_CONCURRENCY
+  ) {
+    const pages: number[] = [];
+    for (
+      let page = start;
+      page < start + INGREDIENT_FETCH_CONCURRENCY && page <= totalPages;
+      page++
+    ) {
+      pages.push(page);
+    }
+    const results = await Promise.all(
+      pages.map((page) =>
+        ingredientService.list({
+          isActive: "true",
+          page,
+          limit: INGREDIENT_PAGE_SIZE,
+        })
+      )
+    );
+    for (const result of results) {
+      for (const item of result.items) byId.set(item.id, item);
+    }
+  }
+
+  return [...byId.values()].filter((i) => i.isActive);
+}
+
 /**
  * Buat Pembelian — G.2: BAHAN BAKU ONLY.
  *
@@ -73,11 +126,11 @@ export default function NewPurchasePage() {
     setLoadingOptions(true);
     Promise.all([
       supplierService.list(),
-      ingredientService.list({ limit: 200 }),
+      fetchAllActiveIngredients(),
     ])
-      .then(([supRes, ingRes]) => {
+      .then(([supRes, allIngredients]) => {
         setSuppliers(supRes.items.filter((s) => s.isActive));
-        setIngredients(ingRes.items.filter((i) => i.isActive));
+        setIngredients(allIngredients);
       })
       .catch((error) => {
         console.error("Failed to load purchase options:", error);

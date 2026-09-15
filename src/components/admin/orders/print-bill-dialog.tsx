@@ -366,6 +366,14 @@ function FullBill({
           <span className="text-gray-500">Customer</span>
           <span>{order.customer?.name || "Guest"}</span>
         </div>
+        {/* Branch — only when the order carries it (admin endpoints already
+            include name/code). Absent branch simply omits the row. */}
+        {order.branch?.name && (
+          <div className="flex justify-between gap-2">
+            <span className="text-gray-500">Cabang</span>
+            <span>{order.branch.name}</span>
+          </div>
+        )}
       </div>
 
       {/* Items */}
@@ -436,6 +444,14 @@ function FullBill({
           <span className="text-gray-500">Subtotal</span>
           <span className="tabular-nums">{rupiah(order.subtotal)}</span>
         </div>
+        {/* Promo code — the server-stored code only; the discount amount is
+            never recomputed here (order.discount is the server value). */}
+        {order.promoCode && order.promoCode.trim().length > 0 && (
+          <div className="flex justify-between gap-2">
+            <span className="text-gray-500">Promo</span>
+            <span className="font-mono">{order.promoCode}</span>
+          </div>
+        )}
         {Number(order.discount) > 0 && (
           <div className="flex justify-between gap-2">
             <span className="text-gray-500">Diskon</span>
@@ -483,6 +499,23 @@ function FullBill({
                 </span>
               </div>
             )}
+            {/* Expiry of an UNSETTLED payment intent (e.g. a QRIS awaiting
+                payment). Safe, non-secret timestamp already present in the
+                admin order payload — no providerRef / paymentUrl / qrString
+                / qrImage / rawData is ever printed. */}
+            {!latestPayment.paidAt &&
+              latestPayment.expiresAt &&
+              !Number.isNaN(new Date(latestPayment.expiresAt).getTime()) && (
+                <div className="flex justify-between gap-2">
+                  <span className="text-gray-500">Berlaku s/d</span>
+                  <span>
+                    {new Date(latestPayment.expiresAt).toLocaleString("id-ID", {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                  </span>
+                </div>
+              )}
           </>
         )}
         {cashierAudit && (

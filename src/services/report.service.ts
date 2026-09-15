@@ -28,6 +28,10 @@ export interface SalesReport {
     totalServiceCharge: number;
     totalRefund: number;
     netSales: number;
+    /** H3.4 — original eligible sales revenue (Σ grandTotal, incl. refunded). */
+    grossRevenue: number;
+    /** H3.4 — approved refund amount reversed out of revenue. */
+    refundReversal: number;
   };
   paymentBreakdown: Record<
     "cash" | "qris" | "va" | "other" | "unpaid" | "failed" | "refunded" | "cancelled",
@@ -47,6 +51,31 @@ export interface SalesReport {
   }>;
   bestCategories: Array<{ name: string; quantitySold: number; revenue: number }>;
   busiestHours: Array<{ hour: number; orders: number; revenue: number }>;
+  /**
+   * Daily trend, densified (zero-filled) so a chart axis has no holes.
+   * `sales` shares summary.totalSales' refund-aware revenue basis, therefore
+   * Σ sales across the series equals summary.totalSales. `date` is `YYYY-MM-DD`
+   * (DB-side UTC convention, same as busiestHours' HOUR()). Empty when the
+   * range is too long to densify (> 366 days) — the sparse rows are returned
+   * instead, so a caller must never assume a fixed length.
+   */
+  dailySeries: Array<{ date: string; orders: number; sales: number }>;
+  /**
+   * Promo performance for the same period/filters (real usage only — claims
+   * are never counted; the discount is the persisted Order.discount and the
+   * revenue is the same gross basis as summary.totalSales).
+   */
+  promoPerformance: Array<{
+    promoId: string;
+    code: string;
+    name: string;
+    type: string;
+    isActive: boolean;
+    orders: number;
+    usage: number;
+    totalDiscount: number;
+    revenue: number;
+  }>;
 }
 
 export interface ReportCommonFilters {
@@ -230,6 +259,12 @@ export interface PurchaseReport {
     quantity: number;
     totalValue: number;
   }>;
+  /**
+   * Daily purchasing trend, densified exactly like the sales report's
+   * `dailySeries`. `value` is purchase VALUE (Purchase.total) — the model has
+   * no paid/unpaid state, so this is never a cash-flow claim.
+   */
+  dailySeries: Array<{ date: string; purchases: number; value: number }>;
   pagination: {
     page: number;
     limit: number;
