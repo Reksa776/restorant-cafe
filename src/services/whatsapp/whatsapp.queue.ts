@@ -96,6 +96,47 @@ export async function queueWhatsAppNotification(
 }
 
 /**
+ * Queue a WhatsApp notification for a reservation lifecycle event.
+ *
+ * Idempotency: the jobId is keyed by the reservation's internal id + the
+ * CONFIGURED status (reservation-{reservationId}-{status}). A reservation
+ * status can only be reached once (the service transition matrix + its
+ * conditional update reject a second identical transition), so a duplicate
+ * enqueue of the SAME lifecycle event collapses into the same BullMQ job
+ * while distinct statuses of the same reservation always get distinct jobs.
+ */
+export async function queueWhatsAppReservation(
+  restaurantId: string,
+  reservationId: string,
+  status: string,
+  to: string,
+  message: string
+) {
+  const queue = getWhatsAppQueue();
+
+  const jobId = `reservation-${reservationId}-${status}`;
+
+  const job = await queue.add(
+    "send_message",
+    {
+      restaurantId,
+      type: "send_message",
+      to,
+      message,
+    },
+    {
+      jobId,
+      priority: 1,
+    }
+  );
+
+  console.log(
+    `[WhatsApp Queue] Reservation notification job ${job.id} queued for reservation ${reservationId} (${status})`
+  );
+  return job;
+}
+
+/**
  * Queue a WhatsApp connection request.
  */
 export async function queueWhatsAppConnect(restaurantId: string) {

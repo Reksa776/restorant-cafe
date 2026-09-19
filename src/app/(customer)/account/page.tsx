@@ -2,12 +2,21 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { BadgePercent, Loader2, LogIn, Receipt, User } from "lucide-react";
+import {
+  BadgePercent,
+  CalendarDays,
+  Loader2,
+  LogIn,
+  Receipt,
+  User,
+} from "lucide-react";
 import api from "@/lib/axios";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCart } from "@/hooks/use-cart";
 import { useCustomerAuth } from "@/hooks/use-customer-auth";
 import { CustomerAuthDialog } from "@/components/customer/auth-dialog";
+import { ReservationStatusBadge } from "@/components/customer/reservation-status-badge";
+import { formatReservationDate, formatTimeSlot } from "@/app/(customer)/reservasi/reservation-flow";
 
 // ============================================================
 // Customer Account ("Akun Saya")
@@ -57,6 +66,19 @@ interface AccountOrder {
   createdAt: string;
   branchName: string | null;
   itemCount: number;
+}
+
+interface AccountReservation {
+  code: string;
+  status: string;
+  reservationDate: string;
+  startMinutes: number;
+  durationMinutes: number;
+  partySize: number;
+  guestName: string;
+  branch: { code: string; name: string } | null;
+  table: { number: number; name: string | null } | null;
+  createdAt: string;
 }
 
 const VOUCHER_STATE_LABEL: Record<VoucherState, string> = {
@@ -169,6 +191,15 @@ export default function AccountPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
+  // Reservations (paginated)
+  const [reservations, setReservations] = useState<AccountReservation[]>([]);
+  const [reservationsLoading, setReservationsLoading] = useState(true);
+  const [reservationsError, setReservationsError] = useState<string | null>(
+    null
+  );
+  const [reservationPage, setReservationPage] = useState(1);
+  const [reservationTotalPages, setReservationTotalPages] = useState(1);
+
   // Vouchers — fetched once per login/retry (independent of pagination).
   useEffect(() => {
     if (!isHydrated || !customerId) return;
@@ -224,17 +255,53 @@ export default function AccountPage() {
     };
   }, [isHydrated, customerId, page, reloadKey]);
 
+  // Reservations — refetched on page change only.
+  useEffect(() => {
+    if (!isHydrated || !customerId) return;
+
+    let cancelled = false;
+    api
+      .get("/public/customer/account/reservations", {
+        params: { page: reservationPage, limit: 10 },
+      })
+      .then((res) => {
+        if (cancelled) return;
+        setReservations(res.data?.data?.items || []);
+        setReservationTotalPages(res.data?.data?.totalPages || 1);
+        setReservationsError(null);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setReservations([]);
+        setReservationsError("Gagal memuat reservasi. Coba lagi.");
+      })
+      .finally(() => {
+        if (!cancelled) setReservationsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isHydrated, customerId, reservationPage, reloadKey]);
+
   const retry = () => {
     setVouchersLoading(true);
     setOrdersLoading(true);
+    setReservationsLoading(true);
     setVouchersError(null);
     setOrdersError(null);
+    setReservationsError(null);
     setReloadKey((k) => k + 1);
   };
 
   const goToPage = (next: number) => {
     setOrdersLoading(true);
     setPage(next);
+  };
+
+  const goToReservationPage = (next: number) => {
+    setReservationsLoading(true);
+    setReservationPage(next);
   };
 
   const handleLogout = async () => {
@@ -493,6 +560,102 @@ export default function AccountPage() {
                   type="button"
                   onClick={() => goToPage(page + 1)}
                   disabled={page >= totalPages || ordersLoading}
+                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Berikutnya
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
+      {/* Reservasi Saya — the logged-in customer's own reservations. */}
+      <section aria-label="Reservasi Saya">
+        <SectionTitle
+          icon={<CalendarDays className="h-5 w-5 text-brand-primary" />}
+        >
+          Reservasi Saya
+        </SectionTitle>
+        {reservationsLoading ? (
+          <div className="space-y-3">
+            <LoadingCard />
+            <LoadingCard />
+          </div>
+        ) : reservationsError ? (
+          <ErrorCard message={reservationsError} onRetry={retry} />
+        ) : reservations.length === 0 ? (
+          <div className="bg-white rounded-xl border border-dashed border-gray-200 p-6 text-center">
+            <p className="text-xs text-gray-400">Belum ada reservasi</p>
+            <Link
+              href="/reservasi"
+              className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium bg-brand-primary text-brand-primary-foreground rounded-full px-4 py-2 hover:bg-brand-primary/90 transition-colors"
+            >
+              <CalendarDays className="h-3.5 w-3.5" />
+              Reservasi Meja
+            </Link>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-3">
+              {reservations.map((reservation) => (
+                <Link
+                  key={reservation.code}
+                  href={`/account/reservasi/${reservation.code}`}
+                  className="block bg-white rounded-xl border border-gray-200 p-4 hover:border-brand-accent transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono text-xs font-medium">
+                      {reservation.code}
+                    </span>
+                    <ReservationStatusBadge status={reservation.status} />
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs text-gray-500">
+                    <span>
+                      {formatReservationDate(reservation.reservationDate)}
+                    </span>
+                    <span>·</span>
+                    <span>
+                      {formatTimeSlot(
+                        reservation.startMinutes,
+                        reservation.durationMinutes
+                      )}
+                    </span>
+                    {reservation.branch && (
+                      <>
+                        <span>·</span>
+                        <span className="truncate">
+                          {reservation.branch.name}
+                        </span>
+                      </>
+                    )}
+                    <span>·</span>
+                    <span>{reservation.partySize} orang</span>
+                  </div>
+                </Link>
+              ))}
+            </div>
+
+            {reservationTotalPages > 1 && (
+              <div className="flex items-center justify-between gap-2 mt-3">
+                <button
+                  type="button"
+                  onClick={() => goToReservationPage(reservationPage - 1)}
+                  disabled={reservationPage <= 1 || reservationsLoading}
+                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Sebelumnya
+                </button>
+                <span className="text-xs text-gray-500">
+                  Halaman {reservationPage} / {reservationTotalPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => goToReservationPage(reservationPage + 1)}
+                  disabled={
+                    reservationPage >= reservationTotalPages ||
+                    reservationsLoading
+                  }
                   className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Berikutnya

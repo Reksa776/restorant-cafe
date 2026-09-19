@@ -130,6 +130,29 @@ enum TableStatus {
   MAINTENANCE
 }
 
+// ============================================================
+// PHASE R1 — TABLE RESERVATION lifecycle.
+//
+// PENDING   — created, not yet acknowledged by staff
+// CONFIRMED — acknowledged/accepted (counts as an honoured booking)
+// SEATED    — guest arrived; the table is in use (check-in)
+// COMPLETED — visit finished normally
+// CANCELLED — cancelled by guest or staff
+// NO_SHOW   — guest never arrived
+//
+// Only CANCELLED and NO_SHOW release the slot; every other status
+// (PENDING included) holds capacity, so an unacknowledged online
+// booking can never be double-sold.
+// ============================================================
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  SEATED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
 enum NotificationType {
   ORDER_RECEIVED
   ORDER_CONFIRMED
@@ -539,6 +562,79 @@ model Table {
   @@index([status])
 
   @@map("table")
+}
+
+// ============================================================
+// PHASE R1 — RESERVATION (table booking foundation).
+//
+// Time is stored as a DATE + a minute-of-day INTEGER pair, never as a
+// timestamp:
+//   reservationDate — calendar day only (@db.Date, no time component)
+//   startMinutes    — minutes from local midnight (0..1439)
+//   durationMinutes — booking length in minutes
+//
+// This keeps every overlap/capacity decision pure integer arithmetic with
+// zero timezone conversion (the app runs single-timezone with no TZ
+// configuration), and makes the queries index-friendly.
+//
+// Scope: restaurantId + branchId are BOTH required — a reservation always
+// belongs to exactly one branch of one restaurant. branchId is deliberately
+// non-null (unlike Table.branchId, which stays nullable for legacy rows).
+//
+// orderId is a PLAIN SCALAR (no Prisma relation) on purpose: converting a
+// reservation into an order at check-in must not add a field, back-relation
+// or migration to the existing Order model.
+//
+// Tenant scope is explicit (restaurantId); tableId/customerId are optional
+// cross-references resolved and validated server-side, never trusted from
+// the client. No relations are declared here so R1 stays purely additive.
+// ============================================================
+model Reservation {
+  id              String   @id @default(cuid())
+  restaurantId    String
+  branchId        String
+  code            String
+
+  customerId      String?
+  tableId         String?
+
+  guestName       String
+  guestPhone      String
+
+  partySize       Int
+
+  reservationDate DateTime @db.Date
+  startMinutes    Int
+  durationMinutes Int      @default(90)
+
+  status          ReservationStatus @default(PENDING)
+
+  notes           String?  @db.Text
+  source          String   @default("PUBLIC")
+
+  // Set when the reservation is converted to a real order at check-in.
+  // Scalar only — the Order model is intentionally untouched.
+  orderId         String?
+
+  confirmedAt     DateTime?
+  seatedAt        DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  cancelReason    String?  @db.Text
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Human-friendly, non-sequential booking code, unique per restaurant.
+  @@unique([restaurantId, code])
+  // Primary board/list query: one branch, one day, live statuses.
+  @@index([restaurantId, branchId, reservationDate, status])
+  // Conflict check for a specific table on a specific day.
+  @@index([tableId, reservationDate, status])
+  @@index([customerId])
+  @@index([guestPhone])
+
+  @@map("reservation")
 }
 
 model Category {

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Users, ArrowRight, AlertCircle, Table2 } from "lucide-react";
+import { Loader2, Users, ArrowRight, AlertCircle, Table2, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { useCart } from "@/hooks/use-cart";
@@ -57,11 +57,6 @@ export default function TableLanding({
   const [visitorCount, setVisitorCount] = useState<string>("1");
   const [isContinuing, setIsContinuing] = useState(false);
 
-  useEffect(() => {
-    loadTableInfo();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const loadTableInfo = async () => {
     try {
       const params = new URLSearchParams({ number: tableNumberParam });
@@ -92,22 +87,24 @@ export default function TableLanding({
     }
   };
 
-  const handleContinue = () => {
+  const isValidVisitorCount = () => {
     const count = parseInt(visitorCount, 10);
 
     if (isNaN(count) || count < 1) {
       toast.error("Jumlah pengunjung minimal 1 orang");
-      return;
+      return false;
     }
 
     if (count > 100) {
       toast.error("Jumlah pengunjung terlalu banyak");
-      return;
+      return false;
     }
+    return true;
+  };
 
+  const applyTableContext = () => {
+    const count = parseInt(visitorCount, 10);
     if (!tableInfo) return;
-
-    setIsContinuing(true);
 
     // Persist table context in cart (branch context included so the menu
     // menu and checkout stay on the right branch).
@@ -120,10 +117,29 @@ export default function TableLanding({
       branchId: tableInfo.branch?.id ?? null,
       branchCode: tableInfo.branch?.code ?? null,
     });
+  };
 
+  const handleContinue = () => {
+    if (!isValidVisitorCount()) return;
+    setIsContinuing(true);
+    applyTableContext();
     // Navigate to menu
     router.push("/menu");
   };
+
+  const handleReserve = () => {
+    if (!isValidVisitorCount()) return;
+    applyTableContext();
+    // Navigate to the customer reservation wizard (R5) — the table context
+    // pre-fills branch + table there. Ordering state is untouched.
+    router.push("/reservasi");
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => loadTableInfo(), 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ============================================================
   // Loading
@@ -263,6 +279,17 @@ export default function TableLanding({
             <ArrowRight className="h-4 w-4" />
           </>
         )}
+      </button>
+
+      {/* Reservasi Meja Ini (R5) — separate CTA that pre-fills branch+table
+          on /reservasi without touching ordering/table status. */}
+      <button
+        onClick={handleReserve}
+        disabled={isContinuing}
+        className="w-full max-w-xs inline-flex items-center justify-center gap-2 rounded-xl border border-brand-primary/40 bg-brand-secondary/60 text-brand-primary py-3 font-medium hover:bg-brand-secondary transition-colors disabled:opacity-50"
+      >
+        <CalendarDays className="h-4 w-4" />
+        Reservasi Meja Ini
       </button>
     </div>
   );

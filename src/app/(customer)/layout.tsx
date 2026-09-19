@@ -76,6 +76,16 @@ function CustomerHeader() {
             Menu
           </Link>
           <Link
+            href="/reservasi"
+            className={`text-xs font-medium transition-colors py-1 ${
+              pathname === "/reservasi"
+                ? "text-brand-primary"
+                : "text-gray-400 hover:text-brand-primary/70"
+            }`}
+          >
+            Reservasi
+          </Link>
+          <Link
             href="/cart"
             className="relative text-gray-500 hover:text-brand-primary transition-colors p-1"
           >
