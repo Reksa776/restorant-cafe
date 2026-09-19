@@ -2,6 +2,7 @@ import "dotenv/config";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { prisma } from "@/lib/prisma";
+import { queueWhatsAppReservation } from "@/services/whatsapp/whatsapp.queue";
 import {
   buildReservationWhatsAppMessage,
   dispatchReservationWhatsApp,
@@ -23,6 +24,14 @@ import {
 //     touches BullMQ/Baileys and no database is needed.
 // Run: npx tsx --test src/services/reservation/reservation-whatsapp.unit.test.ts
 // ============================================================
+
+type ReservationEnqueueJob = Awaited<
+  ReturnType<typeof queueWhatsAppReservation>
+>;
+
+function mockReservationEnqueueJob(): ReservationEnqueueJob {
+  return {} as unknown as ReservationEnqueueJob;
+}
 
 interface ViewOverrides {
   [key: string]: unknown;
@@ -139,6 +148,7 @@ describe("dispatchReservationWhatsApp", () => {
     let enqueued = 0;
     reservationWhatsAppGateway.enqueue = async () => {
       enqueued += 1;
+      return mockReservationEnqueueJob();
     };
 
     let result = true;
@@ -169,9 +179,11 @@ describe("dispatchReservationWhatsApp", () => {
     ) => {
       target = to;
       message = msg;
+      return mockReservationEnqueueJob();
     };
-    prisma.restaurant.findUnique = async () =>
-      ({ name: "Restoran Senja" }) as never;
+    prisma.restaurant.findUnique = (async () => ({
+      name: "Restoran Senja",
+    })) as unknown as typeof prisma.restaurant.findUnique;
 
     let result = false;
     try {
