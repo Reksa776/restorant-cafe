@@ -30,6 +30,9 @@ import type { Order } from "@/services/order.service";
 import { paymentService } from "@/services/payment.service";
 import { customerService } from "@/services/customer.service";
 import { KasirQrisScreen } from "@/components/admin/orders/kasir-qris-screen";
+import { CashierTableMap } from "@/components/admin/table-layout/cashier-table-map";
+import type { CashierLayoutItem } from "@/components/admin/table-layout/cashier-table-map.helpers";
+import { layoutService } from "@/services/layout.service";
 import { isShiftNotOpen } from "@/lib/api-error-handler";
 import { notifyShiftNotOpen } from "@/lib/notify-shift";
 
@@ -600,6 +603,9 @@ export default function KasirManualOrderPage() {
   const [menuLoading, setMenuLoading] = useState(true);
   const [menuError, setMenuError] = useState<string | null>(null);
   const [tables, setTables] = useState<TableRow[]>([]);
+  const [tableLayoutItems, setTableLayoutItems] = useState<CashierLayoutItem[]>(
+    []
+  );
 
   // Product picker filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -696,6 +702,27 @@ export default function KasirManualOrderPage() {
         setTables([]);
       }
     })();
+    return () => {
+      alive = false;
+    };
+  }, [workingBranch]);
+
+  // Floor-layout shapes for the DINE_IN table picker (reuses the layout
+  // editor's data). A failure is NOT a blocker — the grid falls back to
+  // RECTANGLE cards so the picker always works.
+  useEffect(() => {
+    if (!workingBranch?.id) return;
+    let alive = true;
+    Promise.resolve()
+      .then(() => layoutService.getAdminBranchLayout(workingBranch.id))
+      .then((layout) => {
+        if (!alive) return;
+        setTableLayoutItems(layout.items);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setTableLayoutItems([]);
+      });
     return () => {
       alive = false;
     };
@@ -1450,22 +1477,13 @@ export default function KasirManualOrderPage() {
 
             {isDineIn && (
               <div className="space-y-1">
-                <Label htmlFor="table-select">Meja</Label>
-                <select
-                  id="table-select"
-                  value={tableId}
-                  onChange={(e) => setTableId(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary"
-                >
-                  <option value="">Pilih meja...</option>
-                  {tables
-                    .filter((t) => t.status !== "MAINTENANCE")
-                    .map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name} {t.status === "OCCUPIED" ? "(Terisi)" : ""}
-                      </option>
-                    ))}
-                </select>
+                <Label>Pilih Meja</Label>
+                <CashierTableMap
+                  tables={tables}
+                  layoutItems={tableLayoutItems}
+                  selectedTableId={tableId || null}
+                  onSelectTable={(id) => setTableId(id)}
+                />
               </div>
             )}
 
