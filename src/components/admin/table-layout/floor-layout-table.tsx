@@ -146,7 +146,7 @@ export function FloorLayoutTable({
         touchAction: "none",
       }}
       className={cn(
-        "absolute flex items-center justify-center select-none",
+        "absolute flex items-center justify-center select-none border-2 border-slate-300 bg-white/85 shadow-sm",
         // Visual layer only — geometry is driven by the draft item, never by status.
         interactive
           ? cn("cursor-grab active:cursor-grabbing", selected ? "cursor-move" : "hover:brightness-95")
@@ -167,7 +167,7 @@ export function FloorLayoutTable({
             />
           </span>
         )}
-        <span className="text-sm font-bold text-gray-800 drop-shadow-sm">
+        <span className="text-lg font-extrabold leading-none text-gray-800 drop-shadow-sm">
           {table.number}
         </span>
         {table.name && !compact && (

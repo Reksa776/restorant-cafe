@@ -76,6 +76,13 @@ function TableNode({
       <span className="block max-w-full truncate px-1 text-[9px] leading-none opacity-80">
         {table.capacity} org
       </span>
+      <span
+        className={`mt-0.5 block max-w-full truncate rounded-full px-1.5 py-px text-[8px] font-semibold leading-none text-white ${
+          selectable ? "bg-green-600" : "bg-gray-400"
+        }`}
+      >
+        {selectable ? "Tersedia" : "Tidak Tersedia"}
+      </span>
     </>
   );
 
