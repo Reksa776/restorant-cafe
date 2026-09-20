@@ -130,6 +130,13 @@ enum TableStatus {
   MAINTENANCE
 }
 
+// Visual shape used ONLY by the floor-layout renderer. It never influences
+// any business rule (capacity/status/QR identity stay on Table).
+enum TableShape {
+  RECTANGLE
+  CIRCLE
+}
+
 // ============================================================
 // PHASE R1 — TABLE RESERVATION lifecycle.
 //
@@ -216,6 +223,7 @@ model Restaurant {
   users        User[]
   branches     Branch[]
   tables       Table[]
+  tableLayouts TableLayout[]
   categories   Category[]
   products     Product[]
   customers    Customer[]
@@ -253,6 +261,7 @@ model Branch {
 
   restaurant Restaurant       @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   tables     Table[]
+  tableLayout TableLayout?
   orders     Order[]
   payments   Payment[]
   shifts     CashierShift[]
@@ -551,6 +560,7 @@ model Table {
   restaurant Restaurant @relation(fields: [restaurantId], references: [id])
   branch     Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
   orders     Order[]
+  layoutItem TableLayoutItem?
 
   // Multi-branch (Phase M3): a table number is unique per branch, not per
   // restaurant — Jakarta Table 01 can exist alongside Bandung Table 01.
@@ -562,6 +572,65 @@ model Table {
   @@index([status])
 
   @@map("table")
+}
+
+// ============================================================
+// PHASE FL — CAFE FLOOR LAYOUT (visual geometry only).
+//
+// Table remains the single source of truth for a restaurant table:
+//   tableId / restaurantId / branchId / number / name / capacity /
+//   status / isActive / QR identity — NONE of that is stored here.
+//
+// TableLayout  — the floor board of one branch (branchId @unique ⇒ one
+//                layout per branch). Stores only restaurant/branch scope
+//                plus a naive optimistic `version` for later save-guards.
+// TableLayoutItem — one row per positioned table holding ONLY the visual
+//                geometry (x/y/width/height/rotation/shape) in a fixed
+//                logical canvas (900 × 600). Number/name/capacity/status
+//                stay on Table; availability is the reservation engine's
+//                concern, never stored here.
+//
+// This block is purely additive: no existing column/table is altered and
+// no business behavior (Table.status, Order, Reservation, Payment, QR)
+// depends on it.
+// ============================================================
+model TableLayout {
+  id           String   @id @default(cuid())
+  restaurantId String
+  branchId     String   @unique
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant      @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  branch     Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  items      TableLayoutItem[]
+
+  @@index([restaurantId])
+
+  @@map("tablelayout")
+}
+
+model TableLayoutItem {
+  id        String     @id @default(cuid())
+  layoutId  String
+  tableId   String     @unique
+  x         Float
+  y         Float
+  width     Float
+  height    Float
+  rotation  Float      @default(0)
+  shape     TableShape @default(RECTANGLE)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  layout TableLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+  table  Table       @relation(fields: [tableId], references: [id], onDelete: Cascade)
+
+  @@unique([layoutId, tableId])
+  @@index([tableId])
+
+  @@map("tablelayoutitem")
 }
 
 // ============================================================

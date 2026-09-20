@@ -34,6 +34,7 @@ import {
   PieChart,
   ChevronDown,
   CalendarDays,
+  LayoutGrid,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
@@ -94,7 +95,8 @@ const navigation: NavEntry[] = [
     children: [
       { name: "Orders", href: "/admin/orders", icon: ShoppingCart, roles: ["ADMIN", "CASHIER"] },
       { name: "Kitchen", href: "/admin/kitchen", icon: ChefHat, roles: ["ADMIN", "CASHIER"] },
-      { name: "Tables", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN", "CASHIER"] },
+      { name: "Tables", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN", "CASHIER"], exact: true },
+      { name: "Layout Cafe", href: "/admin/tables/layout", icon: LayoutGrid, roles: ["ADMIN", "CASHIER"] },
       { name: "Reservasi", href: "/admin/reservations", icon: CalendarDays, roles: ["ADMIN", "CASHIER"] },
       { name: "Customers", href: "/admin/customers", icon: Users, roles: ["ADMIN"] },
       { name: "Shifts", href: "/admin/shifts", icon: Clock, roles: ["ADMIN", "CASHIER"] },

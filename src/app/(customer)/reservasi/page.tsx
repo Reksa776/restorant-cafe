@@ -24,6 +24,19 @@ import { useCustomerAuth } from "@/hooks/use-customer-auth";
 import { useBranding } from "@/hooks/use-branding";
 import { getErrorStatus, normalizeApiError } from "@/lib/api-error-handler";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
+import { layoutService } from "@/services/layout.service";
+import { ReservationFloorMap } from "@/components/customer/reservation/reservation-floor-map";
+import {
+  floorMapCacheBranch,
+  floorMapErrorMessage,
+  mergeFloorMap,
+  resolveFloorMapView,
+  shouldRefetchFloorLayout,
+} from "@/components/customer/reservation/reservation-floor-map.helpers";
+import type {
+  FloorMapLayoutItem,
+  FloorMapLoadStatus,
+} from "@/components/customer/reservation/reservation-floor-map.helpers";
 import { RESERVATION_DEFAULT_DURATION_MINUTES } from "@/services/reservation/reservation.slots";
 import {
   RESERVATION_CONFLICT_MESSAGE,
@@ -236,6 +249,23 @@ export default function ReservationPage() {
   const [avReloadKey, setAvReloadKey] = useState(0);
   const [slotMap, setSlotMap] = useState<Record<number, SlotAvailability>>({});
 
+  // ---- Customer floor map (Phase 5) — public layout per branch ----
+  const [floorLayoutStatus, setFloorLayoutStatus] =
+    useState<FloorMapLoadStatus>("idle");
+  const [floorLayoutItems, setFloorLayoutItems] = useState<
+    FloorMapLayoutItem[]
+  >([]);
+  const [floorLayoutError, setFloorLayoutError] = useState<string | null>(null);
+  const [floorLayoutRetryKey, setFloorLayoutRetryKey] = useState(0);
+  const [floorViewPreference, setFloorViewPreference] =
+    useState<"map" | "list">("map");
+  const [tableNotice, setTableNotice] = useState<string | null>(null);
+  // Branch already fetched (ready OR error) for the current wizard session.
+  const floorLayoutResolvedFor = useRef<string | null>(null);
+  // Latest selections, readable from the availability effect without re-running it.
+  const selectedStartRef = useRef<number | null>(null);
+  const selectedTableRef = useRef<string | null>(null);
+
   // ---- Guest data ----
   const [guestName, setGuestName] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
@@ -420,6 +450,24 @@ export default function ReservationPage() {
       setSelectedStart((cur) =>
         cur != null && !map[cur]?.available ? null : cur
       );
+
+      // If the explicitly chosen table is no longer bookable in the selected
+      // slot, clear it and tell the customer to pick again — the availability
+      // engine is the only authority (map AND list share this state).
+      const chosenStart = selectedStartRef.current;
+      const chosenTable = selectedTableRef.current;
+      if (chosenTable != null && chosenStart != null) {
+        const stillAvailable =
+          map[chosenStart]?.tables?.some(
+            (t) => t.tableId === chosenTable && t.available
+          ) ?? false;
+        if (!stillAvailable) {
+          setSelectedTableId(null);
+          setTableNotice(
+            "Meja yang dipilih sudah tidak tersedia. Silakan pilih meja lain."
+          );
+        }
+      }
     };
 
     let alive = true;
@@ -438,6 +486,93 @@ export default function ReservationPage() {
       clearTimeout(timer);
     };
   }, [effectiveBranchCode, date, effectivePartySize, avReloadKey, effectiveRestaurantId]);
+
+  // Mirror the latest selections into refs (read-only from the effect above,
+  // without re-running it on every selection change).
+  useEffect(() => {
+    selectedStartRef.current = selectedStart;
+  }, [selectedStart]);
+  useEffect(() => {
+    selectedTableRef.current = selectedTableId;
+  }, [selectedTableId]);
+
+  // ============================================================
+  // Customer floor map (Phase 5)
+  //   - ONE layout request per branch for the current wizard session.
+  //   - Only fetched once the customer reaches the "Pilih Meja" step.
+  //   - date / party size / slot changes do NOT reload it (branch-scoped
+  //     geometry; only availability varies per slot).
+  //   - A layout failure is NOT a wizard failure — the card list stays.
+  //   - The request is addressed by branchCode ONLY (no restaurantId).
+  // ============================================================
+
+  useEffect(() => {
+    const branch = floorMapCacheBranch(effectiveBranchCode);
+    if (
+      !shouldRefetchFloorLayout({
+        stepIsTable: step === "table",
+        branchCode: branch,
+        resolvedBranch: floorLayoutResolvedFor.current,
+      })
+    ) {
+      return;
+    }
+    let alive = true;
+    Promise.resolve()
+      .then(() => {
+        if (!alive) return;
+        setFloorLayoutStatus("loading");
+        setFloorLayoutError(null);
+      })
+      .then(() => layoutService.getPublicBranchLayout(effectiveBranchCode))
+      .then((data) => {
+        if (!alive) return;
+        floorLayoutResolvedFor.current = branch;
+        setFloorLayoutItems(data.items);
+        setFloorLayoutStatus("ready");
+      })
+      .catch((error) => {
+        if (!alive) return;
+        floorLayoutResolvedFor.current = branch;
+        setFloorLayoutError(floorMapErrorMessage(normalizeApiError(error)));
+        setFloorLayoutStatus("error");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [step, effectiveBranchCode, floorLayoutRetryKey]);
+
+  const retryFloorLayout = () => {
+    floorLayoutResolvedFor.current = null;
+    setFloorLayoutRetryKey((k) => k + 1);
+  };
+
+  // Merged map rows: public-layout geometry + authoritative availability for
+  // the selected slot's tables.
+  const floorMapTables = useMemo(
+    () =>
+      mergeFloorMap(
+        floorLayoutItems,
+        selectedStart != null ? (slotMap[selectedStart]?.tables ?? []) : []
+      ),
+    [floorLayoutItems, selectedStart, slotMap]
+  );
+
+  const showFloorMap =
+    resolveFloorMapView(
+      { status: floorLayoutStatus, itemCount: floorLayoutItems.length },
+      floorViewPreference
+    ) === "map";
+
+  const floorLayoutUsable =
+    floorLayoutStatus === "ready" && floorLayoutItems.length > 0;
+
+  const floorMapNote =
+    floorLayoutStatus === "error"
+      ? floorLayoutError ?? "Denah meja tidak dapat ditampilkan."
+      : floorLayoutStatus === "ready" && floorLayoutItems.length === 0
+        ? "Denah meja belum tersedia untuk cabang ini."
+        : null;
 
   const slotRows = useMemo(() => {
     if (!date) return [];
@@ -539,6 +674,7 @@ export default function ReservationPage() {
     setSelectedTableId(null);
     setSlotMap({});
     setSubmitError(null);
+    setTableNotice(null);
     setStep("date");
   };
 
@@ -560,6 +696,7 @@ export default function ReservationPage() {
     setSelectedTableId(null);
     setSlotMap({});
     setSubmitError(null);
+    setTableNotice(null);
     setStep("party");
   };
 
@@ -574,12 +711,14 @@ export default function ReservationPage() {
     setSelectedStart(startMinutes);
     setSelectedTableId(null);
     setSubmitError(null);
+    setTableNotice(null);
     setStep("table");
   };
 
   const selectTable = (tableId: string) => {
     setSelectedTableId(tableId);
     setSubmitError(null);
+    setTableNotice(null);
     setStep("guest");
   };
 
@@ -1033,48 +1172,129 @@ export default function ReservationPage() {
                 </button>
               </div>
             ) : (
-              <div className="grid gap-2.5 grid-cols-1 sm:grid-cols-2">
-                {availableTables.map((table) => {
-                  const selected = effectiveTableId === table.tableId;
-                  return (
+              <div className="space-y-3">
+                {floorLayoutUsable && (
+                  <div
+                    role="group"
+                    aria-label="Tampilan meja"
+                    className="grid w-full grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1 text-sm"
+                  >
                     <button
-                      key={table.tableId}
                       type="button"
-                      onClick={() => selectTable(table.tableId)}
-                      className={`text-left w-full rounded-xl border p-4 transition-colors min-w-0 ${
-                        selected
-                          ? "border-brand-primary bg-brand-secondary ring-2 ring-brand-primary/40"
-                          : "border-gray-200 bg-white hover:border-brand-primary/50 hover:bg-brand-secondary/50"
+                      onClick={() => setFloorViewPreference("map")}
+                      aria-pressed={showFloorMap}
+                      className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
+                        showFloorMap
+                          ? "bg-white text-gray-900 shadow-sm"
+                          : "text-gray-500 hover:text-gray-700"
                       }`}
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-gray-900 text-sm flex items-center gap-1.5">
-                            <Table2 className="h-4 w-4 text-brand-primary shrink-0" />
-                            Meja {table.number}
-                          </p>
-                          {table.name && (
-                            <p className="text-xs text-gray-500 mt-0.5 break-words">
-                              {table.name}
-                            </p>
-                          )}
-                          <p className="text-[11px] font-medium text-gray-400 mt-1.5">
-                            Kapasitas {table.capacity} orang
-                          </p>
-                        </div>
-                        <span
-                          className={`shrink-0 rounded-full text-xs font-bold px-3 py-1 ${
-                            selected
-                              ? "bg-brand-primary text-brand-primary-foreground"
-                              : "bg-gray-100 text-gray-500"
-                          }`}
-                        >
-                          {selected ? "Dipilih" : "Pilih"}
-                        </span>
-                      </div>
+                      Denah
                     </button>
-                  );
-                })}
+                    <button
+                      type="button"
+                      onClick={() => setFloorViewPreference("list")}
+                      aria-pressed={!showFloorMap}
+                      className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${
+                        !showFloorMap
+                          ? "bg-white text-gray-900 shadow-sm"
+                          : "text-gray-500 hover:text-gray-700"
+                      }`}
+                    >
+                      Daftar Meja
+                    </button>
+                  </div>
+                )}
+
+                {tableNotice && (
+                  <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <AlertCircle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                    <p className="text-xs text-amber-800 leading-relaxed">
+                      {tableNotice}
+                    </p>
+                  </div>
+                )}
+
+                {showFloorMap ? (
+                  <>
+                    <ReservationFloorMap
+                      tables={floorMapTables}
+                      selectedTableId={effectiveTableId}
+                      onSelectTable={selectTable}
+                    />
+                    <p className="text-center">
+                      <button
+                        type="button"
+                        onClick={() => setFloorViewPreference("list")}
+                        className="text-sm font-medium text-brand-primary hover:underline"
+                      >
+                        Tampilkan daftar meja
+                      </button>
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    {floorMapNote && (
+                      <div className="flex items-center justify-between gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
+                        <p className="text-xs text-gray-500 leading-relaxed">
+                          {floorMapNote}
+                        </p>
+                        {floorLayoutStatus === "error" && (
+                          <button
+                            type="button"
+                            onClick={retryFloorLayout}
+                            className="shrink-0 text-xs font-medium text-brand-primary hover:underline"
+                          >
+                            Coba Lagi
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <div className="grid gap-2.5 grid-cols-1 sm:grid-cols-2">
+                      {availableTables.map((table) => {
+                        const selected = effectiveTableId === table.tableId;
+                        return (
+                          <button
+                            key={table.tableId}
+                            type="button"
+                            onClick={() => selectTable(table.tableId)}
+                            className={`text-left w-full rounded-xl border p-4 transition-colors min-w-0 ${
+                              selected
+                                ? "border-brand-primary bg-brand-secondary ring-2 ring-brand-primary/40"
+                                : "border-gray-200 bg-white hover:border-brand-primary/50 hover:bg-brand-secondary/50"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="font-semibold text-gray-900 text-sm flex items-center gap-1.5">
+                                  <Table2 className="h-4 w-4 text-brand-primary shrink-0" />
+                                  Meja {table.number}
+                                </p>
+                                {table.name && (
+                                  <p className="text-xs text-gray-500 mt-0.5 break-words">
+                                    {table.name}
+                                  </p>
+                                )}
+                                <p className="text-[11px] font-medium text-gray-400 mt-1.5">
+                                  Kapasitas {table.capacity} orang
+                                </p>
+                              </div>
+                              <span
+                                className={`shrink-0 rounded-full text-xs font-bold px-3 py-1 ${
+                                  selected
+                                    ? "bg-brand-primary text-brand-primary-foreground"
+                                    : "bg-gray-100 text-gray-500"
+                                }`}
+                              >
+                                {selected ? "Dipilih" : "Pilih"}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
