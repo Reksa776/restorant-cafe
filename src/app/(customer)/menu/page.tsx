@@ -4,7 +4,7 @@ import { Suspense, useEffect, useState, useCallback, useMemo, useRef } from "rea
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCart } from "@/hooks/use-cart";
 import Link from "next/link";
-import { Plus, Minus, Search, ShoppingCart, SlidersHorizontal, UtensilsCrossed, X } from "lucide-react";
+import { CalendarDays, Plus, Minus, Search, ShoppingCart, SlidersHorizontal, UtensilsCrossed, X } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -1613,6 +1613,32 @@ function MenuContent() {
               </button>
             </div>
           )}
+
+          {/* Landing actions — ordering stays the primary flow; this only
+              surfaces an entry point to the EXISTING /reservasi wizard, which
+              resolves restaurant/branch from the persisted cart context.
+              No params, no new reservation flow. */}
+          <div className="mt-4 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
+            <button
+              type="button"
+              onClick={() => {
+                document
+                  .getElementById("menu-catalog")
+                  ?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary px-5 py-2.5 text-sm font-medium text-brand-primary-foreground transition-colors hover:bg-brand-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2"
+            >
+              <UtensilsCrossed className="h-4 w-4" />
+              Pesan Sekarang
+            </button>
+            <Link
+              href="/reservasi"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-5 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:border-brand-accent hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary focus-visible:ring-offset-2"
+            >
+              <CalendarDays className="h-4 w-4" />
+              Reservasi Meja
+            </Link>
+          </div>
         </div>
       )}
 
@@ -1620,7 +1646,7 @@ function MenuContent() {
           opens the remaining groups in a responsive Sheet. Filtering stays
           client-side over the branch-scoped menu; the server decides
           availability per branch. */}
-      <div className="space-y-2.5">
+      <div id="menu-catalog" className="scroll-mt-16 space-y-2.5">
         <div className="flex items-center gap-2">
           {/* Search — always visible, never moved into the panel. */}
           <div className="relative flex-1 min-w-0">
