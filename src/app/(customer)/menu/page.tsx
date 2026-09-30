@@ -4,13 +4,22 @@ import { Suspense, useEffect, useState, useCallback, useMemo, useRef } from "rea
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCart } from "@/hooks/use-cart";
 import Link from "next/link";
-import { Plus, Minus, Search, ShoppingCart, UtensilsCrossed, X } from "lucide-react";
+import { Plus, Minus, Search, ShoppingCart, SlidersHorizontal, UtensilsCrossed, X } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBranding } from "@/hooks/use-branding";
 import { useCustomerAuth } from "@/hooks/use-customer-auth";
 import { PromoSection } from "@/components/customer/promo-section";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 
 // ============================================================
 // Types
@@ -616,6 +625,58 @@ function NoResults({
 }
 
 // ============================================================
+// Filter Chip Group (single-select)
+// ============================================================
+
+const filterChipBase =
+  "flex-shrink-0 min-h-9 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors";
+
+/**
+ * One single-select filter group rendered as chip buttons. Keyboard
+ * accessible (buttons), exposed as a radiogroup so assistive tech reads the
+ * current selection. Selection is applied immediately (live-apply) — there is
+ * no draft state, so closing the panel always preserves the choice.
+ */
+function FilterChipGroup({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-gray-900 mb-2">{label}</h3>
+      <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2">
+        {options.map((option) => {
+          const isSelected = value === option.value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={isSelected}
+              onClick={() => onChange(option.value)}
+              className={`${filterChipBase} ${
+                isSelected
+                  ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
+                  : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
+              }`}
+            >
+              {option.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // Product Image (with broken-image fallback)
 // ============================================================
 
@@ -855,6 +916,9 @@ function MenuContent() {
   const [availabilityFilter, setAvailabilityFilter] = useState<
     "all" | "available" | "soldout"
   >("all");
+  // Filter sheet open state (mobile bottom sheet / desktop compact card).
+  // Selections are NOT staged — chips call the existing setters directly.
+  const [filterSheetOpen, setFilterSheetOpen] = useState(false);
 
   const searchParams = useSearchParams();
 
@@ -1407,6 +1471,14 @@ function MenuContent() {
     quickView !== "all" ||
     availabilityFilter !== "all";
 
+  // Badge count: number of non-default filter GROUPS. Search is excluded on
+  // purpose — it stays visible outside the panel and must not inflate the
+  // badge (it already has its own clear control).
+  const activeFilterCount =
+    (quickView !== "all" ? 1 : 0) +
+    (availabilityFilter !== "all" ? 1 : 0) +
+    (activeCategoryId !== "all" ? 1 : 0);
+
   const sections = useMemo(() => {
     const list: { id: string; name: string; products: Product[] }[] = [];
     const indexById = new Map<string, number>();
@@ -1486,11 +1558,20 @@ function MenuContent() {
         ? recommended.filter(matchesFilters)
         : [];
 
-  const resetFilters = () => {
-    setSearchQuery("");
+  // Resets only the filter GROUPS. Used by the Filter sheet's "Reset Filter"
+  // — search lives outside the panel and keeps its own clear control, so it is
+  // intentionally left untouched.
+  const resetMenuFilters = () => {
     setActiveCategoryId("all");
     setQuickView("all");
     setAvailabilityFilter("all");
+  };
+
+  // Full reset (groups + search) — pre-existing behavior, still used by the
+  // empty-state "Reset Filter" link via NoResults.
+  const resetFilters = () => {
+    resetMenuFilters();
+    setSearchQuery("");
   };
 
   return (
@@ -1534,121 +1615,128 @@ function MenuContent() {
         </div>
       )}
 
-      {/* F5 — Filter bar: search, category, quick views (Rekomendasi /
-          Terlaris), Tersedia / Sold Out. Filtering stays client-side over the
-          branch-scoped menu; the server decides availability per branch. */}
+      {/* F5 — Filter bar: always-visible search + a single Filter button that
+          opens the remaining groups in a responsive Sheet. Filtering stays
+          client-side over the branch-scoped menu; the server decides
+          availability per branch. */}
       <div className="space-y-2.5">
-        {/* Search */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Cari produk..."
-            className="w-full border border-gray-200 rounded-full pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent bg-white"
-          />
-          {searchQuery && (
-            <button
-              onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-              aria-label="Bersihkan pencarian"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
+        <div className="flex items-center gap-2">
+          {/* Search — always visible, never moved into the panel. */}
+          <div className="relative flex-1 min-w-0">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari produk..."
+              className="w-full border border-gray-200 rounded-full pl-9 pr-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent bg-white"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                aria-label="Bersihkan pencarian"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
 
-        {/* Quick views + availability */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
-          <button
-            onClick={() => setQuickView("all")}
-            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
-              quickView === "all"
-                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
-                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
-            }`}
-          >
-            Semua
-          </button>
-          <button
-            onClick={() => setQuickView("recommended")}
-            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
-              quickView === "recommended"
-                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
-                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
-            }`}
-          >
-            ⭐ Rekomendasi
-          </button>
-          <button
-            onClick={() => setQuickView("best")}
-            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
-              quickView === "best"
-                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
-                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
-            }`}
-          >
-            🔥 Terlaris
-          </button>
-          <span className="w-px h-5 bg-gray-200 flex-shrink-0" />
-          <button
-            onClick={() => setAvailabilityFilter("all")}
-            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
-              availabilityFilter === "all"
-                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
-                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
-            }`}
-          >
-            Tersedia &amp; Habis
-          </button>
-          <button
-            onClick={() => setAvailabilityFilter("available")}
-            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
-              availabilityFilter === "available"
-                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
-                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
-            }`}
-          >
-            Tersedia
-          </button>
-          <button
-            onClick={() => setAvailabilityFilter("soldout")}
-            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold border transition-colors ${
-              availabilityFilter === "soldout"
-                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
-                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
-            }`}
-          >
-            Habis
-          </button>
-        </div>
-
-        {/* Category chips */}
-        <div className="flex gap-2 overflow-x-auto pb-0.5">
-          <button
-            onClick={() => setActiveCategoryId("all")}
-            className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors ${
-              activeCategoryId === "all"
-                ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
-                : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
-            }`}
-          >
-            Semua Kategori
-          </button>
-          {categories.map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => setActiveCategoryId(cat.id)}
-              className={`flex-shrink-0 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors ${
-                activeCategoryId === cat.id
-                  ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
-                  : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
-              }`}
+          {/* Filter trigger — opens the panel; badge = active groups. */}
+          <Sheet open={filterSheetOpen} onOpenChange={setFilterSheetOpen}>
+            <SheetTrigger
+              render={
+                <Button
+                  variant="outline"
+                  aria-expanded={filterSheetOpen}
+                  aria-label={
+                    activeFilterCount > 0
+                      ? `Filter, ${activeFilterCount} aktif`
+                      : "Filter"
+                  }
+                  className={`flex-shrink-0 h-[42px] gap-2 rounded-full px-4 text-sm bg-white hover:bg-white ${
+                    activeFilterCount > 0
+                      ? "border-brand-primary/40 text-brand-primary hover:border-brand-primary/40"
+                      : "border-gray-200 text-gray-700 hover:border-brand-accent"
+                  }`}
+                />
+              }
             >
-              {cat.name}
-            </button>
-          ))}
+              <SlidersHorizontal className="h-4 w-4" />
+              <span>
+                Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+              </span>
+            </SheetTrigger>
+
+            {/* Mobile: bottom sheet. Desktop: compact centered card (not full
+                width), rounded, max-w-lg. z-[60] keeps it above the floating
+                cart bar (z-50); CustomizationModal is z-[60] too but is never
+                open at the same time as this panel. */}
+            <SheetContent
+              side="bottom"
+              className="z-[60] max-h-[85vh] overflow-y-auto rounded-t-2xl pb-[env(safe-area-inset-bottom)] sm:mx-auto sm:max-w-lg sm:rounded-2xl"
+            >
+              <SheetHeader>
+                <SheetTitle>Filter</SheetTitle>
+                <SheetDescription className="sr-only">
+                  Pilih filter produk berdasarkan status, popularitas, dan
+                  kategori. Perubahan langsung diterapkan.
+                </SheetDescription>
+              </SheetHeader>
+
+              <div className="flex flex-col gap-5">
+                <FilterChipGroup
+                  label="Status Produk"
+                  value={availabilityFilter}
+                  onChange={(value) =>
+                    setAvailabilityFilter(
+                      value as "all" | "available" | "soldout"
+                    )
+                  }
+                  options={[
+                    { value: "all", label: "Semua" },
+                    { value: "available", label: "Tersedia" },
+                    { value: "soldout", label: "Habis" },
+                  ]}
+                />
+
+                <FilterChipGroup
+                  label="Popularitas"
+                  value={quickView}
+                  onChange={(value) =>
+                    setQuickView(value as "all" | "best" | "recommended")
+                  }
+                  options={[
+                    { value: "all", label: "Semua" },
+                    { value: "recommended", label: "⭐ Rekomendasi" },
+                    { value: "best", label: "🔥 Terlaris" },
+                  ]}
+                />
+
+                <FilterChipGroup
+                  label="Kategori"
+                  value={activeCategoryId}
+                  onChange={setActiveCategoryId}
+                  options={[
+                    { value: "all", label: "Semua Kategori" },
+                    ...categories.map((cat) => ({
+                      value: cat.id,
+                      label: cat.name,
+                    })),
+                  ]}
+                />
+              </div>
+
+              <Button
+                variant="outline"
+                onClick={resetMenuFilters}
+                disabled={activeFilterCount === 0}
+                className="w-full h-10 rounded-full border-gray-200"
+              >
+                Reset Filter
+              </Button>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
 
