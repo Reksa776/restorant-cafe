@@ -14,6 +14,7 @@ import { PromoSection } from "@/components/customer/promo-section";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -629,7 +630,7 @@ function NoResults({
 // ============================================================
 
 const filterChipBase =
-  "flex-shrink-0 min-h-9 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors";
+  "inline-flex h-10 flex-shrink-0 items-center justify-center rounded-full border px-4 text-sm font-medium transition-colors";
 
 /**
  * One single-select filter group rendered as chip buttons. Keyboard
@@ -650,7 +651,7 @@ function FilterChipGroup({
 }) {
   return (
     <div>
-      <h3 className="text-sm font-semibold text-gray-900 mb-2">{label}</h3>
+      <h3 className="mb-3 text-sm font-semibold text-gray-900">{label}</h3>
       <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2">
         {options.map((option) => {
           const isSelected = value === option.value;
@@ -663,8 +664,8 @@ function FilterChipGroup({
               onClick={() => onChange(option.value)}
               className={`${filterChipBase} ${
                 isSelected
-                  ? "bg-brand-primary text-brand-primary-foreground border-brand-primary"
-                  : "bg-white text-gray-600 border-gray-200 hover:border-brand-accent"
+                  ? "border-brand-primary bg-brand-primary text-brand-primary-foreground"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-brand-accent hover:bg-gray-50"
               }`}
             >
               {option.label}
@@ -1674,17 +1675,32 @@ function MenuContent() {
                 open at the same time as this panel. */}
             <SheetContent
               side="bottom"
-              className="z-[60] max-h-[85vh] overflow-y-auto rounded-t-2xl pb-[env(safe-area-inset-bottom)] sm:mx-auto sm:max-w-lg sm:rounded-2xl"
+              showCloseButton={false}
+              className="z-[60] flex max-h-[85vh] flex-col gap-0 overflow-y-auto rounded-t-2xl border-t border-gray-100 bg-white pb-[env(safe-area-inset-bottom)] sm:mx-auto sm:max-w-lg sm:rounded-2xl"
             >
-              <SheetHeader>
-                <SheetTitle>Filter</SheetTitle>
+              <SheetHeader className="flex-row items-center justify-between gap-4 border-b border-gray-100 px-5 pt-5 pb-4 sm:px-6">
+                <SheetTitle className="font-sans text-lg font-semibold text-gray-900">
+                  Filter
+                </SheetTitle>
+                <SheetClose
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Tutup"
+                      className="h-9 w-9 flex-shrink-0 rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+                    />
+                  }
+                >
+                  <X className="h-5 w-5" />
+                </SheetClose>
                 <SheetDescription className="sr-only">
                   Pilih filter produk berdasarkan status, popularitas, dan
                   kategori. Perubahan langsung diterapkan.
                 </SheetDescription>
               </SheetHeader>
 
-              <div className="flex flex-col gap-5">
+              <div className="flex flex-col gap-6 px-5 py-6 sm:px-6">
                 <FilterChipGroup
                   label="Status Produk"
                   value={availabilityFilter}
@@ -1725,16 +1741,16 @@ function MenuContent() {
                     })),
                   ]}
                 />
-              </div>
 
-              <Button
-                variant="outline"
-                onClick={resetMenuFilters}
-                disabled={activeFilterCount === 0}
-                className="w-full h-10 rounded-full border-gray-200"
-              >
-                Reset Filter
-              </Button>
+                <Button
+                  variant="outline"
+                  onClick={resetMenuFilters}
+                  disabled={activeFilterCount === 0}
+                  className="h-12 w-full rounded-xl border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+                >
+                  Reset Filter
+                </Button>
+              </div>
             </SheetContent>
           </Sheet>
         </div>
