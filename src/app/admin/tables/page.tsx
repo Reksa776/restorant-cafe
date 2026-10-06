@@ -83,7 +83,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 export default function TablesPage() {
-  const { isLoading: branchCtxLoading } = useBranchContext();
+  const { isLoading: branchCtxLoading, branchId } = useBranchContext();
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -108,16 +108,23 @@ export default function TablesPage() {
       : ""
   );
 
-  const loadTables = async (silent = false) => {
+  const loadTables = async (silent = false, isCurrent?: () => boolean) => {
     if (!silent) setIsLoading(true);
     try {
-      const result = await tableService.getTables();
+      // Pass the active branch so the top-right branch selector actually
+      // filters this list (validated server-side). No active branch → the
+      // caller's full authorized scope, unchanged.
+      const result = await tableService.getTables(
+        branchId ? { branchId } : undefined
+      );
+      if (isCurrent && !isCurrent()) return;
       setTables(result);
     } catch (error) {
+      if (isCurrent && !isCurrent()) return;
       console.error("Failed to load tables:", error);
       toast.error("Gagal memuat data meja");
     } finally {
-      setIsLoading(false);
+      if (!isCurrent || isCurrent()) setIsLoading(false);
     }
   };
 
@@ -125,8 +132,15 @@ export default function TablesPage() {
     // Wait for branch context so a stale admin_branch_id is cleared before
     // firing the scoped tables request (Main Outlet cashier 403 root cause).
     if (branchCtxLoading) return;
-    loadTables();
-  }, [branchCtxLoading]);
+    // Re-fetch whenever the active branch changes so switching branches
+    // refreshes the list; the `alive` guard stops a late response from the
+    // previous branch overwriting the current one.
+    let alive = true;
+    loadTables(false, () => alive);
+    return () => {
+      alive = false;
+    };
+  }, [branchCtxLoading, branchId]);
 
   // Realtime: table status/CRUD changes (e.g. an order occupying/freeing a
   // table, or another admin) → refresh cards without a page reload.

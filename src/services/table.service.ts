@@ -26,12 +26,19 @@ export interface CreateTableData {
   number: number;
   name: string;
   capacity?: number;
+  /** Attach the new table to this branch (server-validated ownership). */
+  branchId?: string;
 }
 
 export const tableService = {
   async getTables(params?: {
     status?: string;
     isActive?: boolean;
+    /**
+     * Scope the result to ONE branch (server-validated). Omit to use the
+     * caller's full authorized scope (all branches for an unrestricted admin).
+     */
+    branchId?: string;
   }): Promise<RestaurantTable[]> {
     const response = await api.get("/tables", { params });
     return response.data.data;

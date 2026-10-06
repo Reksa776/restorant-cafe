@@ -11,10 +11,24 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status") || undefined;
 
+    // Optional explicit branch filter. The admin UI passes its active branch
+    // so the branch selector (and the floor-layout editor) show ONE branch.
+    // Validated server-side via assertBranchInScope: the branch must belong
+    // to the caller's restaurant AND, for branch-scoped callers, be one of
+    // their assignments — so an explicit branch can only NARROW the allowed
+    // set, never cross a boundary. Without it the caller's authorized scope
+    // applies (never widened by a missing x-branch-id header).
+    const filterBranchId = searchParams.get("branchId");
+    let scope = authorizedBranches(ctx);
+    if (filterBranchId) {
+      await assertBranchInScope(ctx, filterBranchId);
+      scope = [filterBranchId];
+    }
+
     const tables = await tableService.getTables(
       ctx.restaurantId,
       { status },
-      authorizedBranches(ctx)
+      scope
     );
 
     return successResponse(tables);

@@ -126,7 +126,10 @@ export function FloorLayoutEditor({
   /** Pure data fetch (no setState) — setState stays in the callers. */
   const fetchLayoutData = useCallback(async () => {
     const [tablesResult, layoutResult] = await Promise.all([
-      tableService.getTables(),
+      // Scope the sidebar to THIS branch only — a table from another branch
+      // is never offered for placement (the save endpoint also rejects it
+      // server-side, so a cross-branch item can never be persisted).
+      tableService.getTables({ branchId }),
       layoutService.getAdminBranchLayout(branchId),
     ]);
     return { tables: tablesResult, layout: layoutResult };
@@ -184,13 +187,13 @@ export function FloorLayoutEditor({
 
   const refreshTablesOnly = useCallback(async () => {
     try {
-      const result = await tableService.getTables();
+      const result = await tableService.getTables({ branchId });
       setTables(result);
     } catch (error) {
       if (isUnauthorized(error)) return;
       toast.error("Gagal memuat daftar meja");
     }
-  }, []);
+  }, [branchId]);
 
   // ----------------------------------------------------------
   // Local draft mutations (no API calls)
@@ -347,7 +350,9 @@ export function FloorLayoutEditor({
     async (values: { number: number; name: string; capacity: number }) => {
       setIsCreatingTable(true);
       try {
-        await tableService.createTable(values);
+        // Attach the new table to the branch whose layout is open so it is
+        // immediately placeable (a branch-less table can never join a layout).
+        await tableService.createTable({ ...values, branchId });
         toast.success("Meja berhasil dibuat");
         setAddDialogOpen(false);
         await refreshTablesOnly();
@@ -363,7 +368,7 @@ export function FloorLayoutEditor({
         setIsCreatingTable(false);
       }
     },
-    [refreshTablesOnly]
+    [refreshTablesOnly, branchId]
   );
 
   // ----------------------------------------------------------
