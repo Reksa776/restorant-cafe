@@ -38,7 +38,9 @@ import {
   formatReservationDate,
   formatReservationDateTime,
   formatTimeSlot,
+  reservationQrPayload,
 } from "@/app/(customer)/reservasi/reservation-flow";
+import { QrCodeDisplay } from "@/components/qr-code-display";
 
 // ============================================================
 // /account/reservasi/[code] — ONE of the customer's own reservations.
@@ -348,6 +350,21 @@ export default function AccountReservationDetailPage() {
         </div>
         <p className="mt-2 text-xs text-gray-500">
           {branding.siteName || "Restoran"} · {reservation.guestName}
+        </p>
+      </div>
+
+      {/* QR Reservasi — payload is ONLY the reservation code (no PII). */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 text-center">
+        <p className="text-sm font-semibold text-gray-900">QR Reservasi</p>
+        <div className="mt-3 flex justify-center">
+          <QrCodeDisplay
+            value={reservationQrPayload(reservation.code)}
+            size={200}
+            ariaLabel={`QR reservasi ${reservation.code}`}
+          />
+        </div>
+        <p className="mt-3 text-xs text-gray-500">
+          Tunjukkan QR ini ke kasir saat datang
         </p>
       </div>
 

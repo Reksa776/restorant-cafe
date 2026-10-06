@@ -80,6 +80,18 @@ export const reservationService = {
     return response.data.data as ReservationTableView;
   },
 
+  /**
+   * Look up a reservation by its non-sequential code (QR scan / manual entry).
+   * Reuses the existing authorized endpoint — restaurant + branch scoped
+   * server-side; a code from another tenant/branch resolves as 404.
+   */
+  async getByCode(code: string): Promise<ReservationTableView> {
+    const response = await api.get(
+      `/admin/reservations/code/${encodeURIComponent(code)}`
+    );
+    return response.data.data as ReservationTableView;
+  },
+
   async updateStatus(
     id: string,
     status: ReservationStatusValue

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -24,7 +25,18 @@ import {
   normalizeApiError,
 } from "@/lib/api-error-handler";
 import { toast } from "sonner";
-import { AlertCircle, ChevronLeft, ChevronRight, Eye, RefreshCw } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  RefreshCw,
+  Search,
+} from "lucide-react";
+import {
+  ReservationScanner,
+  normalizeReservationCode,
+} from "@/components/admin/reservation-scanner";
 import {
   ReservationFilters,
   type BranchOption,
@@ -121,6 +133,10 @@ export default function ReservationsPage() {
 
   // One in-flight mutation at a time (prevents double-click / double submit).
   const [mutatingKey, setMutatingKey] = useState<string | null>(null);
+
+  // Scan / manual code lookup (READ-ONLY — never mutates the reservation).
+  const [lookupCode, setLookupCode] = useState("");
+  const [lookingUp, setLookingUp] = useState(false);
 
   const hasActiveFilters =
     search !== "" ||
@@ -230,6 +246,32 @@ export default function ReservationsPage() {
     setDetail({ open: true, reservation });
   };
 
+  /**
+   * Resolve a reservation by code (from the QR scanner OR the manual input)
+   * through the existing authorized endpoint. READ-ONLY: nothing is mutated;
+   * the result is shown in the same detail dialog used by the board. A code
+   * from another restaurant/branch resolves as 404 and never leaks data.
+   */
+  const handleLookup = async (raw: string) => {
+    const code = normalizeReservationCode(raw);
+    if (!code) {
+      toast.error("Kode reservasi tidak valid. Format: R-XXXXXXXX");
+      return;
+    }
+    if (lookingUp) return;
+    setLookingUp(true);
+    try {
+      const reservation = await reservationService.getByCode(code);
+      setDetail({ open: true, reservation });
+      setLookupCode("");
+    } catch (err) {
+      if (isUnauthorized(err)) return;
+      toast.error(statusErrorMessage(err));
+    } finally {
+      setLookingUp(false);
+    }
+  };
+
   const branchOptions: BranchOption[] = branches.map((b) => ({
     id: b.id,
     name: b.name,
@@ -241,6 +283,39 @@ export default function ReservationsPage() {
         <h1 className="text-3xl font-bold">Reservasi</h1>
         <p className="text-gray-500">Kelola reservasi pelanggan</p>
       </div>
+
+      {/* Scan / manual lookup — READ-ONLY lookup by reservation code */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Cari Reservasi</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <ReservationScanner onScan={handleLookup} />
+            <div className="relative flex-1 min-w-0">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Masukkan Kode Reservasi (mis. R-AB12CD34)"
+                value={lookupCode}
+                onChange={(e) => setLookupCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleLookup(lookupCode);
+                }}
+                className="pl-9 font-mono uppercase"
+              />
+            </div>
+            <Button
+              variant="default"
+              size="sm"
+              disabled={lookingUp || !lookupCode.trim()}
+              onClick={() => handleLookup(lookupCode)}
+              className="w-full sm:w-auto"
+            >
+              {lookingUp ? "Mencari..." : "Cari Reservasi"}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Filters */}
       <Card>

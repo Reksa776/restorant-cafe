@@ -108,6 +108,15 @@ function dbDateFromDateOnly(dateOnly: string): Date {
 // consulted: it is the order/QR lifecycle flag, unrelated to availability.
 const HOLDING: ReservationStatus[] = [...RESERVATION_HOLDING_STATUSES];
 
+// ============================================================
+// Minimum-purchase gate (customer reservation only)
+// ============================================================
+
+/** 409 code + copy — the customer/guest has no qualifying purchase. */
+const PURCHASE_REQUIRED_CODE = "PURCHASE_REQUIRED";
+const PURCHASE_REQUIRED_MESSAGE =
+  "Reservasi hanya tersedia setelah Anda menyelesaikan minimal 1 pembelian.";
+
 /**
  * Legal status transitions.
  *
@@ -239,6 +248,12 @@ interface CreateReservationData {
   customerId?: string | null;
   notes?: string | null;
   source: "PUBLIC" | "ADMIN";
+  /**
+   * When true, the create kernel enforces the minimum-purchase rule for the
+   * acting customer/guest (PUBLIC entry point only). Admin/kasir bookings
+   * (walk-in, phone booking) are staff-created and deliberately NOT gated.
+   */
+  requirePurchase?: boolean;
 }
 
 // ============================================================
@@ -477,6 +492,64 @@ export class ReservationService {
     }));
   }
 
+  /**
+   * Minimum-purchase gate (CUSTOMER reservation only).
+   *
+   * A reservation is allowed only when the acting customer/guest has at least
+   * one QUALIFYING order at THIS restaurant:
+   *   - `paymentStatus = PAID`
+   *   - `status != CANCELLED`
+   *   - at least one OrderItem
+   * The branch may differ (purchase scope is the restaurant, not the branch).
+   *
+   * Ownership is resolved SERVER-SIDE and never from client input:
+   *   - logged-in customer → the verified session `customerId`;
+   *   - guest → the `Customer` row matched by the normalized `guestPhone` —
+   *     the SAME mechanism the guest order flow uses to find-or-create the
+   *     customer, and the guest self-lookup uses to prove ownership.
+   * `customerId`/`orderId`/`restaurantId`/`paymentStatus` from the client are
+   * never trusted.
+   *
+   * Runs INSIDE the reservation transaction (server-authoritative recheck)
+   * and throws 409 `PURCHASE_REQUIRED` when nothing qualifies.
+   *
+   * KNOWN GAP (reported): a guest phone number is not OTP-verified, so a guest
+   * who knows another customer's phone could satisfy the gate with that
+   * customer's orders. This is the strongest ownership signal the existing
+   * guest flow provides; no new auth is introduced.
+   */
+  private async assertQualifyingPurchase(
+    tx: Prisma.TransactionClient,
+    restaurantId: string,
+    data: Pick<CreateReservationData, "customerId" | "guestPhone">
+  ): Promise<void> {
+    let customerId = data.customerId ?? null;
+    if (!customerId) {
+      const customer = await tx.customer.findFirst({
+        where: { restaurantId, phone: data.guestPhone },
+        select: { id: true },
+      });
+      customerId = customer?.id ?? null;
+    }
+    if (!customerId) {
+      throw new ConflictError(PURCHASE_REQUIRED_MESSAGE, PURCHASE_REQUIRED_CODE);
+    }
+
+    const qualifying = await tx.order.findFirst({
+      where: {
+        restaurantId,
+        customerId,
+        paymentStatus: "PAID",
+        status: { not: "CANCELLED" },
+        items: { some: {} },
+      },
+      select: { id: true },
+    });
+    if (!qualifying) {
+      throw new ConflictError(PURCHASE_REQUIRED_MESSAGE, PURCHASE_REQUIRED_CODE);
+    }
+  }
+
   // ============================================================
   // Create — public guest entry point
   // ============================================================
@@ -523,6 +596,8 @@ export class ReservationService {
         customerId: opts?.customerId ?? null,
         notes: parsed.data.notes ?? null,
         source: parsed.data.source,
+        // PUBLIC flow only: enforce the minimum-purchase rule.
+        requirePurchase: true,
       },
       now
     );
@@ -656,6 +731,13 @@ export class ReservationService {
           if (!customer) {
             throw new ValidationError("Pelanggan tidak ditemukan");
           }
+        }
+
+        // Minimum-purchase gate (customer reservation only) — server
+        // authoritative, inside this transaction. Reuses the existing Order
+        // engine (paid + not cancelled + >=1 item); no new purchase engine.
+        if (data.requirePurchase) {
+          await this.assertQualifyingPurchase(tx, restaurantId, data);
         }
 
         // Table capacity gate — SELECT ... FOR UPDATE under the branch lock.

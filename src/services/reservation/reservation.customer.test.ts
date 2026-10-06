@@ -9,6 +9,10 @@ import {
   UnauthorizedError,
 } from "@/lib/errors";
 import { addDaysToDateOnly, type ReservationNow } from "./reservation.slots";
+import {
+  cleanupPurchases,
+  seedQualifyingPurchase,
+} from "./reservation.purchase.fixtures";
 
 // ============================================================
 // PHASE R6 — CUSTOMER RESERVATION SERVICE TESTS (real local DB)
@@ -73,6 +77,11 @@ async function futureBooking(
   branchCode: string,
   opts: LinkOpts = {}
 ) {
+  const customerId = opts.customerId ?? null;
+  const guestPhone = incrementingPhone();
+  // Minimum-purchase rule: the public flow requires a qualifying purchase for
+  // the acting identity (session customer when linked, else the guest phone).
+  await seedQualifyingPurchase(restaurantId, { customerId, phone: guestPhone });
   return reservationService.createPublicReservation(
     restaurantId,
     {
@@ -82,10 +91,10 @@ async function futureBooking(
       durationMinutes: 90,
       partySize: 2,
       guestName: opts.guestName ?? "Tamu R6",
-      guestPhone: incrementingPhone(),
+      guestPhone,
       tableId: opts.tableId ?? null,
     },
-    { now: NOW, customerId: opts.customerId ?? null }
+    { now: NOW, customerId }
   );
 }
 
@@ -185,6 +194,7 @@ after(async () => {
   await prisma.reservation.deleteMany({
     where: { restaurantId: { in: [restA, restB] } },
   });
+  await cleanupPurchases([restA, restB]);
   await prisma.table.deleteMany({
     where: { restaurantId: { in: [restA, restB] } },
   });

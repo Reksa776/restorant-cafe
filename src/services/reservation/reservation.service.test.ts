@@ -15,6 +15,10 @@ import {
   holdsCapacity,
   type ReservationNow,
 } from "./reservation.slots";
+import {
+  cleanupPurchases,
+  seedQualifyingPurchase,
+} from "./reservation.purchase.fixtures";
 
 // ============================================================
 // PHASE R2 — RESERVATION SERVICE INTEGRATION TESTS
@@ -238,6 +242,7 @@ after(async () => {
   await prisma.reservation.deleteMany({
     where: { restaurantId: { in: [restAId, restBId] } },
   });
+  await cleanupPurchases([restAId, restBId]);
   await prisma.table.deleteMany({
     where: { restaurantId: { in: [restAId, restBId] } },
   });
@@ -255,6 +260,11 @@ after(async () => {
 
 describe("reservation.service — create", () => {
   it("1. creates a valid reservation (PENDING, non-sequential code, holds slot)", async () => {
+    // Minimum-purchase rule: the public flow requires a qualifying purchase.
+    await seedQualifyingPurchase(restAId, {
+      phone: "081234567890",
+      branchId: branchMain,
+    });
     const res = await reservationService.createPublicReservation(
       restAId,
       publicInput({
@@ -847,11 +857,11 @@ describe("reservation.service — validation (window / horizon / grid)", () => {
 
   it("18b. accepts the last day inside the horizon", async () => {
     const lastDay = addDaysToDateOnly(NOW.today, 60);
-    const res = await reservationService.createPublicReservation(
-      restAId,
-      publicInput({ reservationDate: lastDay }),
-      { now: NOW }
-    );
+    const input = publicInput({ reservationDate: lastDay });
+    await seedQualifyingPurchase(restAId, { phone: input.guestPhone });
+    const res = await reservationService.createPublicReservation(restAId, input, {
+      now: NOW,
+    });
     assert.equal(res.status, "PENDING");
   });
 
@@ -1614,6 +1624,7 @@ describe("reservation.service — admin list / reads / isolation", () => {
   });
 
   it("guest lookup requires a matching phone and returns a safe DTO", async () => {
+    await seedQualifyingPurchase(restAId, { phone: "081200000052" });
     const res = await reservationService.createPublicReservation(
       restAId,
       publicInput({ guestPhone: "081200000052" }),

@@ -7,6 +7,10 @@ import { reservationService } from "./reservation.service";
 import { createCustomerSessionToken } from "@/lib/customer-session.server";
 import { CUSTOMER_SESSION_COOKIE } from "@/lib/customer-session";
 import { addDaysToDateOnly, type ReservationNow } from "./reservation.slots";
+import {
+  cleanupPurchases,
+  seedQualifyingPurchase,
+} from "./reservation.purchase.fixtures";
 import { GET as listGet } from "@/app/api/public/customer/account/reservations/route";
 import { GET as detailGet } from "@/app/api/public/customer/account/reservations/[code]/route";
 import { POST as cancelPost } from "@/app/api/public/customer/account/reservations/[code]/cancel/route";
@@ -54,6 +58,9 @@ async function booking(
   tableId: string,
   guestName: string
 ) {
+  // Minimum-purchase rule: the public flow requires a qualifying purchase for
+  // the acting identity (here: the linked session customer).
+  await seedQualifyingPurchase(restaurantId, { customerId });
   return reservationService.createPublicReservation(
     restaurantId,
     {
@@ -165,6 +172,7 @@ after(async () => {
   await prisma.reservation.deleteMany({
     where: { restaurantId: { in: [restA, restB] } },
   });
+  await cleanupPurchases([restA, restB]);
   await prisma.table.deleteMany({
     where: { restaurantId: { in: [restA, restB] } },
   });

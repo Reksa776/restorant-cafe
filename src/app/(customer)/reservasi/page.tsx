@@ -43,6 +43,8 @@ import type {
 } from "@/components/customer/reservation/reservation-floor-map.helpers";
 import { RESERVATION_DEFAULT_DURATION_MINUTES } from "@/services/reservation/reservation.slots";
 import {
+  PURCHASE_REQUIRED_CODE,
+  PURCHASE_REQUIRED_MESSAGE,
   RESERVATION_CONFLICT_MESSAGE,
   RESERVATION_STATUS_LABELS,
   TABLE_NOT_AVAILABLE_MESSAGE,
@@ -52,7 +54,9 @@ import {
   formatTimeSlot,
   maxReservationDate,
   minReservationDate,
+  reservationQrPayload,
 } from "./reservation-flow";
+import { QrCodeDisplay } from "@/components/qr-code-display";
 
 // ============================================================
 // /reservasi — CUSTOMER RESERVATION WIZARD (PHASE R5).
@@ -296,6 +300,7 @@ export default function ReservationPage() {
   // ---- Submit ----
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [purchaseBlocked, setPurchaseBlocked] = useState(false);
   const [created, setCreated] = useState<CreatedReservation | null>(null);
 
   // One-shot init gate (QR table context / saved customer branch).
@@ -791,6 +796,7 @@ export default function ReservationPage() {
 
     setIsSubmitting(true);
     setSubmitError(null);
+    setPurchaseBlocked(false);
 
     const payload: Record<string, unknown> = {
       branchCode: effectiveBranchCode,
@@ -820,7 +826,13 @@ export default function ReservationPage() {
         // table-specific, so send the customer back to the table step (all
         // earlier wizard state — branch/date/party/time/guest — is preserved)
         // with a clear notice; other 409s (slot/duplicate) stay on review.
-        if (getErrorCode(error) === "TABLE_NOT_AVAILABLE") {
+        if (getErrorCode(error) === PURCHASE_REQUIRED_CODE) {
+          // Minimum-purchase gate: the guest/customer has no qualifying
+          // purchase. Show a clear business notice + a path to the menu and
+          // keep the wizard state so the customer can order and come back.
+          setPurchaseBlocked(true);
+          setSubmitError(null);
+        } else if (getErrorCode(error) === "TABLE_NOT_AVAILABLE") {
           setSelectedTableId(null);
           setTableNotice(TABLE_NOT_AVAILABLE_MESSAGE);
           setSubmitError(null);
@@ -1487,6 +1499,23 @@ export default function ReservationPage() {
             </dl>
           </div>
 
+          {purchaseBlocked && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <p className="text-sm font-medium text-amber-800">
+                Minimal 1 Pembelian Diperlukan
+              </p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                {PURCHASE_REQUIRED_MESSAGE}
+              </p>
+              <Link
+                href="/menu"
+                className="mt-3 inline-flex items-center justify-center rounded-lg bg-brand-primary px-4 py-2 text-sm font-medium text-brand-primary-foreground hover:bg-brand-primary/90 transition-colors"
+              >
+                Pesan Menu Dulu
+              </Link>
+            </div>
+          )}
+
           {submitError && (
             <div className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 p-4">
               <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
@@ -1532,6 +1561,24 @@ export default function ReservationPage() {
                 {created.code}
               </p>
             </div>
+          </div>
+
+          {/* QR Reservasi — payload is ONLY the reservation code (no PII). */}
+          <div className="rounded-xl border border-gray-200 bg-white p-5 text-center">
+            <p className="text-sm font-semibold text-gray-900">QR Reservasi</p>
+            <div className="mt-3 flex justify-center">
+              <QrCodeDisplay
+                value={reservationQrPayload(created.code)}
+                size={200}
+                ariaLabel={`QR reservasi ${created.code}`}
+              />
+            </div>
+            <p className="mt-3 font-mono text-lg font-bold tracking-wider text-brand-primary">
+              {created.code}
+            </p>
+            <p className="mt-1 text-xs text-gray-500">
+              Tunjukkan QR ini ke kasir saat datang
+            </p>
           </div>
 
           <div className="rounded-xl border border-gray-200 bg-white p-4">

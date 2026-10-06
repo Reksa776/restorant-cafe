@@ -4,6 +4,8 @@ import {
   RESERVATION_MAX_HORIZON_DAYS,
 } from "@/services/reservation/reservation.slots";
 import {
+  PURCHASE_REQUIRED_CODE,
+  PURCHASE_REQUIRED_MESSAGE,
   RESERVATION_CONFLICT_MESSAGE,
   RESERVATION_STATUS_LABELS,
   buildCandidateSlots,
@@ -14,6 +16,7 @@ import {
   localReservationNow,
   maxReservationDate,
   minReservationDate,
+  reservationQrPayload,
 } from "./reservation-flow";
 
 const FIXED_NOW = new Date(2026, 8, 15, 9, 30, 0); // 2026-09-15 09:30 local
@@ -141,6 +144,25 @@ describe("reservation-flow (customer reservation UI pure helpers)", () => {
       assert.equal(
         RESERVATION_CONFLICT_MESSAGE,
         "Meja/jam tersebut baru saja diambil. Silakan pilih waktu atau meja lain."
+      );
+    });
+  });
+
+  describe("reservation QR payload", () => {
+    it("is EXACTLY the reservation code (trimmed + uppercased) and nothing else", () => {
+      assert.equal(reservationQrPayload("R-AB12CD34"), "R-AB12CD34");
+      assert.equal(reservationQrPayload("  r-ab12cd34 "), "R-AB12CD34");
+      // No PII / ids / secrets: the payload equals the input code verbatim.
+      assert.equal(reservationQrPayload("R-00000000"), "R-00000000");
+    });
+  });
+
+  describe("minimum-purchase gate copy", () => {
+    it("matches the server's 409 business error", () => {
+      assert.equal(PURCHASE_REQUIRED_CODE, "PURCHASE_REQUIRED");
+      assert.equal(
+        PURCHASE_REQUIRED_MESSAGE,
+        "Reservasi hanya tersedia setelah Anda menyelesaikan minimal 1 pembelian."
       );
     });
   });

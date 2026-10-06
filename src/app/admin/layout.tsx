@@ -169,6 +169,7 @@ const navigation: NavEntry[] = [
     children: [
       { name: "Website Branding", href: "/admin/settings", icon: Settings, roles: ["ADMIN"], exact: true },
       { name: "Users", href: "/admin/users", icon: Users, roles: ["ADMIN"] },
+      { name: "Audit Logs", href: "/admin/audit-logs", icon: ClipboardList, roles: ["ADMIN"] },
       { name: "WhatsApp", href: "/admin/whatsapp", icon: MessageSquare, roles: ["ADMIN"] },
     ],
   },

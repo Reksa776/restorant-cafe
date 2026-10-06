@@ -132,3 +132,32 @@ export const RESERVATION_CONFLICT_MESSAGE =
  */
 export const TABLE_NOT_AVAILABLE_MESSAGE =
   "Maaf, meja ini baru saja tidak tersedia. Silakan pilih meja lain.";
+
+// ============================================================
+// Minimum-purchase gate (server-authoritative reservation rule)
+// ============================================================
+
+/**
+ * 409 `PURCHASE_REQUIRED` code + copy — reservation requires the customer/guest
+ * to have at least ONE qualifying purchase (paid, not cancelled, >=1 item) at
+ * the same restaurant. The exact wording matches the server message so the
+ * wizard can surface it verbatim.
+ */
+export const PURCHASE_REQUIRED_CODE = "PURCHASE_REQUIRED";
+export const PURCHASE_REQUIRED_MESSAGE =
+  "Reservasi hanya tersedia setelah Anda menyelesaikan minimal 1 pembelian.";
+
+// ============================================================
+// Reservation QR payload
+// ============================================================
+
+/**
+ * The EXACT text encoded in the customer reservation QR: the reservation code
+ * (`R-XXXXXXXX`) and nothing else. The QR is a LOOKUP HINT only — never
+ * authorization — so the payload deliberately excludes the guest name, phone,
+ * email, restaurant/branch/table ids, and any payment/secret. The server
+ * re-validates every scan server-side.
+ */
+export function reservationQrPayload(code: string): string {
+  return (code || "").trim().toUpperCase();
+}
