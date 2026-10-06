@@ -302,6 +302,95 @@ describe("minimum-purchase gate", () => {
     assert.equal(res.status, "PENDING");
   });
 
+  // ==========================================================
+  // R6.5 — read-only UX probe used by the wizard's "Pembelian" step.
+  // Same server-side rule/ownership as the write gate; NEVER an
+  // authorization (the gate below still runs on POST).
+  // ==========================================================
+
+  it("15. probe: GUEST without a purchase → eligible false", async () => {
+    const res = await reservationService.checkPurchaseEligibility(restA, {
+      guestPhone: newPhone(),
+    });
+    assert.equal(res.eligible, false);
+  });
+
+  it("16. probe: GUEST with a purchase (raw phone form) → eligible true", async () => {
+    const raw = newPhone();
+    await seedQualifyingPurchase(restA, { phone: canon(raw) });
+    // The probe canonicalizes the typed number itself (the client sends the
+    // raw form the customer typed).
+    const res = await reservationService.checkPurchaseEligibility(restA, {
+      guestPhone: raw,
+    });
+    assert.equal(res.eligible, true);
+  });
+
+  it("17. probe: LOGGED-IN customer → true with a purchase, false without", async () => {
+    const seeded = await seedQualifyingPurchase(restA, { branchId: branchA1 });
+    assert.equal(
+      (await reservationService.checkPurchaseEligibility(restA, {
+        customerId: seeded.customerId,
+      })).eligible,
+      true
+    );
+
+    const empty = await prisma.customer.create({
+      data: { restaurantId: restA, phone: canon(newPhone()), name: "No Buy" },
+    });
+    assert.equal(
+      (await reservationService.checkPurchaseEligibility(restA, {
+        customerId: empty.id,
+      })).eligible,
+      false
+    );
+  });
+
+  it("18. probe is tenant-scoped: another restaurant's purchase → false", async () => {
+    const raw = newPhone();
+    await seedQualifyingPurchase(restB, { phone: canon(raw) });
+    // Same phone, but probed against restA where nothing was bought.
+    assert.equal(
+      (await reservationService.checkPurchaseEligibility(restA, {
+        guestPhone: raw,
+      })).eligible,
+      false
+    );
+    // A customer of another restaurant can never be probed into restA either.
+    const foreign = await prisma.customer.create({
+      data: { restaurantId: restB, phone: canon(newPhone()), name: "Foreign" },
+    });
+    assert.equal(
+      (await reservationService.checkPurchaseEligibility(restA, {
+        customerId: foreign.id,
+      })).eligible,
+      false
+    );
+  });
+
+  it("19. probe: no identity / invalid phone → false (never throws, never guesses)", async () => {
+    assert.equal(
+      (await reservationService.checkPurchaseEligibility(restA, {})).eligible,
+      false
+    );
+    assert.equal(
+      (await reservationService.checkPurchaseEligibility(restA, {
+        guestPhone: "abc",
+      })).eligible,
+      false
+    );
+  });
+
+  it("20. the probe result can never bypass the write gate (POST still 409)", async () => {
+    // Even if the client believed it was "eligible", the authoritative gate
+    // re-runs inside the create transaction and still rejects.
+    const input = publicInput();
+    await assert.rejects(
+      reservationService.createPublicReservation(restA, input, { now: NOW }),
+      isPurchaseRequired
+    );
+  });
+
   it("14. R5.1 regression — table status does not affect availability (reservation-only)", async () => {
     // tA is AVAILABLE; availability must be true with no overlapping booking.
     const avail = await reservationService.checkAvailability(

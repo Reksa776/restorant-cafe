@@ -161,3 +161,241 @@ export const PURCHASE_REQUIRED_MESSAGE =
 export function reservationQrPayload(code: string): string {
   return (code || "").trim().toUpperCase();
 }
+
+// ============================================================
+// Wizard step order (R6.5)
+//
+// The minimum-purchase requirement is a STEP of the reservation wizard, placed
+// AFTER the table pick and BEFORE the guest data / review — so the customer
+// learns about it early instead of only after Submit
+// (`PURCHASE_REQUIRED` on Review). The server rule is unchanged; this is
+// position only.
+//
+//   branch → date → party → time → table → PURCHASE → guest → review
+// ============================================================
+
+export type ReservationWizardStep =
+  | "branch"
+  | "date"
+  | "party"
+  | "time"
+  | "table"
+  | "purchase"
+  | "guest"
+  | "review"
+  | "success";
+
+/** Customer-facing label per step (the purchase step is shown as "Pembelian"). */
+export const RESERVATION_STEP_LABELS: Record<ReservationWizardStep, string> = {
+  branch: "Pilih Cabang",
+  date: "Pilih Tanggal",
+  party: "Jumlah Orang",
+  time: "Pilih Jam",
+  table: "Pilih Meja",
+  purchase: "Pembelian",
+  guest: "Data Tamu",
+  review: "Review Reservasi",
+  success: "Reservasi Berhasil",
+};
+
+/**
+ * Ordered wizard steps (the terminal `success` screen is excluded, exactly as
+ * the progress header counts them). `purchase` sits between `table` and
+ * `guest` — the single source of truth for the flow order.
+ */
+export const RESERVATION_WIZARD_STEPS: ReservationWizardStep[] = [
+  "branch",
+  "date",
+  "party",
+  "time",
+  "table",
+  "purchase",
+  "guest",
+  "review",
+];
+
+/** Next ordered wizard step, or null at the end (`review` / `success`). */
+export function nextWizardStep(
+  step: ReservationWizardStep
+): ReservationWizardStep | null {
+  const index = RESERVATION_WIZARD_STEPS.indexOf(step);
+  if (index < 0 || index >= RESERVATION_WIZARD_STEPS.length - 1) return null;
+  return RESERVATION_WIZARD_STEPS[index + 1];
+}
+
+/**
+ * Previous ordered wizard step, or null at the start (`branch`). Back
+ * navigation walks this order so every step keeps its state.
+ */
+export function previousWizardStep(
+  step: ReservationWizardStep
+): ReservationWizardStep | null {
+  const index = RESERVATION_WIZARD_STEPS.indexOf(step);
+  if (index <= 0) return null;
+  return RESERVATION_WIZARD_STEPS[index - 1];
+}
+
+// ============================================================
+// Purchase step copy + view (UX early feedback only)
+// ============================================================
+
+/**
+ * Client-side state of the early purchase check. This is UX ONLY — it never
+ * authorizes anything: `POST /public/reservations` re-runs the same rule
+ * server-side and still answers 409 `PURCHASE_REQUIRED` when nothing
+ * qualifies (race-safe, authoritative).
+ *
+ *   idle       → identity unknown yet (guest has not typed a valid phone)
+ *   checking   → probe in flight
+ *   eligible   → server says a qualifying purchase exists
+ *   ineligible → server says no qualifying purchase (show the menu CTA)
+ *   error      → probe failed (offer retry; never blocks the flow logic)
+ */
+export type PurchaseCheckState =
+  | "idle"
+  | "checking"
+  | "eligible"
+  | "ineligible"
+  | "error";
+
+export const PURCHASE_STEP_TITLE = "Verifikasi Pembelian";
+export const PURCHASE_FOUND_TITLE = "Pembelian ditemukan";
+export const PURCHASE_FOUND_MESSAGE =
+  "Anda memenuhi syarat untuk melakukan reservasi.";
+export const PURCHASE_REQUIRED_TITLE = "Pembelian Diperlukan";
+export const PURCHASE_REQUIRED_CTA = "Pesan Menu Dulu";
+/** Existing customer menu/order flow — no new checkout/order/payment engine. */
+export const PURCHASE_CTA_HREF = "/menu";
+export const PURCHASE_IDLE_MESSAGE =
+  "Masukkan nomor WhatsApp yang Anda gunakan saat memesan untuk memverifikasi pembelian Anda.";
+export const PURCHASE_CHECKING_MESSAGE = "Memeriksa pembelian…";
+export const PURCHASE_ERROR_MESSAGE =
+  "Gagal memeriksa pembelian. Silakan coba lagi.";
+
+export interface PurchaseStepView {
+  tone: "idle" | "checking" | "eligible" | "required" | "error";
+  title: string;
+  message: string;
+  /** Label of the purchase-required CTA, or null when not applicable. */
+  ctaLabel: string | null;
+  ctaHref: string | null;
+  /** True only when the customer may advance (server-confirmed purchase). */
+  canContinue: boolean;
+}
+
+/** Pure mapping of the purchase check state to what the step renders. */
+export function purchaseStepView(state: PurchaseCheckState): PurchaseStepView {
+  switch (state) {
+    case "eligible":
+      return {
+        tone: "eligible",
+        title: PURCHASE_FOUND_TITLE,
+        message: PURCHASE_FOUND_MESSAGE,
+        ctaLabel: null,
+        ctaHref: null,
+        canContinue: true,
+      };
+    case "ineligible":
+      return {
+        tone: "required",
+        title: PURCHASE_REQUIRED_TITLE,
+        message: PURCHASE_REQUIRED_MESSAGE,
+        ctaLabel: PURCHASE_REQUIRED_CTA,
+        ctaHref: PURCHASE_CTA_HREF,
+        canContinue: false,
+      };
+    case "checking":
+      return {
+        tone: "checking",
+        title: PURCHASE_STEP_TITLE,
+        message: PURCHASE_CHECKING_MESSAGE,
+        ctaLabel: null,
+        ctaHref: null,
+        canContinue: false,
+      };
+    case "error":
+      return {
+        tone: "error",
+        title: PURCHASE_STEP_TITLE,
+        message: PURCHASE_ERROR_MESSAGE,
+        ctaLabel: null,
+        ctaHref: null,
+        canContinue: false,
+      };
+    default:
+      return {
+        tone: "idle",
+        title: PURCHASE_STEP_TITLE,
+        message: PURCHASE_IDLE_MESSAGE,
+        ctaLabel: null,
+        ctaHref: null,
+        canContinue: false,
+      };
+  }
+}
+
+// ============================================================
+// Return-to-reservation draft (minimal mechanism)
+//
+// The app has NO return-url/session mechanism for "go order first, then come
+// back". When the customer is sent to the existing menu flow from the
+// purchase step, the wizard snapshots its selections in sessionStorage so
+// reopening /reservasi resumes AT the purchase step (re-checking the purchase)
+// instead of starting over. Pure serialize/parse only — no auth, no order.
+// ============================================================
+
+export const RESERVATION_DRAFT_STORAGE_KEY = "reservation_draft";
+
+export interface ReservationDraft {
+  branchCode: string;
+  date: string;
+  partySize: number | null;
+  selectedStart: number | null;
+  selectedTableId: string | null;
+  guestName: string;
+  guestPhone: string;
+  notes: string;
+}
+
+/** JSON snapshot of the wizard selections (never any auth/payment data). */
+export function serializeReservationDraft(draft: ReservationDraft): string {
+  return JSON.stringify({ version: 1, ...draft });
+}
+
+/**
+ * Parse + defensively validate a stored draft. Returns null for anything that
+ * is not a plausible draft (missing branch/date, malformed JSON, future
+ * schema) so a corrupt value can never break the wizard.
+ */
+export function parseReservationDraft(raw: string | null): ReservationDraft | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const value = parsed as Record<string, unknown>;
+  if (typeof value.branchCode !== "string" || !value.branchCode) return null;
+  if (typeof value.date !== "string" || !isValidDateOnly(value.date)) return null;
+
+  const optionalNumber = (input: unknown): number | null =>
+    typeof input === "number" && Number.isFinite(input) ? input : null;
+  const optionalString = (input: unknown): string =>
+    typeof input === "string" ? input : "";
+
+  return {
+    branchCode: value.branchCode,
+    date: value.date,
+    partySize: optionalNumber(value.partySize),
+    selectedStart: optionalNumber(value.selectedStart),
+    selectedTableId:
+      typeof value.selectedTableId === "string" && value.selectedTableId
+        ? value.selectedTableId
+        : null,
+    guestName: optionalString(value.guestName),
+    guestPhone: optionalString(value.guestPhone),
+    notes: optionalString(value.notes),
+  };
+}

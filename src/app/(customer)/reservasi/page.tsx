@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   AlertCircle,
   ArrowLeft,
@@ -12,6 +13,8 @@ import {
   Loader2,
   MapPin,
   RotateCw,
+  ShieldCheck,
+  ShoppingBag,
   StickyNote,
   Table2,
   User,
@@ -43,10 +46,14 @@ import type {
 } from "@/components/customer/reservation/reservation-floor-map.helpers";
 import { RESERVATION_DEFAULT_DURATION_MINUTES } from "@/services/reservation/reservation.slots";
 import {
+  PURCHASE_CTA_HREF,
   PURCHASE_REQUIRED_CODE,
-  PURCHASE_REQUIRED_MESSAGE,
+  PURCHASE_STEP_TITLE,
   RESERVATION_CONFLICT_MESSAGE,
+  RESERVATION_DRAFT_STORAGE_KEY,
   RESERVATION_STATUS_LABELS,
+  RESERVATION_STEP_LABELS,
+  RESERVATION_WIZARD_STEPS,
   TABLE_NOT_AVAILABLE_MESSAGE,
   buildCandidateSlots,
   formatReservationDate,
@@ -54,16 +61,30 @@ import {
   formatTimeSlot,
   maxReservationDate,
   minReservationDate,
+  parseReservationDraft,
+  previousWizardStep,
+  purchaseStepView,
   reservationQrPayload,
+  serializeReservationDraft,
+} from "./reservation-flow";
+import type {
+  PurchaseCheckState,
+  ReservationDraft,
+  ReservationWizardStep,
 } from "./reservation-flow";
 import { QrCodeDisplay } from "@/components/qr-code-display";
 
 // ============================================================
 // /reservasi — CUSTOMER RESERVATION WIZARD (PHASE R5).
 //
-// Single-page mobile-first flow:
-//   1. Cabang → 2. Tanggal → 3. Jumlah orang → 4. Jam →
-//   5. Meja → 6. Data tamu → 7. Review → 8. Submit → 9. Sukses.
+// Single-page mobile-first flow (R6.5):
+//   1. Cabang → 2. Tanggal → 3. Jumlah orang → 4. Jam → 5. Meja →
+//   6. Pembelian (verifikasi pembelian minimum — SEBELUM data tamu) →
+//   7. Data tamu → 8. Review → Submit → Sukses.
+//
+// The purchase requirement is surfaced EARLY, as its own step — never for the
+// first time on Review. The early check is UX ONLY: the server still re-runs
+// the rule on POST and still answers 409 `PURCHASE_REQUIRED`.
 //
 // The server is ALWAYS authoritative:
 //   - availability comes per-slot from GET /public/reservations/availability
@@ -77,38 +98,34 @@ import { QrCodeDisplay } from "@/components/qr-code-display";
 // server-provided identifier passed back on submit.
 // ============================================================
 
-type Step =
-  | "branch"
-  | "date"
-  | "party"
-  | "time"
-  | "table"
-  | "guest"
-  | "review"
-  | "success";
-
-const STEP_LABELS: Record<Step, string> = {
-  branch: "Pilih Cabang",
-  date: "Pilih Tanggal",
-  party: "Jumlah Orang",
-  time: "Pilih Jam",
-  table: "Pilih Meja",
-  guest: "Data Tamu",
-  review: "Review Reservasi",
-  success: "Reservasi Berhasil",
-};
-
-const WIZARD_STEPS: Step[] = [
-  "branch",
-  "date",
-  "party",
-  "time",
-  "table",
-  "guest",
-  "review",
-];
+// Step order/labels are pure data in `reservation-flow.ts` so the flow order
+// (table → purchase → guest) is unit-tested, not just visual.
+type Step = ReservationWizardStep;
 
 const MAX_PARTY_SIZE = 100;
+
+/**
+ * Read the one-shot wizard draft saved when the customer was sent to the menu
+ * to complete the required purchase. Returns null when absent/corrupt or when
+ * the stored date is no longer inside the bookable horizon.
+ */
+function readStoredReservationDraft(): ReservationDraft | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(RESERVATION_DRAFT_STORAGE_KEY);
+    if (!raw) return null;
+    // One-shot: consume it so a later visit starts clean.
+    window.sessionStorage.removeItem(RESERVATION_DRAFT_STORAGE_KEY);
+    const draft = parseReservationDraft(raw);
+    if (!draft) return null;
+    if (draft.date < minReservationDate() || draft.date > maxReservationDate()) {
+      return null;
+    }
+    return draft;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Customer-facing labels/colors for the server slot status. The customer
@@ -247,6 +264,7 @@ export default function ReservationPage() {
   } = useCart();
   const { customer, isHydrated: authHydrated } = useCustomerAuth();
   const { applyBranding } = useBranding();
+  const router = useRouter();
 
   const [step, setStep] = useState<Step>("branch");
 
@@ -297,10 +315,14 @@ export default function ReservationPage() {
   const [notes, setNotes] = useState("");
   const [guestTried, setGuestTried] = useState(false);
 
+  // ---- Minimum-purchase step (R6.5) — UX ONLY, server stays authoritative ----
+  const [purchaseState, setPurchaseState] = useState<PurchaseCheckState>("idle");
+  const [purchaseRetryKey, setPurchaseRetryKey] = useState(0);
+  const [resumedFromDraft, setResumedFromDraft] = useState(false);
+
   // ---- Submit ----
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [purchaseBlocked, setPurchaseBlocked] = useState(false);
   const [created, setCreated] = useState<CreatedReservation | null>(null);
 
   // One-shot init gate (QR table context / saved customer branch).
@@ -398,6 +420,25 @@ export default function ReservationPage() {
       tableContext?.branchCode ?? customerBranch?.branchCode ?? "";
     const timer = setTimeout(() => {
       loadBranches();
+
+      // MINIMAL return-to-reservation: if the customer was sent to the menu
+      // from the purchase step, restore their selections and land back ON the
+      // purchase step (which re-checks eligibility) instead of starting over.
+      const draft = readStoredReservationDraft();
+      if (draft) {
+        setBranchCode(draft.branchCode);
+        setDate(draft.date);
+        setPartySize(draft.partySize);
+        setSelectedStart(draft.selectedStart);
+        setSelectedTableId(draft.selectedTableId);
+        if (draft.guestName) setGuestName(draft.guestName);
+        if (draft.guestPhone) setGuestPhone(draft.guestPhone);
+        if (draft.notes) setNotes(draft.notes);
+        setResumedFromDraft(true);
+        setStep("purchase");
+        return;
+      }
+
       if (prefilledCode) setStep("date");
       // else the user starts on the branch step.
     }, 0);
@@ -663,6 +704,72 @@ export default function ReservationPage() {
   }, [authHydrated, customer]);
 
   // ============================================================
+  // Purchase step — early eligibility probe (UX ONLY, server-authoritative)
+  //
+  // Asks the read-only public endpoint whether the ACTING identity (verified
+  // customer session, else the normalized guest phone) already has a
+  // qualifying purchase. The answer changes NOTHING server-side: POST
+  // /public/reservations re-runs the rule and still answers 409
+  // PURCHASE_REQUIRED (race-safe). This is purely so the customer learns the
+  // requirement BEFORE Review/Submit.
+  // ============================================================
+
+  useEffect(() => {
+    if (step !== "purchase") return;
+
+    const isCustomer = Boolean(authHydrated && customer);
+    const phone = guestPhone.trim();
+    // A guest is identified by their (normalized) WhatsApp number.
+    const phoneValid = normalizePhone(phone) !== null;
+
+    let alive = true;
+    // Deferred (the project's effect pattern) so keystrokes debounce and no
+    // state is set synchronously while React renders.
+    const timer = setTimeout(() => {
+      if (!alive) return;
+      if (!isCustomer && !phoneValid) {
+        // Nothing to check yet → prompt for the number used when ordering.
+        setPurchaseState("idle");
+        return;
+      }
+      setPurchaseState("checking");
+      api
+        .get("/public/reservations/purchase-eligibility", {
+          params: {
+            ...(effectiveRestaurantId
+              ? { restaurantId: effectiveRestaurantId }
+              : {}),
+            // The logged-in path uses the session cookie server-side; the
+            // guest path sends only the phone the customer typed.
+            ...(isCustomer ? {} : { phone }),
+          },
+        })
+        .then((res) => {
+          if (!alive) return;
+          setPurchaseState(
+            res.data?.data?.eligible ? "eligible" : "ineligible"
+          );
+        })
+        .catch(() => {
+          if (!alive) return;
+          setPurchaseState("error");
+        });
+    }, 350);
+
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [
+    step,
+    authHydrated,
+    customer,
+    guestPhone,
+    effectiveRestaurantId,
+    purchaseRetryKey,
+  ]);
+
+  // ============================================================
   // Step transitions
   // ============================================================
 
@@ -670,31 +777,17 @@ export default function ReservationPage() {
     step === "party" ||
     step === "time" ||
     step === "table" ||
+    step === "purchase" ||
     step === "guest" ||
     step === "review" ||
     (step === "date" && !branchLocked);
 
+  // Back navigation follows the ordered wizard steps, so every earlier step
+  // keeps its state (purchase → table → time → party → date → branch).
   const goBack = () => {
-    switch (step) {
-      case "party":
-        setStep("date");
-        break;
-      case "time":
-        setStep("party");
-        break;
-      case "table":
-        setStep("time");
-        break;
-      case "guest":
-        setStep("table");
-        break;
-      case "review":
-        setStep("guest");
-        break;
-      case "date":
-        if (!branchLocked) setStep("branch");
-        break;
-    }
+    if (step === "date" && branchLocked) return;
+    const previous = previousWizardStep(step);
+    if (previous) setStep(previous);
   };
 
   const handleSelectBranch = (branch: PublicBranch) => {
@@ -707,6 +800,9 @@ export default function ReservationPage() {
     setSlotMap({});
     setSubmitError(null);
     setTableNotice(null);
+    // A different branch may belong to a different restaurant scope → the
+    // early purchase answer must be re-evaluated, not carried over.
+    setPurchaseState("idle");
     setStep("date");
   };
 
@@ -751,7 +847,38 @@ export default function ReservationPage() {
     setSelectedTableId(tableId);
     setSubmitError(null);
     setTableNotice(null);
-    setStep("guest");
+    // R6.5 — the minimum-purchase check is its OWN step between the table and
+    // the guest data, so it is never first shown on Review.
+    setStep("purchase");
+  };
+
+  /**
+   * "Pesan Menu Dulu": send the customer to the EXISTING menu/cart/checkout/
+   * payment flow (nothing new is created) after snapshotting the wizard in
+   * sessionStorage, so reopening /reservasi resumes on the purchase step and
+   * re-checks the purchase. This is the minimal return-to-reservation
+   * mechanism; the header already links back to /reservasi.
+   */
+  const handleGoToMenu = () => {
+    try {
+      window.sessionStorage.setItem(
+        RESERVATION_DRAFT_STORAGE_KEY,
+        serializeReservationDraft({
+          branchCode: effectiveBranchCode,
+          date,
+          partySize,
+          selectedStart,
+          selectedTableId,
+          guestName,
+          guestPhone,
+          notes,
+        })
+      );
+    } catch {
+      // Storage unavailable (private mode): the menu flow still works, the
+      // wizard just cannot be resumed automatically.
+    }
+    router.push(PURCHASE_CTA_HREF);
   };
 
   const guestNameValid =
@@ -796,7 +923,6 @@ export default function ReservationPage() {
 
     setIsSubmitting(true);
     setSubmitError(null);
-    setPurchaseBlocked(false);
 
     const payload: Record<string, unknown> = {
       branchCode: effectiveBranchCode,
@@ -827,11 +953,14 @@ export default function ReservationPage() {
         // earlier wizard state — branch/date/party/time/guest — is preserved)
         // with a clear notice; other 409s (slot/duplicate) stay on review.
         if (getErrorCode(error) === PURCHASE_REQUIRED_CODE) {
-          // Minimum-purchase gate: the guest/customer has no qualifying
-          // purchase. Show a clear business notice + a path to the menu and
-          // keep the wizard state so the customer can order and come back.
-          setPurchaseBlocked(true);
+          // SERVER-SIDE safety net: the authoritative gate rejected the
+          // booking (the early UX check was bypassed or went stale). Send the
+          // customer BACK to the purchase step — which now re-checks and
+          // shows the requirement + menu CTA — instead of surfacing the gate
+          // for the first time on Review.
+          setPurchaseState("ineligible");
           setSubmitError(null);
+          setStep("purchase");
         } else if (getErrorCode(error) === "TABLE_NOT_AVAILABLE") {
           setSelectedTableId(null);
           setTableNotice(TABLE_NOT_AVAILABLE_MESSAGE);
@@ -854,7 +983,7 @@ export default function ReservationPage() {
   // Header (wizard position)
   // ============================================================
 
-  const stepIndex = WIZARD_STEPS.indexOf(step); // -1 on success
+  const stepIndex = RESERVATION_WIZARD_STEPS.indexOf(step); // -1 on success
 
   return (
     <div className="min-h-[70vh] pb-24">
@@ -867,23 +996,23 @@ export default function ReservationPage() {
           </h1>
           {step !== "success" && (
             <span className="text-xs text-gray-400">
-              Langkah {stepIndex + 1} dari {WIZARD_STEPS.length}
+              Langkah {stepIndex + 1} dari {RESERVATION_WIZARD_STEPS.length}
             </span>
           )}
         </div>
         <div className="mt-2 flex items-center gap-1.5">
-          {WIZARD_STEPS.map((s) => (
+          {RESERVATION_WIZARD_STEPS.map((s) => (
             <div
               key={s}
               className={`h-1 flex-1 rounded-full transition-colors ${
-                WIZARD_STEPS.indexOf(s) <= stepIndex
+                RESERVATION_WIZARD_STEPS.indexOf(s) <= stepIndex
                   ? "bg-brand-primary"
                   : "bg-gray-200"
               }`}
             />
           ))}
         </div>
-        <p className="mt-2 text-sm text-gray-500">{STEP_LABELS[step]}</p>
+        <p className="mt-2 text-sm text-gray-500">{RESERVATION_STEP_LABELS[step]}</p>
       </div>
 
       {canGoBack && (
@@ -1379,7 +1508,7 @@ export default function ReservationPage() {
               onBack={goBack}
               onNext={() =>
                 effectiveTableId
-                  ? setStep("guest")
+                  ? setStep("purchase")
                   : toast.error("Silakan pilih meja")
               }
               nextLabel="Lanjut"
@@ -1390,7 +1519,144 @@ export default function ReservationPage() {
       )}
 
       {/* ==========================================================
-          STEP 6 — GUEST DATA
+          STEP 6 — PURCHASE (R6.5: early minimum-purchase check)
+
+          UX ONLY. The requirement is surfaced HERE (after the table pick,
+          before the guest data and Review) instead of only after Submit.
+          Advancing requires the server-confirmed early answer; the POST gate
+          still re-validates and still answers 409 PURCHASE_REQUIRED.
+      ========================================================== */}
+      {step === "purchase" && (() => {
+        const view = purchaseStepView(purchaseState);
+        const isGuest = !customer;
+        return (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-gray-200 bg-white p-4">
+              <div className="text-center pt-1 pb-4">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-brand-secondary mb-3">
+                  <ShoppingBag className="h-6 w-6 text-brand-primary" />
+                </div>
+                <h2 className="text-base font-semibold text-gray-900">
+                  {PURCHASE_STEP_TITLE}
+                </h2>
+                <p className="mt-1 text-xs text-gray-500 max-w-sm mx-auto px-2">
+                  Untuk melakukan reservasi, Anda perlu menyelesaikan minimal 1
+                  pembelian terlebih dahulu.
+                </p>
+              </div>
+
+              {resumedFromDraft && (
+                <div className="mb-4 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2">
+                  <p className="text-xs text-blue-700">
+                    Melanjutkan reservasi Anda sebelumnya.
+                  </p>
+                </div>
+              )}
+
+              {/* Guests are identified by their WhatsApp number (the same
+                  normalized ownership signal the server gate uses); a
+                  logged-in customer is verified from the session. */}
+              {isGuest && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nomor WhatsApp <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="tel"
+                    value={guestPhone}
+                    onChange={(e) => setGuestPhone(e.target.value)}
+                    placeholder="081234567890"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
+                  />
+                  <p className="mt-1 text-xs text-gray-400">
+                    Gunakan nomor yang Anda pakai saat memesan agar pembelian
+                    dapat diverifikasi.
+                  </p>
+                </div>
+              )}
+
+              {view.tone === "checking" && (
+                <div className="flex items-center gap-2.5 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <Loader2 className="h-5 w-5 animate-spin text-gray-400 shrink-0" />
+                  <p className="text-sm text-gray-600">{view.message}</p>
+                </div>
+              )}
+
+              {view.tone === "eligible" && (
+                <div className="flex items-start gap-2.5 rounded-xl border border-green-200 bg-green-50 p-4">
+                  <ShieldCheck className="h-5 w-5 text-green-600 shrink-0 mt-0.5" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-green-800">
+                      ✓ {view.title}
+                    </p>
+                    <p className="text-xs text-green-700 mt-0.5">
+                      {view.message}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {view.tone === "required" && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-sm font-medium text-amber-800">
+                    {view.title}
+                  </p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {view.message}
+                  </p>
+                  {view.ctaLabel && view.ctaHref && (
+                    <button
+                      type="button"
+                      onClick={handleGoToMenu}
+                      className="mt-3 inline-flex items-center justify-center rounded-lg bg-brand-primary px-4 py-2 text-sm font-medium text-brand-primary-foreground hover:bg-brand-primary/90 transition-colors"
+                    >
+                      {view.ctaLabel}
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {view.tone === "idle" && (
+                <div className="flex items-start gap-2.5 rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <AlertCircle className="h-5 w-5 text-gray-400 shrink-0 mt-0.5" />
+                  <p className="text-xs text-gray-600 leading-relaxed">
+                    {view.message}
+                  </p>
+                </div>
+              )}
+
+              {view.tone === "error" && (
+                <div className="flex items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4">
+                  <div className="flex items-start gap-2.5 min-w-0">
+                    <AlertCircle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+                    <p className="text-xs text-red-600 leading-relaxed">
+                      {view.message}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPurchaseRetryKey((k) => k + 1)}
+                    className="shrink-0 inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                  >
+                    <RotateCw className="h-4 w-4" />
+                    Cek Lagi
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <BottomBar
+              onBack={goBack}
+              onNext={() => setStep("guest")}
+              nextLabel="Lanjutkan Reservasi"
+              nextDisabled={!view.canContinue}
+            />
+          </div>
+        );
+      })()}
+
+      {/* ==========================================================
+          STEP 7 — GUEST DATA
       ========================================================== */}
       {step === "guest" && (
         <div className="space-y-4">
@@ -1468,7 +1734,7 @@ export default function ReservationPage() {
       )}
 
       {/* ==========================================================
-          STEP 7 — REVIEW
+          STEP 8 — REVIEW
       ========================================================== */}
       {step === "review" && (
         <div className="space-y-4">
@@ -1499,20 +1765,15 @@ export default function ReservationPage() {
             </dl>
           </div>
 
-          {purchaseBlocked && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-              <p className="text-sm font-medium text-amber-800">
-                Minimal 1 Pembelian Diperlukan
+          {/* Review is NEVER the first place the requirement appears — the
+              "Pembelian" step owns that. When the purchase was verified it is
+              only a small confirmation here. */}
+          {purchaseState === "eligible" && (
+            <div className="flex items-center gap-2 rounded-xl border border-green-200 bg-green-50 px-3 py-2">
+              <ShieldCheck className="h-4 w-4 text-green-600 shrink-0" />
+              <p className="text-xs text-green-700">
+                ✓ Purchase requirement terpenuhi
               </p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                {PURCHASE_REQUIRED_MESSAGE}
-              </p>
-              <Link
-                href="/menu"
-                className="mt-3 inline-flex items-center justify-center rounded-lg bg-brand-primary px-4 py-2 text-sm font-medium text-brand-primary-foreground hover:bg-brand-primary/90 transition-colors"
-              >
-                Pesan Menu Dulu
-              </Link>
             </div>
           )}
 
@@ -1539,7 +1800,7 @@ export default function ReservationPage() {
       )}
 
       {/* ==========================================================
-          STEP 8 — SUCCESS
+          STEP 9 — SUCCESS
       ========================================================== */}
       {step === "success" && created && (
         <div className="space-y-4">

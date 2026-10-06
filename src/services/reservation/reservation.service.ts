@@ -513,6 +513,10 @@ export class ReservationService {
    * Runs INSIDE the reservation transaction (server-authoritative recheck)
    * and throws 409 `PURCHASE_REQUIRED` when nothing qualifies.
    *
+   * The RULE lives in `hasQualifyingPurchase` below and is shared with the
+   * read-only UX probe (`checkPurchaseEligibility`) — one source of truth, so
+   * the early UI feedback can never drift from the write gate.
+   *
    * KNOWN GAP (reported): a guest phone number is not OTP-verified, so a guest
    * who knows another customer's phone could satisfy the gate with that
    * customer's orders. This is the strongest ownership signal the existing
@@ -523,19 +527,35 @@ export class ReservationService {
     restaurantId: string,
     data: Pick<CreateReservationData, "customerId" | "guestPhone">
   ): Promise<void> {
+    if (!(await this.hasQualifyingPurchase(tx, restaurantId, data))) {
+      throw new ConflictError(PURCHASE_REQUIRED_MESSAGE, PURCHASE_REQUIRED_CODE);
+    }
+  }
+
+  /**
+   * The minimum-purchase RULE, shared by the write gate and the read-only
+   * probe: resolve the acting customer SERVER-SIDE (session `customerId`, else
+   * the `Customer` matched by the normalized `guestPhone`) and report whether
+   * at least one QUALIFYING order exists at THIS restaurant (PAID, not
+   * CANCELLED, >= 1 item; any branch). Accepts a transaction client or the
+   * base client — a probe never opens a write transaction.
+   */
+  private async hasQualifyingPurchase(
+    client: Prisma.TransactionClient,
+    restaurantId: string,
+    data: Pick<CreateReservationData, "customerId" | "guestPhone">
+  ): Promise<boolean> {
     let customerId = data.customerId ?? null;
     if (!customerId) {
-      const customer = await tx.customer.findFirst({
+      const customer = await client.customer.findFirst({
         where: { restaurantId, phone: data.guestPhone },
         select: { id: true },
       });
       customerId = customer?.id ?? null;
     }
-    if (!customerId) {
-      throw new ConflictError(PURCHASE_REQUIRED_MESSAGE, PURCHASE_REQUIRED_CODE);
-    }
+    if (!customerId) return false;
 
-    const qualifying = await tx.order.findFirst({
+    const qualifying = await client.order.findFirst({
       where: {
         restaurantId,
         customerId,
@@ -545,9 +565,32 @@ export class ReservationService {
       },
       select: { id: true },
     });
-    if (!qualifying) {
-      throw new ConflictError(PURCHASE_REQUIRED_MESSAGE, PURCHASE_REQUIRED_CODE);
-    }
+    return Boolean(qualifying);
+  }
+
+  /**
+   * READ-ONLY purchase-eligibility probe for the customer reservation wizard
+   * (R6.5 UX early feedback). It answers the SAME question as the write gate,
+   * with the SAME server-side ownership rule, but NEVER authorizes a booking:
+   * `POST /public/reservations` still re-runs `assertQualifyingPurchase` inside
+   * its transaction and still answers 409 `PURCHASE_REQUIRED`, so a stale or
+   * spoofed client result cannot bypass anything (race-safe).
+   *
+   * `customerId` comes from the verified customer SESSION (route-provided);
+   * the guest path only passes the phone the caller typed. No client-supplied
+   * customerId/orderId/paymentStatus is ever used.
+   */
+  async checkPurchaseEligibility(
+    restaurantId: string,
+    input: { customerId?: string | null; guestPhone?: string | null }
+  ): Promise<{ eligible: boolean }> {
+    const eligible = await this.hasQualifyingPurchase(prisma, restaurantId, {
+      customerId: input.customerId ?? null,
+      // Canonicalize at the boundary (the write path receives the canonical
+      // form from the Zod schema; this probe must match the same form).
+      guestPhone: input.guestPhone ? (normalizePhone(input.guestPhone) ?? "") : "",
+    });
+    return { eligible };
   }
 
   // ============================================================
