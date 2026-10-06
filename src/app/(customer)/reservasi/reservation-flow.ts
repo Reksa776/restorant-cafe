@@ -124,3 +124,11 @@ export const RESERVATION_STATUS_LABELS: Record<string, string> = {
 
 export const RESERVATION_CONFLICT_MESSAGE =
   "Meja/jam tersebut baru saja diambil. Silakan pilih waktu atau meja lain.";
+
+/**
+ * 409 `TABLE_NOT_AVAILABLE` — the chosen table failed the server's FINAL
+ * availability gate (it became occupied/maintenance after the read). The
+ * customer keeps all earlier wizard state and only picks another table.
+ */
+export const TABLE_NOT_AVAILABLE_MESSAGE =
+  "Maaf, meja ini baru saja tidak tersedia. Silakan pilih meja lain.";

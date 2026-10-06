@@ -39,8 +39,17 @@ export class NotFoundError extends AppError {
 }
 
 export class ConflictError extends AppError {
-  constructor(message: string = "Resource already exists") {
-    super(message, 409, "CONFLICT");
+  /**
+   * A 409 with an optional semantic `code`. The default stays `CONFLICT` so
+   * every existing caller is unchanged; a more specific code (e.g.
+   * `TABLE_NOT_AVAILABLE` for the reservation table gate) lets the client show
+   * a targeted message without changing the HTTP status or error envelope.
+   */
+  constructor(
+    message: string = "Resource already exists",
+    code: string = "CONFLICT"
+  ) {
+    super(message, 409, code);
     this.name = "ConflictError";
   }
 }

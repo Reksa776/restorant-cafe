@@ -29,10 +29,14 @@ import {
 // ============================================================
 
 const NOW: ReservationNow = { today: "2026-09-15", nowMinutes: 9 * 60 };
+// Same day as NOW but at 18:30, so the occupancy horizon is 18:30–20:30 and
+// the 19:00 / 20:00 slots overlap it while 21:00 and every future date do not.
+const NOW_TODAY: ReservationNow = { today: NOW.today, nowMinutes: 18 * 60 + 30 };
 const FUTURE_DATE = addDaysToDateOnly(NOW.today, 2); // 2026-09-17
 const SLOT_18 = 18 * 60; // 18:00
 const SLOT_19 = 19 * 60; // 19:00
 const SLOT_20 = 20 * 60; // 20:00 (last on-grid 120-min start)
+const SLOT_21 = 21 * 60; // 21:00
 const DUR_120 = 120; // 18:00–20:00 / 19:00–21:00
 
 let restAId = "";
@@ -55,7 +59,8 @@ let tDupB = ""; // cap 4 — duplicate guards (guest, second table)
 let tDupCap = ""; // cap 8 — concurrency duplicate race
 let tConc = ""; // cap 4 — concurrency capacity race
 let tState = ""; // cap 4 — status transitions / cancel
-let tOccupied = ""; // cap 4 — status OCCUPIED but bookable
+let tOccupied = ""; // cap 4 — status OCCUPIED (operational occupancy)
+let tMaintenance = ""; // cap 4 — status MAINTENANCE (always blocked)
 // special tables
 let tInactive = ""; // isActive=false
 let tLegacy = ""; // branchId=NULL (legacy)
@@ -170,6 +175,9 @@ before(async () => {
   tState = (await table(9212, 4)).id;
   tOccupied = (
     await table(9213, 4, { status: "OCCUPIED", name: "QA-OCCUPIED" })
+  ).id;
+  tMaintenance = (
+    await table(9219, 4, { status: "MAINTENANCE", name: "QA-MAINTENANCE" })
   ).id;
   tInactive = (await table(9214, 4, { isActive: false })).id;
   tLegacy = (
@@ -995,14 +1003,19 @@ describe("reservation.service — availability", () => {
     assert.equal(avail.tables[0].remainingSeats, 4);
   });
 
-  it("Table.status is NOT an availability source (OCCUPIED tables stay bookable)", async () => {
-    const avail = await reservationService.checkAvailability(restAId, branchMain, {
-      reservationDate: FUTURE_DATE,
-      partySize: 4,
-      startMinutes: SLOT_18,
-      durationMinutes: DUR_120,
-      tableId: tOccupied,
-    });
+  it("an OCCUPIED table does NOT block a FUTURE date (busy now ≠ booked tomorrow)", async () => {
+    const avail = await reservationService.checkAvailability(
+      restAId,
+      branchMain,
+      {
+        reservationDate: FUTURE_DATE,
+        partySize: 4,
+        startMinutes: SLOT_18,
+        durationMinutes: DUR_120,
+        tableId: tOccupied,
+      },
+      { now: NOW }
+    );
     assert.equal(avail.available, true);
 
     const res = await reservationService.createAdminReservation(
@@ -1017,6 +1030,112 @@ describe("reservation.service — availability", () => {
       { now: NOW }
     );
     assert.equal(res.status, "PENDING");
+  });
+
+  it("an OCCUPIED table blocks a SAME-DAY slot inside the occupancy horizon (2/6/7 — paid or unpaid)", async () => {
+    // `Table.status = OCCUPIED` is written by the order engine on order create
+    // REGARDLESS of `paymentStatus`, so this covers both an unpaid and a paid
+    // active order (the reservation gate reads the table status, not payment).
+    const avail = await reservationService.checkAvailability(
+      restAId,
+      branchMain,
+      {
+        reservationDate: NOW_TODAY.today,
+        partySize: 4,
+        startMinutes: SLOT_19,
+        durationMinutes: DUR_120,
+        tableId: tOccupied,
+      },
+      { now: NOW_TODAY }
+    );
+    assert.equal(avail.available, false);
+
+    // The transactional create path applies the SAME rule and must reject.
+    await assert.rejects(
+      reservationService.createAdminReservation(
+        restAId,
+        adminInput({
+          branchId: branchMain,
+          tableId: tOccupied,
+          reservationDate: NOW_TODAY.today,
+          startMinutes: SLOT_19,
+          partySize: 4,
+          guestPhone: "081200000023",
+        }),
+        { now: NOW_TODAY }
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictError);
+        assert.equal((error as ConflictError).code, "TABLE_NOT_AVAILABLE");
+        return true;
+      }
+    );
+  });
+
+  it("an OCCUPIED table does NOT block a same-day slot OUTSIDE the occupancy horizon (3)", async () => {
+    // 21:00 starts after the 18:30–20:30 horizon → bookable.
+    const avail = await reservationService.checkAvailability(
+      restAId,
+      branchMain,
+      {
+        reservationDate: NOW_TODAY.today,
+        partySize: 4,
+        startMinutes: SLOT_21,
+        durationMinutes: 60,
+        tableId: tOccupied,
+      },
+      { now: NOW_TODAY }
+    );
+    assert.equal(avail.available, true);
+  });
+
+  it("a MAINTENANCE table is ALWAYS unavailable and rejected on create (5)", async () => {
+    const today = await reservationService.checkAvailability(
+      restAId,
+      branchMain,
+      {
+        reservationDate: NOW_TODAY.today,
+        partySize: 4,
+        startMinutes: SLOT_21,
+        durationMinutes: 60,
+        tableId: tMaintenance,
+      },
+      { now: NOW_TODAY }
+    );
+    assert.equal(today.available, false);
+
+    const future = await reservationService.checkAvailability(
+      restAId,
+      branchMain,
+      {
+        reservationDate: FUTURE_DATE,
+        partySize: 4,
+        startMinutes: SLOT_18,
+        durationMinutes: DUR_120,
+        tableId: tMaintenance,
+      },
+      { now: NOW }
+    );
+    assert.equal(future.available, false);
+
+    await assert.rejects(
+      reservationService.createAdminReservation(
+        restAId,
+        adminInput({
+          branchId: branchMain,
+          tableId: tMaintenance,
+          startMinutes: SLOT_18,
+          partySize: 4,
+          guestPhone: "081200000024",
+        }),
+        { now: NOW }
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictError);
+        assert.equal((error as ConflictError).code, "TABLE_NOT_AVAILABLE");
+        return true;
+      }
+    );
   });
 
   it("never lists legacy branchId=NULL tables as available", async () => {

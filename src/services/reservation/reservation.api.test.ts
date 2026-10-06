@@ -67,6 +67,7 @@ let ALT = "";
 let R2B = "";
 let tMain = "";
 let tAlt = "";
+let tMaint = "";
 let emailA = "";
 let emailB = "";
 let emailC = "";
@@ -302,8 +303,14 @@ async function seedFixtures(): Promise<void> {
   await prisma.table.create({
     data: { restaurantId: restB, branchId: R2B, number: 5003, name: "QA-R2B-1", capacity: 4, isActive: true, status: "AVAILABLE" },
   });
+  // MAINTENANCE blocks every date/time, so the 409 TABLE_NOT_AVAILABLE path is
+  // deterministic over HTTP without depending on the wall clock.
+  const t3 = await prisma.table.create({
+    data: { restaurantId: restA, branchId: MAIN, number: 5004, name: "QA-MAIN-MAINT", capacity: 4, isActive: true, status: "MAINTENANCE" },
+  });
   tMain = t1.id;
   tAlt = t2.id;
+  tMaint = t3.id;
 
   // adminA — restA, ADMIN, all-branch (no UserBranch rows)
   emailA = `${tag}-a@r3.test`;
@@ -575,6 +582,33 @@ test("P14 public availability — cross-tenant branchCode → 404", async () => 
     })}`
   );
   assert.equal(res.status, 404, JSON.stringify(res.body));
+});
+
+test("P15 public create — a MAINTENANCE table → 409 TABLE_NOT_AVAILABLE", async () => {
+  const avail = await api(
+    `/api/public/reservations/availability?${qs({
+      branchCode: "QA-MAIN",
+      date: DAY_CREATE,
+      partySize: "2",
+      tableId: tMaint,
+      startMinutes: String(SLOT_18),
+      durationMinutes: String(DUR_120),
+    })}`
+  );
+  assert.equal(avail.status, 200, JSON.stringify(avail.body));
+  const probe = (avail.body?.data as { tables: Array<Record<string, unknown>> }).tables.find(
+    (t) => t.tableId === tMaint
+  );
+  assert.equal(probe?.available, false, "maintenance table is never available");
+
+  const res = await api("/api/public/reservations", {
+    method: "POST",
+    body: publicCreate({ tableId: tMaint, guestPhone: apiPhone() }),
+  });
+  assert.equal(res.status, 409, JSON.stringify(res.body));
+  assert.equal(res.body?.success, false);
+  assert.equal(res.body?.error, "TABLE_NOT_AVAILABLE");
+  assert.equal(res.body?.message, "Meja yang dipilih sudah tidak tersedia.");
 });
 
 // ============================================================

@@ -17,6 +17,7 @@ import {
   RESERVATION_SLOT_CONFIG,
   canAccommodate,
   dateOnlyFromDb,
+  operationalOccupancyBlocked,
   remainingCapacity,
   validateReservationWindow,
   type ReservationCapacityRow,
@@ -290,11 +291,19 @@ export class ReservationService {
    *
    * Scope: `restaurantId` + `branchId` are REQUIRED (server-derived). Only
    * ACTIVE tables of that exact branch are considered — legacy tables with
-   * `branchId` NULL are never candidates. `Table.status` is deliberately NOT
-   * consulted: it is the order/QR lifecycle flag; reservation availability is
-   * computed purely from the table's capacity and the LIVE reservation rows
-   * (PENDING/CONFIRMED/SEATED/COMPLETED hold the slot; CANCELLED/NO_SHOW do
-   * not), using the engine's half-open overlap math.
+   * `branchId` NULL are never candidates. Availability is computed from the
+   * table's capacity + LIVE reservation rows (PENDING/CONFIRMED/SEATED/
+   * COMPLETED hold the slot; CANCELLED/NO_SHOW do not) using the engine's
+   * half-open overlap math, PLUS the table's current operational status via
+   * the shared `operationalOccupancyBlocked` rule:
+   *   - MAINTENANCE tables are ALWAYS unavailable;
+   *   - an OCCUPIED table (active order) blocks only a SAME-DAY slot that
+   *     overlaps the current occupancy horizon [now, now + 120m).
+   * The SAME rule runs inside `createReservation` under the table row lock, so
+   * the read query and the write agree except for a genuine post-read race.
+   *
+   * `now` is injectable for determinism (tests); it defaults to the server
+   * clock, matching every other window decision in this service.
    */
   async checkAvailability(
     restaurantId: string,
@@ -305,8 +314,10 @@ export class ReservationService {
       startMinutes: number;
       durationMinutes?: number;
       tableId?: string | null;
-    }
+    },
+    opts?: { now?: ReservationNow }
   ): Promise<ReservationAvailabilityResult> {
+    const now = resolveNow(opts?.now);
     const dateParsed = ReservationDateOnlySchema.safeParse(input.reservationDate);
     if (!dateParsed.success) {
       throw new ValidationError("Tanggal reservasi tidak valid (format YYYY-MM-DD)");
@@ -346,6 +357,7 @@ export class ReservationService {
           name: true,
           capacity: true,
           isActive: true,
+          status: true,
         },
       });
       if (!table || table.branchId !== branchId) {
@@ -360,8 +372,14 @@ export class ReservationService {
         existing,
         { startMinutes, durationMinutes }
       );
+      const blocked = operationalOccupancyBlocked(
+        table.status,
+        { reservationDate, startMinutes, durationMinutes },
+        now
+      );
+      const available = partySize <= remaining && !blocked;
       return {
-        available: partySize <= remaining,
+        available,
         tableId: table.id,
         partySize,
         reservationDate,
@@ -374,7 +392,7 @@ export class ReservationService {
             name: table.name,
             capacity: table.capacity,
             remainingSeats: remaining,
-            available: partySize <= remaining,
+            available,
           },
         ],
       };
@@ -383,7 +401,7 @@ export class ReservationService {
     // No specific table → scan every ACTIVE table of the branch.
     const tables = await prisma.table.findMany({
       where: { branchId, restaurantId, isActive: true },
-      select: { id: true, number: true, name: true, capacity: true },
+      select: { id: true, number: true, name: true, capacity: true, status: true },
       orderBy: { number: "asc" },
     });
 
@@ -395,13 +413,18 @@ export class ReservationService {
         existing,
         { startMinutes, durationMinutes }
       );
+      const blocked = operationalOccupancyBlocked(
+        table.status,
+        { reservationDate, startMinutes, durationMinutes },
+        now
+      );
       availability.push({
         tableId: table.id,
         number: table.number,
         name: table.name,
         capacity: table.capacity,
         remainingSeats: remaining,
-        available: partySize <= remaining,
+        available: partySize <= remaining && !blocked,
       });
     }
 
@@ -554,6 +577,9 @@ export class ReservationService {
    *                                              the first commits, then reads
    *                                              the LATEST rows (locking read)
    *       validate owner/branch/active/capacity
+   *       reject MAINTENANCE + a same-day OCCUPIED table overlapping the
+   *              current occupancy horizon (`operationalOccupancyBlocked`)
+   *              → 409 TABLE_NOT_AVAILABLE
    *       count overlapping LIVE reservations (PENDING/CONFIRMED/SEATED/
    *              COMPLETED — CANCELLED/NO_SHOW are ignored) via
    *              `canAccommodate` (half-open intervals)
@@ -632,11 +658,12 @@ export class ReservationService {
               isActive: boolean;
               number: number;
               name: string;
+              status: string;
             }>
           >(
             Prisma.sql`
               SELECT \`id\`, \`restaurantId\`, \`branchId\`, \`capacity\`,
-                     \`isActive\`, \`number\`, \`name\`
+                     \`isActive\`, \`number\`, \`name\`, \`status\`
               FROM \`table\`
               WHERE \`id\` = ${data.tableId}
               FOR UPDATE
@@ -656,6 +683,29 @@ export class ReservationService {
           if (data.partySize > table.capacity) {
             throw new ConflictError(
               "Jumlah orang melebihi kapasitas meja"
+            );
+          }
+
+          // Final availability gate — the SAME shared rule the read-only
+          // availability query uses. MAINTENANCE always blocks; an OCCUPIED
+          // table (active order) blocks only a SAME-DAY slot overlapping the
+          // current occupancy horizon. Runs under the table row lock, so a
+          // table that became occupied/maintenance after `GET availability`
+          // is rejected here rather than silently double-booked.
+          if (
+            operationalOccupancyBlocked(
+              table.status,
+              {
+                reservationDate: data.reservationDate,
+                startMinutes: data.startMinutes,
+                durationMinutes: data.durationMinutes,
+              },
+              now
+            )
+          ) {
+            throw new ConflictError(
+              "Meja yang dipilih sudah tidak tersedia.",
+              "TABLE_NOT_AVAILABLE"
             );
           }
 

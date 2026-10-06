@@ -52,6 +52,20 @@ export const RESERVATION_MAX_DURATION_MINUTES = 240;
 /** Durations must be a multiple of this (whole quarter-hours). */
 export const RESERVATION_DURATION_STEP_MINUTES = 15;
 
+/**
+ * Operational-occupancy horizon (minutes) for a table that is CURRENTLY
+ * occupied (`Table.status = OCCUPIED`, kept in sync by the order engine).
+ *
+ * A same-day reservation blocks only when its interval overlaps
+ * `[now, now + RESERVATION_OCCUPANCY_BLOCK_MINUTES)`; later same-day slots and
+ * every future date stay bookable. This is deliberately SEPARATE from
+ * `RESERVATION_MAX_DURATION_MINUTES` (240 — how long a single booking may
+ * last): the horizon is a short "the table is busy right now" window, not a
+ * booking-length bound. `MAINTENANCE` is NOT horizon-bound and blocks
+ * unconditionally.
+ */
+export const RESERVATION_OCCUPANCY_BLOCK_MINUTES = 120;
+
 export const RESERVATION_MINUTES_PER_DAY = 24 * 60;
 
 // ============================================================
@@ -285,6 +299,38 @@ export function overlaps(
     a.startMinutes < intervalEndMinutes(b) &&
     intervalEndMinutes(a) > b.startMinutes
   );
+}
+
+/**
+ * True when a table's CURRENT operational status must block the requested
+ * reservation slot.
+ *
+ * This is the single shared rule consumed by BOTH the read-only availability
+ * query and the transactional create path, so "GET says available" and
+ * "POST accepts" can never disagree except for a genuine race that happens
+ * AFTER the read.
+ *
+ *   MAINTENANCE → always blocked (any date, any time).
+ *   OCCUPIED    → blocked only for a SAME-DAY slot overlapping the current
+ *                 occupancy horizon [now, now + RESERVATION_OCCUPANCY_BLOCK_MINUTES).
+ *                 A future date is NEVER blocked: a table busy now may well be
+ *                 free tomorrow.
+ *   other       → never blocked by operational status (AVAILABLE, etc.).
+ *
+ * Uses the same HALF-OPEN overlap convention as every other decision here.
+ */
+export function operationalOccupancyBlocked(
+  tableStatus: string,
+  requested: ReservationInterval & { reservationDate: string },
+  now: ReservationNow
+): boolean {
+  if (tableStatus === "MAINTENANCE") return true;
+  if (tableStatus !== "OCCUPIED") return false;
+  if (requested.reservationDate !== now.today) return false;
+  return overlaps(requested, {
+    startMinutes: now.nowMinutes,
+    durationMinutes: RESERVATION_OCCUPANCY_BLOCK_MINUTES,
+  });
 }
 
 // ============================================================

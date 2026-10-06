@@ -22,7 +22,11 @@ import api from "@/lib/axios";
 import { useCart } from "@/hooks/use-cart";
 import { useCustomerAuth } from "@/hooks/use-customer-auth";
 import { useBranding } from "@/hooks/use-branding";
-import { getErrorStatus, normalizeApiError } from "@/lib/api-error-handler";
+import {
+  getErrorCode,
+  getErrorStatus,
+  normalizeApiError,
+} from "@/lib/api-error-handler";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
 import { layoutService } from "@/services/layout.service";
 import { ReservationFloorMap } from "@/components/customer/reservation/reservation-floor-map";
@@ -41,6 +45,7 @@ import { RESERVATION_DEFAULT_DURATION_MINUTES } from "@/services/reservation/res
 import {
   RESERVATION_CONFLICT_MESSAGE,
   RESERVATION_STATUS_LABELS,
+  TABLE_NOT_AVAILABLE_MESSAGE,
   buildCandidateSlots,
   formatReservationDate,
   formatStartMinutes,
@@ -788,9 +793,19 @@ export default function ReservationPage() {
       }
     } catch (error) {
       if (getErrorStatus(error) === 409) {
-        // The slot/table changed between availability and submit. Show the
-        // stable customer message, refresh availability, and NEVER retry.
-        setSubmitError(RESERVATION_CONFLICT_MESSAGE);
+        // The slot/table changed between availability and submit. Refresh
+        // availability and NEVER retry. A TABLE_NOT_AVAILABLE rejection is
+        // table-specific, so send the customer back to the table step (all
+        // earlier wizard state — branch/date/party/time/guest — is preserved)
+        // with a clear notice; other 409s (slot/duplicate) stay on review.
+        if (getErrorCode(error) === "TABLE_NOT_AVAILABLE") {
+          setSelectedTableId(null);
+          setTableNotice(TABLE_NOT_AVAILABLE_MESSAGE);
+          setSubmitError(null);
+          setStep("table");
+        } else {
+          setSubmitError(RESERVATION_CONFLICT_MESSAGE);
+        }
         setAvReloadKey((k) => k + 1);
       } else {
         const normalized = normalizeApiError(error);
