@@ -333,6 +333,48 @@ export function operationalOccupancyBlocked(
   });
 }
 
+/**
+ * Display statuses a customer floor map / picker can show. These are DERIVED
+ * per table for one requested slot — never persisted, never a new DB enum.
+ *
+ *   AVAILABLE   → free for the slot and not currently occupied/maintenance.
+ *   OCCUPIED    → the table is CURRENTLY in use by an active order
+ *                 (`Table.status = OCCUPIED`). It stays visible; selectable
+ *                 only when the slot does not conflict (e.g. a future date).
+ *   RESERVED    → a live reservation overlaps the requested slot.
+ *   MAINTENANCE → blocked for every slot until maintenance ends.
+ *
+ * `OCCUPIED`/`MAINTENANCE` come from the table's current operational status;
+ * `RESERVED` is slot-relative. Selectability is a SEPARATE decision
+ * (`operationalOccupancyBlocked` + capacity) so a busy-now table can still be
+ * shown as OCCUPIED while remaining bookable for a future slot.
+ */
+export const TABLE_OPERATIONAL_STATUSES = [
+  "AVAILABLE",
+  "OCCUPIED",
+  "RESERVED",
+  "MAINTENANCE",
+] as const;
+
+export type TableOperationalStatus =
+  (typeof TABLE_OPERATIONAL_STATUSES)[number];
+
+/**
+ * Resolve the display status for one table at one requested slot.
+ *
+ * Precedence: MAINTENANCE (always) → OCCUPIED (current order) → RESERVED
+ * (overlapping live reservation) → AVAILABLE. Pure, so the availability
+ * query and any other consumer share exactly one rule.
+ */
+export function resolveSlotTableStatus(args: {
+  tableStatus: string;
+  hasOverlappingReservation: boolean;
+}): TableOperationalStatus {
+  if (args.tableStatus === "MAINTENANCE") return "MAINTENANCE";
+  if (args.tableStatus === "OCCUPIED") return "OCCUPIED";
+  return args.hasOverlappingReservation ? "RESERVED" : "AVAILABLE";
+}
+
 // ============================================================
 // Slot grid
 // ============================================================

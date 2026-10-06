@@ -18,10 +18,13 @@ import {
   canAccommodate,
   dateOnlyFromDb,
   operationalOccupancyBlocked,
+  overlaps,
   remainingCapacity,
+  resolveSlotTableStatus,
   validateReservationWindow,
   type ReservationCapacityRow,
   type ReservationNow,
+  type TableOperationalStatus,
 } from "./reservation.slots";
 import {
   CreateAdminReservationSchema,
@@ -253,6 +256,13 @@ interface TableAvailability {
   remainingSeats: number;
   /** True when `partySize` fits into `remainingSeats`. */
   available: boolean;
+  /**
+   * Slot-aware display status (never persisted): MAINTENANCE when the table is
+   * under maintenance, OCCUPIED when an active order is using it, RESERVED
+   * when a live reservation overlaps the slot, else AVAILABLE. Independent of
+   * `available`, so a busy-now table can still be bookable for a future slot.
+   */
+  status: TableOperationalStatus;
 }
 
 export interface ReservationAvailabilityResult {
@@ -378,6 +388,12 @@ export class ReservationService {
         now
       );
       const available = partySize <= remaining && !blocked;
+      const status = resolveSlotTableStatus({
+        tableStatus: table.status,
+        hasOverlappingReservation: existing.some((r) =>
+          overlaps(r, { startMinutes, durationMinutes })
+        ),
+      });
       return {
         available,
         tableId: table.id,
@@ -393,6 +409,7 @@ export class ReservationService {
             capacity: table.capacity,
             remainingSeats: remaining,
             available,
+            status,
           },
         ],
       };
@@ -418,6 +435,12 @@ export class ReservationService {
         { reservationDate, startMinutes, durationMinutes },
         now
       );
+      const status = resolveSlotTableStatus({
+        tableStatus: table.status,
+        hasOverlappingReservation: existing.some((r) =>
+          overlaps(r, { startMinutes, durationMinutes })
+        ),
+      });
       availability.push({
         tableId: table.id,
         number: table.number,
@@ -425,6 +448,7 @@ export class ReservationService {
         capacity: table.capacity,
         remainingSeats: remaining,
         available: partySize <= remaining && !blocked,
+        status,
       });
     }
 

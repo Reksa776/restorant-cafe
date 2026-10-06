@@ -556,6 +556,9 @@ test("P12 public availability — happy path returns seat counts", async () => {
   const probe = data.tables.find((t) => t.tableId === tAlt);
   assert.ok(probe, "table appears in availability response");
   assert.equal(probe.available, true);
+  // The 19:00–21:00 probe overlaps P8's 18:00–20:00 booking on the same table,
+  // so the slot-aware status is RESERVED even though capacity still allows it.
+  assert.equal(probe.status, "RESERVED");
   assert.ok((probe.remainingSeats as number) >= 2);
 });
 
@@ -600,6 +603,7 @@ test("P15 public create — a MAINTENANCE table → 409 TABLE_NOT_AVAILABLE", as
     (t) => t.tableId === tMaint
   );
   assert.equal(probe?.available, false, "maintenance table is never available");
+  assert.equal(probe?.status, "MAINTENANCE");
 
   const res = await api("/api/public/reservations", {
     method: "POST",

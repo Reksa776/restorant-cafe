@@ -15,8 +15,10 @@
 //   - A table is SELECTABLE only when availability says `available === true`.
 //     This module never derives availability from `Table.status`, layout
 //     presence, or any other signal.
-//   - Tables in availability but NOT in the layout keep working through the
-//     existing card list (no invented geometry).
+//   - EVERY active table the server returns is kept: placed tables carry real
+//     admin geometry; tables with no `TableLayoutItem` get a `hasLayout: false`
+//     row so the caller renders them in a clearly-marked fallback section
+//     instead of silently dropping them (no invented on-canvas geometry).
 // ============================================================
 
 /** Virtual-canvas size shared with the admin editor / persisted layout. */
@@ -47,27 +49,56 @@ export interface FloorMapAvailabilityTable {
   capacity: number;
   remainingSeats: number;
   available: boolean;
+  /** Slot-aware status from the server (falls back to AVAILABLE if absent). */
+  status?: string;
 }
 
-/** Merge result: layout geometry + authoritative availability for one table. */
-export interface FloorMapTable extends FloorMapLayoutItem {
-  remainingSeats: number;
-  available: boolean;
+/** The four display statuses a customer sees on the floor map / list. */
+export type FloorMapStatus =
+  | "AVAILABLE"
+  | "OCCUPIED"
+  | "RESERVED"
+  | "MAINTENANCE";
+
+function normalizeStatus(status: string | undefined): FloorMapStatus {
+  return status === "OCCUPIED" ||
+    status === "RESERVED" ||
+    status === "MAINTENANCE"
+    ? status
+    : "AVAILABLE";
 }
 
 /**
- * Merge layout geometry with the availability snapshot using `tableId` as the
- * key. The layout supplies the visual placement; the availability snapshot
- * supplies the booleans. A placed table with no availability row (or an
- * explicit `available: false`) is rendered as UNAVAILABLE — availability can
- * never be inferred from geometry/layout presence alone.
+ * Merge result: layout geometry (when placed) + authoritative availability for
+ * one table. `hasLayout` distinguishes a table the admin placed on the canvas
+ * (real geometry) from one that has no `TableLayoutItem` (rendered through the
+ * clearly-marked fallback, never silently dropped).
+ */
+export interface FloorMapTable extends FloorMapLayoutItem {
+  remainingSeats: number;
+  available: boolean;
+  status: FloorMapStatus;
+  hasLayout: boolean;
+}
+
+/**
+ * Union of the admin layout and the branch availability snapshot, keyed by
+ * `tableId`:
+ *   - every PLACED table keeps its exact admin geometry (x/y/width/height/
+ *     rotation/shape) and gets the availability booleans/status;
+ *   - every table that is ACTIVE in availability but was NOT placed keeps a
+ *     `hasLayout: false` row (zeroed geometry) so the caller can render it in
+ *     the fallback section instead of losing it.
+ * Availability can never be inferred from layout presence alone: a placed
+ * table with no availability row renders AVAILABLE-looking but NON-selectable
+ * (`available: false`).
  */
 export function mergeFloorMap(
   layoutItems: readonly FloorMapLayoutItem[],
   availability: readonly FloorMapAvailabilityTable[]
 ): FloorMapTable[] {
   const byTableId = new Map(availability.map((a) => [a.tableId, a]));
-  return layoutItems.map((item) => {
+  const placed = layoutItems.map((item) => {
     const avail = byTableId.get(item.tableId);
     return {
       tableId: item.tableId,
@@ -82,8 +113,45 @@ export function mergeFloorMap(
       rotation: item.rotation,
       remainingSeats: avail?.remainingSeats ?? 0,
       available: avail?.available === true,
+      status: normalizeStatus(avail?.status),
+      hasLayout: true,
     };
   });
+
+  const placedIds = new Set(layoutItems.map((item) => item.tableId));
+  const unplaced = availability
+    .filter((a) => !placedIds.has(a.tableId))
+    .map((a) => ({
+      tableId: a.tableId,
+      number: a.number,
+      name: a.name,
+      capacity: a.capacity,
+      shape: "RECTANGLE" as const,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+      rotation: 0,
+      remainingSeats: a.remainingSeats,
+      available: a.available === true,
+      status: normalizeStatus(a.status),
+      hasLayout: false,
+    }));
+
+  return [...placed, ...unplaced];
+}
+
+/** Split merged rows into canvas-placed vs fallback (no geometry) tables. */
+export function splitFloorMapTables(tables: readonly FloorMapTable[]): {
+  placed: FloorMapTable[];
+  unplaced: FloorMapTable[];
+} {
+  const placed: FloorMapTable[] = [];
+  const unplaced: FloorMapTable[] = [];
+  for (const table of tables) {
+    (table.hasLayout ? placed : unplaced).push(table);
+  }
+  return { placed, unplaced };
 }
 
 /** A table is selectable only when the availability engine said `true`. */

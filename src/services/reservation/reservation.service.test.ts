@@ -1138,6 +1138,67 @@ describe("reservation.service — availability", () => {
     );
   });
 
+  it("exposes a slot-aware status (AVAILABLE/OCCUPIED/RESERVED/MAINTENANCE) alongside availability", async () => {
+    const tFree = (
+      await table(9221, 4, { status: "AVAILABLE", name: "QA-STATUS-FREE" })
+    ).id;
+    // Fresh OCCUPIED table with NO reservations → status OCCUPIED for a future
+    // date while still selectable (isolated from other tests' fixtures).
+    const tOccStatus = (
+      await table(9222, 4, { status: "OCCUPIED", name: "QA-STATUS-OCC" })
+    ).id;
+    const scan = await reservationService.checkAvailability(
+      restAId,
+      branchMain,
+      {
+        reservationDate: FUTURE_DATE,
+        partySize: 2,
+        startMinutes: SLOT_18,
+        durationMinutes: DUR_120,
+      },
+      { now: NOW }
+    );
+    const byId = new Map(scan.tables.map((t) => [t.tableId, t]));
+    // OCCUPIED now but the requested date is in the future → still labelled
+    // OCCUPIED (current operational status) yet selectable.
+    assert.equal(byId.get(tOccStatus)?.status, "OCCUPIED");
+    assert.equal(byId.get(tOccStatus)?.available, true);
+    assert.equal(byId.get(tMaintenance)?.status, "MAINTENANCE");
+    assert.equal(byId.get(tMaintenance)?.available, false);
+    assert.equal(byId.get(tFree)?.status, "AVAILABLE");
+
+    // A live reservation overlapping the slot → RESERVED (dedicated table so
+    // the assertion is isolated from other tests' fixtures).
+    const tReserved = (
+      await table(9220, 4, { status: "AVAILABLE", name: "QA-RESERVED" })
+    ).id;
+    const res = await reservationService.createAdminReservation(
+      restAId,
+      adminInput({
+        branchId: branchMain,
+        tableId: tReserved,
+        startMinutes: SLOT_18,
+        partySize: 2,
+        guestPhone: "081200000025",
+      }),
+      { now: NOW }
+    );
+    assert.equal(res.status, "PENDING");
+    const reserved = await reservationService.checkAvailability(
+      restAId,
+      branchMain,
+      {
+        reservationDate: FUTURE_DATE,
+        partySize: 2,
+        startMinutes: SLOT_18,
+        durationMinutes: DUR_120,
+        tableId: tReserved,
+      },
+      { now: NOW }
+    );
+    assert.equal(reserved.tables[0].status, "RESERVED");
+  });
+
   it("never lists legacy branchId=NULL tables as available", async () => {
     const avail = await reservationService.checkAvailability(restAId, branchMain, {
       reservationDate: FUTURE_DATE,

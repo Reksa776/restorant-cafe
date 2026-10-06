@@ -106,6 +106,20 @@ const WIZARD_STEPS: Step[] = [
 
 const MAX_PARTY_SIZE = 100;
 
+/** Customer-facing labels/colors for the server slot status. */
+const TABLE_STATUS_LABEL: Record<string, string> = {
+  AVAILABLE: "Tersedia",
+  OCCUPIED: "Terisi",
+  RESERVED: "Dipesan",
+  MAINTENANCE: "Maintenance",
+};
+const TABLE_STATUS_BADGE: Record<string, string> = {
+  AVAILABLE: "bg-green-100 text-green-700",
+  OCCUPIED: "bg-red-100 text-red-700",
+  RESERVED: "bg-amber-100 text-amber-700",
+  MAINTENANCE: "bg-slate-200 text-slate-700",
+};
+
 interface PublicBranch {
   id: string;
   code: string;
@@ -121,6 +135,8 @@ interface TableAvailability {
   capacity: number;
   remainingSeats: number;
   available: boolean;
+  /** Slot-aware status from the server (AVAILABLE/OCCUPIED/RESERVED/MAINTENANCE). */
+  status?: string;
 }
 
 interface SlotAvailability {
@@ -593,12 +609,18 @@ export default function ReservationPage() {
 
   const anySlotAvailable = slotRows.some((row) => row.available);
 
-  const availableTables = useMemo(() => {
+  // ALL branch tables for the selected slot (available or not). The list must
+  // never hide an occupied/reserved/maintenance table — it must stay visible
+  // and only become non-selectable.
+  const slotTables = useMemo(() => {
     if (selectedStart == null) return [];
-    const info = slotMap[selectedStart];
-    if (!info) return [];
-    return info.tables.filter((t) => t.available);
+    return slotMap[selectedStart]?.tables ?? [];
   }, [selectedStart, slotMap]);
+
+  const availableTables = useMemo(
+    () => slotTables.filter((t) => t.available),
+    [slotTables]
+  );
 
   const defaultTableId = useMemo(() => {
     if (availableTables.length === 0) return null;
@@ -1172,7 +1194,7 @@ export default function ReservationPage() {
               {effectivePartySize} orang
             </p>
 
-            {availableTables.length === 0 ? (
+            {slotTables.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center px-4">
                 <AlertCircle className="h-8 w-8 text-amber-400 mb-2" />
                 <p className="text-sm text-gray-600">
@@ -1266,8 +1288,58 @@ export default function ReservationPage() {
                       </div>
                     )}
                     <div className="grid gap-2.5 grid-cols-1 sm:grid-cols-2">
-                      {availableTables.map((table) => {
-                        const selected = effectiveTableId === table.tableId;
+                      {slotTables.map((table) => {
+                        const selectable = table.available;
+                        const selected = selectable && effectiveTableId === table.tableId;
+                        const statusKey = table.status ?? "AVAILABLE";
+                        const card = (
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-semibold text-gray-900 text-sm flex items-center gap-1.5">
+                                <Table2 className="h-4 w-4 text-brand-primary shrink-0" />
+                                Meja {table.number}
+                              </p>
+                              {table.name && (
+                                <p className="text-xs text-gray-500 mt-0.5 break-words">
+                                  {table.name}
+                                </p>
+                              )}
+                              <p className="text-[11px] font-medium text-gray-400 mt-1.5">
+                                Kapasitas {table.capacity} orang
+                              </p>
+                            </div>
+                            <span
+                              className={`shrink-0 rounded-full text-xs font-bold px-3 py-1 ${
+                                selected
+                                  ? "bg-brand-primary text-brand-primary-foreground"
+                                  : selectable
+                                    ? "bg-gray-100 text-gray-500"
+                                    : (TABLE_STATUS_BADGE[statusKey] ??
+                                      "bg-gray-100 text-gray-500")
+                              }`}
+                            >
+                              {selected
+                                ? "Dipilih"
+                                : selectable
+                                  ? "Pilih"
+                                  : (TABLE_STATUS_LABEL[statusKey] ?? "Tidak tersedia")}
+                            </span>
+                          </div>
+                        );
+                        if (!selectable) {
+                          return (
+                            <div
+                              key={table.tableId}
+                              aria-disabled="true"
+                              aria-label={`Meja ${table.number}, ${
+                                TABLE_STATUS_LABEL[statusKey] ?? "tidak tersedia"
+                              }, tidak dapat dipilih`}
+                              className="text-left w-full rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4 opacity-80 min-w-0"
+                            >
+                              {card}
+                            </div>
+                          );
+                        }
                         return (
                           <button
                             key={table.tableId}
@@ -1279,31 +1351,7 @@ export default function ReservationPage() {
                                 : "border-gray-200 bg-white hover:border-brand-primary/50 hover:bg-brand-secondary/50"
                             }`}
                           >
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="font-semibold text-gray-900 text-sm flex items-center gap-1.5">
-                                  <Table2 className="h-4 w-4 text-brand-primary shrink-0" />
-                                  Meja {table.number}
-                                </p>
-                                {table.name && (
-                                  <p className="text-xs text-gray-500 mt-0.5 break-words">
-                                    {table.name}
-                                  </p>
-                                )}
-                                <p className="text-[11px] font-medium text-gray-400 mt-1.5">
-                                  Kapasitas {table.capacity} orang
-                                </p>
-                              </div>
-                              <span
-                                className={`shrink-0 rounded-full text-xs font-bold px-3 py-1 ${
-                                  selected
-                                    ? "bg-brand-primary text-brand-primary-foreground"
-                                    : "bg-gray-100 text-gray-500"
-                                }`}
-                              >
-                                {selected ? "Dipilih" : "Pilih"}
-                              </span>
-                            </div>
+                            {card}
                           </button>
                         );
                       })}
@@ -1314,7 +1362,7 @@ export default function ReservationPage() {
             )}
           </div>
 
-          {availableTables.length > 0 && (
+          {slotTables.length > 0 && (
             <BottomBar
               onBack={goBack}
               onNext={() =>

@@ -12,6 +12,7 @@ import {
   mergeFloorMap,
   resolveFloorMapView,
   shouldRefetchFloorLayout,
+  splitFloorMapTables,
 } from "./reservation-floor-map.helpers";
 
 const layoutItems: FloorMapLayoutItem[] = [
@@ -54,11 +55,11 @@ const layoutItems: FloorMapLayoutItem[] = [
 ];
 
 const availability: FloorMapAvailabilityTable[] = [
-  { tableId: "t-1", number: 1, name: "Sudut", capacity: 4, remainingSeats: 4, available: true },
+  { tableId: "t-1", number: 1, name: "Sudut", capacity: 4, remainingSeats: 4, available: true, status: "AVAILABLE" },
   // t-2 exists in layout but the engine says NO seats left / unavailable.
-  { tableId: "t-2", number: 2, name: "", capacity: 2, remainingSeats: 0, available: false },
-  // t-3 not in availability at all (defensive) — still not selectable.
-  { tableId: "t-9", number: 9, name: "Teras", capacity: 8, remainingSeats: 8, available: true },
+  { tableId: "t-2", number: 2, name: "", capacity: 2, remainingSeats: 0, available: false, status: "RESERVED" },
+  // t-9 is ACTIVE in availability but NOT placed in the layout → fallback row.
+  { tableId: "t-9", number: 9, name: "Teras", capacity: 8, remainingSeats: 8, available: true, status: "AVAILABLE" },
 ];
 
 describe("reservation floor map (customer reservation UI pure helpers)", () => {
@@ -87,9 +88,34 @@ describe("reservation floor map (customer reservation UI pure helpers)", () => {
       assert.equal(t2.remainingSeats, 0);
     });
 
-    it("availability-only tables are NOT part of the map (kept for card list, no invented geometry)", () => {
+    it("availability-only tables are kept as fallback rows (never silently dropped)", () => {
+      // Business rule updated: an ACTIVE branch table that was never placed in
+      // the admin layout must still be shown, through a `hasLayout: false` row
+      // (rendered by the clearly-marked fallback), not removed.
       const merged = mergeFloorMap(layoutItems, availability);
-      assert.ok(!merged.some((t) => t.tableId === "t-9"));
+      const t9 = merged.find((t) => t.tableId === "t-9");
+      assert.ok(t9, "unplaced active table is kept");
+      assert.equal(t9.hasLayout, false);
+      assert.equal(isFloorTableSelectable(t9), true);
+    });
+
+    it("splitFloorMapTables separates placed (geometry) from fallback rows", () => {
+      const merged = mergeFloorMap(layoutItems, availability);
+      const { placed, unplaced } = splitFloorMapTables(merged);
+      assert.deepEqual(placed.map((t) => t.tableId).sort(), ["t-1", "t-2", "t-3"]);
+      assert.deepEqual(unplaced.map((t) => t.tableId), ["t-9"]);
+      for (const t of placed) assert.equal(t.hasLayout, true);
+      for (const t of unplaced) assert.equal(t.hasLayout, false);
+    });
+
+    it("carries the server slot status onto each row", () => {
+      const merged = mergeFloorMap(layoutItems, availability);
+      assert.equal(merged.find((t) => t.tableId === "t-1")?.status, "AVAILABLE");
+      assert.equal(merged.find((t) => t.tableId === "t-2")?.status, "RESERVED");
+      // No availability row → default AVAILABLE status but still not selectable.
+      const t3 = merged.find((t) => t.tableId === "t-3")!;
+      assert.equal(t3.status, "AVAILABLE");
+      assert.equal(t3.available, false);
     });
 
     it("a placed table with no availability row is rendered but unavailable", () => {
@@ -284,12 +310,14 @@ describe("reservation floor map (customer reservation UI pure helpers)", () => {
       const expectedKeys = [
         "available",
         "capacity",
+        "hasLayout",
         "height",
         "name",
         "number",
         "remainingSeats",
         "rotation",
         "shape",
+        "status",
         "tableId",
         "width",
         "x",
@@ -299,7 +327,6 @@ describe("reservation floor map (customer reservation UI pure helpers)", () => {
         assert.deepEqual(Object.keys(row).sort(), expectedKeys);
         assert.ok(!("restaurantId" in row));
         assert.ok(!("layoutId" in row));
-        assert.ok(!("status" in row));
       }
     });
 
