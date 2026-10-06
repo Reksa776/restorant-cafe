@@ -516,10 +516,18 @@ test("P8 public lookup — code + correct phone → 200 with safe DTO", async ()
 });
 
 test("P9 public lookup — wrong phone → 404 (phone must match stored)", async () => {
+  // Non-overlapping slot (20:00 just touches P8's 18:00–20:00): under the
+  // binary reservation rule an overlapping slot on the same table is rejected.
   const created = await api("/api/public/reservations", {
     method: "POST",
-    body: publicCreate({ tableId: tAlt, branchCode: "QA-ALT", guestPhone: apiPhone() }),
+    body: publicCreate({
+      tableId: tAlt,
+      branchCode: "QA-ALT",
+      startMinutes: 20 * 60,
+      guestPhone: apiPhone(),
+    }),
   });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
   const { code } = created.body?.data as { code: string };
 
   const res = await api(
@@ -576,9 +584,10 @@ test("P12 public availability — happy path returns seat counts", async () => {
   const data = res.body?.data as { tables: Array<Record<string, unknown>> };
   const probe = data.tables.find((t) => t.tableId === tAlt);
   assert.ok(probe, "table appears in availability response");
-  assert.equal(probe.available, true);
-  // The 19:00–21:00 probe overlaps P8's 18:00–20:00 booking on the same table,
-  // so the slot-aware status is RESERVED even though capacity still allows it.
+  // The 19:00–21:00 probe overlaps P8's 18:00–20:00 booking on the same table
+  // → binary reservation availability: RESERVED and NOT selectable, even
+  // though capacity would still allow it.
+  assert.equal(probe.available, false);
   assert.equal(probe.status, "RESERVED");
   assert.ok((probe.remainingSeats as number) >= 2);
 });
@@ -625,7 +634,7 @@ test("P15 public — a MAINTENANCE table NO LONGER blocks availability or create
   const probe = (avail.body?.data as { tables: Array<Record<string, unknown>> }).tables.find(
     (t) => t.tableId === tMaint
   );
-  assert.equal(probe?.status, "MAINTENANCE", "visual status is preserved");
+  assert.equal(probe?.status, "AVAILABLE", "status is reservation-only (no OCCUPIED/MAINTENANCE)");
   assert.equal(probe?.available, true, "maintenance no longer blocks reservation");
 
   const res = await api("/api/public/reservations", {
@@ -851,7 +860,13 @@ test("A14 admin status transition — PENDING→CONFIRMED→SEATED→COMPLETED",
 });
 
 test("A15 admin cancel — PENDING → CANCELLED with reason", async () => {
-  const created = await createAdminReservation(tokenA, { branchId: ALT, tableId: tAlt });
+  // Non-overlapping slot (A14 booked tAlt 18:00–20:00 on the same DAY_STATUS).
+  const created = await createAdminReservation(tokenA, {
+    branchId: ALT,
+    tableId: tAlt,
+    startMinutes: 20 * 60,
+  });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
   const id = (created.body?.data as { id: string }).id;
   const reason = "table broken";
 

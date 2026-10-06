@@ -346,7 +346,7 @@ describe("reservation.service — create", () => {
     );
   });
 
-  it("7. capacity: overlapping reservations are summed (4+2 ok, +3 rejected on cap 6)", async () => {
+  it("7. binary overlap: a second overlapping reservation is rejected (no capacity sharing)", async () => {
     const first = await reservationService.createAdminReservation(
       restAId,
       adminInput({
@@ -359,20 +359,8 @@ describe("reservation.service — create", () => {
     );
     assert.equal(first.status, "PENDING");
 
-    // 18:00–20:00 (4) + 19:00–21:00 (2) = 6 → fits exactly.
-    const second = await reservationService.createAdminReservation(
-      restAId,
-      adminInput({
-        branchId: branchMain,
-        tableId: tCapacity,
-        startMinutes: SLOT_19,
-        partySize: 2,
-      }),
-      { now: NOW }
-    );
-    assert.equal(second.status, "PENDING");
-
-    // 18:00–20:00 (4) + 19:00–21:00 (3) = 7 → rejected.
+    // 18:00–20:00 (4) + 19:00–21:00 (2) would fit cap 6, but ANY overlap now
+    // blocks → 409 TABLE_NOT_AVAILABLE.
     await assert.rejects(
       reservationService.createAdminReservation(
         restAId,
@@ -380,15 +368,32 @@ describe("reservation.service — create", () => {
           branchId: branchMain,
           tableId: tCapacity,
           startMinutes: SLOT_19,
-          partySize: 3,
+          partySize: 2,
         }),
         { now: NOW }
       ),
-      ConflictError
+      (error: unknown) => {
+        assert.ok(error instanceof ConflictError);
+        assert.equal((error as ConflictError).code, "TABLE_NOT_AVAILABLE");
+        return true;
+      }
     );
+
+    // A NON-overlapping slot (20:00 touches 18:00–20:00) is allowed.
+    const ok = await reservationService.createAdminReservation(
+      restAId,
+      adminInput({
+        branchId: branchMain,
+        tableId: tCapacity,
+        startMinutes: SLOT_20,
+        partySize: 2,
+      }),
+      { now: NOW }
+    );
+    assert.equal(ok.status, "PENDING");
   });
 
-  it("7b. overlapping reservation on a shared interval is rejected on cap 4", async () => {
+  it("7b. any overlapping reservation is rejected (binary), non-overlap allowed", async () => {
     await reservationService.createAdminReservation(
       restAId,
       adminInput({
@@ -400,7 +405,7 @@ describe("reservation.service — create", () => {
       { now: NOW }
     );
 
-    // 3 (18:00–20:00) + 2 (19:00–21:00) = 5 > 4 → reject.
+    // Overlapping 19:00–21:00 is rejected regardless of remaining seats.
     await assert.rejects(
       reservationService.createAdminReservation(
         restAId,
@@ -408,20 +413,20 @@ describe("reservation.service — create", () => {
           branchId: branchMain,
           tableId: tOverlap,
           startMinutes: SLOT_19,
-          partySize: 2,
+          partySize: 1,
         }),
         { now: NOW }
       ),
       ConflictError
     );
 
-    // 3 + 1 = 4 → allowed (control).
+    // 20:00 only touches 18:00–20:00 → allowed (control).
     const ok = await reservationService.createAdminReservation(
       restAId,
       adminInput({
         branchId: branchMain,
         tableId: tOverlap,
-        startMinutes: SLOT_19,
+        startMinutes: SLOT_20,
         partySize: 1,
       }),
       { now: NOW }
@@ -897,7 +902,7 @@ describe("reservation.service — validation (window / horizon / grid)", () => {
 });
 
 describe("reservation.service — availability", () => {
-  it("uses only the table's live reservations with half-open intervals", async () => {
+  it("uses only the table's live reservations with half-open intervals (binary)", async () => {
     // Fresh table (9302, cap 4) so the day's bookings are exactly known.
     const t = (
       await prisma.table.create({
@@ -926,7 +931,8 @@ describe("reservation.service — availability", () => {
     );
     assert.equal(res.status, "PENDING");
 
-    // 18:00–20:00 holds 2; 19:00–21:00 OVERLAPS → 2 remain, party of 2 fits.
+    // 18:00–20:00 holds 2; 19:00–21:00 OVERLAPS → RESERVED / unavailable even
+    // though 2 seats would remain (binary rule, no capacity sharing).
     const during = await reservationService.checkAvailability(restAId, branchMain, {
       reservationDate: FUTURE_DATE,
       partySize: 2,
@@ -934,10 +940,11 @@ describe("reservation.service — availability", () => {
       durationMinutes: DUR_120,
       tableId: t,
     });
-    assert.equal(during.available, true);
+    assert.equal(during.available, false);
+    assert.equal(during.tables[0].status, "RESERVED");
     assert.equal(during.tables[0].remainingSeats, 2);
 
-    // 20:00–22:00 only TOUCHES 18:00–20:00 (half-open) → free, capacity 4.
+    // 20:00–22:00 only TOUCHES 18:00–20:00 (half-open) → AVAILABLE.
     const after = await reservationService.checkAvailability(restAId, branchMain, {
       reservationDate: FUTURE_DATE,
       partySize: 4,
@@ -946,6 +953,7 @@ describe("reservation.service — availability", () => {
       tableId: t,
     });
     assert.equal(after.available, true);
+    assert.equal(after.tables[0].status, "AVAILABLE");
     assert.equal(after.tables[0].remainingSeats, 4);
   });
 
@@ -1003,9 +1011,9 @@ describe("reservation.service — availability", () => {
     assert.equal(avail.tables[0].remainingSeats, 4);
   });
 
-  it("NEW 1 — an OCCUPIED table with NO reservation conflict is available (status stays OCCUPIED)", async () => {
+  it("NEW 1 — an OCCUPIED table with NO reservation conflict is AVAILABLE (Table.status not exposed)", async () => {
     // `Table.status = OCCUPIED` is written by the order engine on order create,
-    // but under the new rule it is DISPLAY-ONLY and never blocks a reservation.
+    // but customer reservation ignores it entirely — status is reservation-only.
     const today = await reservationService.checkAvailability(restAId, branchMain, {
       reservationDate: NOW_TODAY.today,
       partySize: 4,
@@ -1014,7 +1022,7 @@ describe("reservation.service — availability", () => {
       tableId: tOccupied,
     });
     assert.equal(today.available, true);
-    assert.equal(today.tables[0].status, "OCCUPIED");
+    assert.equal(today.tables[0].status, "AVAILABLE");
     assert.equal(today.tables[0].remainingSeats, 4);
 
     const future = await reservationService.checkAvailability(restAId, branchMain, {
@@ -1058,8 +1066,8 @@ describe("reservation.service — availability", () => {
       { now: NOW }
     );
 
-    // Overlapping 19:00–21:00 → no room left → unavailable. The DISPLAY status
-    // is still OCCUPIED (current order), but the REASON is the reservation.
+    // Overlapping 19:00–21:00 → RESERVED. Status is reservation-only, so the
+    // table's OCCUPIED operational state is NOT exposed to the customer.
     const overlap = await reservationService.checkAvailability(restAId, branchMain, {
       reservationDate: FUTURE_DATE,
       partySize: 4,
@@ -1068,7 +1076,7 @@ describe("reservation.service — availability", () => {
       tableId: t,
     });
     assert.equal(overlap.available, false);
-    assert.equal(overlap.tables[0].status, "OCCUPIED");
+    assert.equal(overlap.tables[0].status, "RESERVED");
 
     // A window that only TOUCHES 18:00–20:00 (half-open) → bookable again.
     const touching = await reservationService.checkAvailability(restAId, branchMain, {
@@ -1115,8 +1123,8 @@ describe("reservation.service — availability", () => {
     assert.equal(avail.tables[0].status, "AVAILABLE");
   });
 
-  it("NEW 4 — a MAINTENANCE table with NO reservation conflict is available and bookable", async () => {
-    // MAINTENANCE stays a VISUAL status, but it no longer blocks reservations.
+  it("NEW 4 — a MAINTENANCE table with NO reservation conflict is AVAILABLE and bookable", async () => {
+    // MAINTENANCE is an admin/order concept; customer reservation never sees it.
     const today = await reservationService.checkAvailability(restAId, branchMain, {
       reservationDate: NOW_TODAY.today,
       partySize: 4,
@@ -1125,7 +1133,7 @@ describe("reservation.service — availability", () => {
       tableId: tMaintenance,
     });
     assert.equal(today.available, true);
-    assert.equal(today.tables[0].status, "MAINTENANCE");
+    assert.equal(today.tables[0].status, "AVAILABLE");
 
     const future = await reservationService.checkAvailability(restAId, branchMain, {
       reservationDate: FUTURE_DATE,
@@ -1174,7 +1182,7 @@ describe("reservation.service — availability", () => {
       tableId: t,
     });
     assert.equal(overlap.available, false);
-    assert.equal(overlap.tables[0].status, "MAINTENANCE");
+    assert.equal(overlap.tables[0].status, "RESERVED");
   });
 
   it("NEW 6 — a live reservation drives availability: conflicting slot blocked, other slots selectable", async () => {
@@ -1289,10 +1297,11 @@ describe("reservation.service — availability", () => {
     assert.ok(byId.has(tFree), "AVAILABLE table must be listed");
     assert.ok(byId.has(tReservedScan), "conflicting table must still be listed");
 
-    // Display status is preserved; availability follows reservations ONLY.
-    assert.equal(byId.get(tOccStatus)?.status, "OCCUPIED");
+    // Status is RESERVATION-ONLY: OCCUPIED / MAINTENANCE are never exposed;
+    // only a live overlap turns a row into RESERVED/unavailable.
+    assert.equal(byId.get(tOccStatus)?.status, "AVAILABLE");
     assert.equal(byId.get(tOccStatus)?.available, true);
-    assert.equal(byId.get(tMaintStatus)?.status, "MAINTENANCE");
+    assert.equal(byId.get(tMaintStatus)?.status, "AVAILABLE");
     assert.equal(byId.get(tMaintStatus)?.available, true);
     assert.equal(byId.get(tFree)?.status, "AVAILABLE");
     assert.equal(byId.get(tFree)?.available, true);
@@ -1449,7 +1458,9 @@ describe("reservation.service — admin list / reads / isolation", () => {
         branchId: branchList,
         tableId: tList,
         reservationDate: d1,
-        startMinutes: SLOT_19,
+        // Non-overlapping with r1 (18:00–20:00): 20:00 simply TOUCHES it, so the
+        // binary reservation rule allows it while keeping start-ascending order.
+        startMinutes: SLOT_20,
         guestName: "Bob Board",
         guestPhone: "081200000041",
       }),

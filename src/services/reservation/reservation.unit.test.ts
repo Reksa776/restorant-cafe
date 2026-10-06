@@ -570,55 +570,18 @@ describe("timezone safety", () => {
   });
 });
 
-describe("resolveSlotTableStatus (display-only)", () => {
-  it("MAINTENANCE wins over everything", () => {
+describe("resolveSlotTableStatus (reservation-only)", () => {
+  it("AVAILABLE when no live reservation overlaps the slot", () => {
     assert.equal(
-      resolveSlotTableStatus({
-        tableStatus: "MAINTENANCE",
-        hasOverlappingReservation: false,
-      }),
-      "MAINTENANCE"
-    );
-    assert.equal(
-      resolveSlotTableStatus({
-        tableStatus: "MAINTENANCE",
-        hasOverlappingReservation: true,
-      }),
-      "MAINTENANCE"
-    );
-  });
-
-  it("OCCUPIED is shown for a currently-used table regardless of reservations", () => {
-    assert.equal(
-      resolveSlotTableStatus({
-        tableStatus: "OCCUPIED",
-        hasOverlappingReservation: false,
-      }),
-      "OCCUPIED"
-    );
-    assert.equal(
-      resolveSlotTableStatus({
-        tableStatus: "OCCUPIED",
-        hasOverlappingReservation: true,
-      }),
-      "OCCUPIED"
-    );
-  });
-
-  it("a free table is RESERVED only when a live reservation overlaps, else AVAILABLE", () => {
-    assert.equal(
-      resolveSlotTableStatus({
-        tableStatus: "AVAILABLE",
-        hasOverlappingReservation: true,
-      }),
-      "RESERVED"
-    );
-    assert.equal(
-      resolveSlotTableStatus({
-        tableStatus: "AVAILABLE",
-        hasOverlappingReservation: false,
-      }),
+      resolveSlotTableStatus({ hasOverlappingReservation: false }),
       "AVAILABLE"
+    );
+  });
+
+  it("RESERVED when a live reservation overlaps the slot", () => {
+    assert.equal(
+      resolveSlotTableStatus({ hasOverlappingReservation: true }),
+      "RESERVED"
     );
   });
 });

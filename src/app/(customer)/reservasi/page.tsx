@@ -106,18 +106,18 @@ const WIZARD_STEPS: Step[] = [
 
 const MAX_PARTY_SIZE = 100;
 
-/** Customer-facing labels/colors for the server slot status. */
+/**
+ * Customer-facing labels/colors for the server slot status. The customer
+ * reservation surface is RESERVATION-ONLY: only AVAILABLE / RESERVED ever
+ * arrive from the server (`Table.status` / order state is never exposed here).
+ */
 const TABLE_STATUS_LABEL: Record<string, string> = {
   AVAILABLE: "Tersedia",
-  OCCUPIED: "Terisi",
   RESERVED: "Dipesan",
-  MAINTENANCE: "Maintenance",
 };
 const TABLE_STATUS_BADGE: Record<string, string> = {
   AVAILABLE: "bg-green-100 text-green-700",
-  OCCUPIED: "bg-red-100 text-red-700",
   RESERVED: "bg-amber-100 text-amber-700",
-  MAINTENANCE: "bg-slate-200 text-slate-700",
 };
 
 interface PublicBranch {
@@ -135,7 +135,7 @@ interface TableAvailability {
   capacity: number;
   remainingSeats: number;
   available: boolean;
-  /** Slot-aware status from the server (AVAILABLE/OCCUPIED/RESERVED/MAINTENANCE). */
+  /** Reservation-only slot status from the server (AVAILABLE/RESERVED). */
   status?: string;
 }
 

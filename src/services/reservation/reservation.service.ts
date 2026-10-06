@@ -15,7 +15,6 @@ import {
   RESERVATION_DEFAULT_DURATION_MINUTES,
   RESERVATION_HOLDING_STATUSES,
   RESERVATION_SLOT_CONFIG,
-  canAccommodate,
   dateOnlyFromDb,
   overlaps,
   remainingCapacity,
@@ -23,7 +22,7 @@ import {
   validateReservationWindow,
   type ReservationCapacityRow,
   type ReservationNow,
-  type TableOperationalStatus,
+  type ReservationTableStatus,
 } from "./reservation.slots";
 import {
   CreateAdminReservationSchema,
@@ -43,8 +42,8 @@ import { dispatchReservationWhatsApp } from "./reservation-whatsapp";
 //
 // R1 shipped the PURE slot engine (overlap/capacity/window math) and the
 // schemas. R2 layers the database + business rules on top WITHOUT touching
-// the engine: every overlap/capacity decision still runs through
-// `canAccommodate`/`remainingCapacity`, and every window decision through
+// the engine: every overlap decision still runs through
+// `overlaps`/`remainingCapacity`, and every window decision through
 // `validateReservationWindow` — there is exactly ONE source of truth, no
 // duplicated math.
 //
@@ -251,17 +250,24 @@ interface TableAvailability {
   number: number;
   name: string;
   capacity: number;
-  /** Seats still free at the requested interval (may be negative). */
+  /**
+   * Seats still free at the requested interval (may be negative). Kept for
+   * display/back-compat ONLY — it no longer decides `available`.
+   */
   remainingSeats: number;
-  /** True when `partySize` fits into `remainingSeats`. */
+  /**
+   * TRUE only when NO live reservation overlaps the requested slot (binary
+   * reservation availability). Any overlapping holding reservation makes the
+   * table unavailable, regardless of remaining seats.
+   */
   available: boolean;
   /**
-   * Slot-aware display status (never persisted): MAINTENANCE when the table is
-   * under maintenance, OCCUPIED when an active order is using it, RESERVED
-   * when a live reservation overlaps the slot, else AVAILABLE. Independent of
-   * `available`, so a busy-now table can still be bookable for a future slot.
+   * Customer-reservation slot status (never persisted): RESERVED when a live
+   * reservation overlaps the requested slot, else AVAILABLE. Reservation-only
+   * — `Table.status` (OCCUPIED/MAINTENANCE) is intentionally NOT exposed here.
+   * Always agrees with `available`.
    */
-  status: TableOperationalStatus;
+  status: ReservationTableStatus;
 }
 
 export interface ReservationAvailabilityResult {
@@ -302,14 +308,14 @@ export class ReservationService {
    * ACTIVE tables of that exact branch are considered — legacy tables with
    * `branchId` NULL are never candidates.
    *
-   * BUSINESS RULE: ONLY RESERVATIONS BLOCK A TABLE. Availability is computed
-   * SOLELY from the table's capacity + LIVE reservation rows (PENDING/
-   * CONFIRMED/SEATED/COMPLETED hold the slot; CANCELLED/NO_SHOW do not) using
-   * the engine's half-open overlap math:
-   *   - `partySize <= remainingCapacity(capacity, overlapping live rows)`;
-   *   - `Table.status` (OCCUPIED / MAINTENANCE) NEVER blocks here. The current
-   *     operational status is still returned as `status` (DISPLAY-ONLY) so the
-   *     floor map / list keep their colours.
+   * BUSINESS RULE: HANYA RESERVATION YANG MEMBLOCK MEJA (binary). A table is
+   * AVAILABLE iff NO live reservation overlaps the requested slot. LIVE rows are
+   * PENDING/CONFIRMED/SEATED/COMPLETED; CANCELLED/NO_SHOW release the slot. The
+   * engine's half-open overlap math is used (`overlaps`):
+   *   - `available = !hasOverlappingReservation` (capacity sharing is gone);
+   *   - `status = RESERVED` when overlapping, else `AVAILABLE`;
+   *   - `Table.status` (OCCUPIED / MAINTENANCE) and any active order are NEVER
+   *     consulted here — they belong to the Order/Admin/Cashier domains.
    * The SAME rule runs inside `createReservation` under the table row lock, so
    * the read query and the write agree except for a genuine post-read race.
    */
@@ -363,7 +369,6 @@ export class ReservationService {
           name: true,
           capacity: true,
           isActive: true,
-          status: true,
         },
       });
       if (!table || table.branchId !== branchId) {
@@ -378,15 +383,13 @@ export class ReservationService {
         existing,
         { startMinutes, durationMinutes }
       );
-      // Only capacity + overlapping live reservations decide availability;
-      // `Table.status` is display-only and never blocks here.
-      const available = partySize <= remaining;
-      const status = resolveSlotTableStatus({
-        tableStatus: table.status,
-        hasOverlappingReservation: existing.some((r) =>
-          overlaps(r, { startMinutes, durationMinutes })
-        ),
-      });
+      // Binary reservation availability: ANY overlapping live reservation makes
+      // the table unavailable. `remaining` is kept for display only.
+      const hasOverlappingReservation = existing.some((r) =>
+        overlaps(r, { startMinutes, durationMinutes })
+      );
+      const available = !hasOverlappingReservation;
+      const status = resolveSlotTableStatus({ hasOverlappingReservation });
       return {
         available,
         tableId: table.id,
@@ -411,7 +414,7 @@ export class ReservationService {
     // No specific table → scan every ACTIVE table of the branch.
     const tables = await prisma.table.findMany({
       where: { branchId, restaurantId, isActive: true },
-      select: { id: true, number: true, name: true, capacity: true, status: true },
+      select: { id: true, number: true, name: true, capacity: true },
       orderBy: { number: "asc" },
     });
 
@@ -423,20 +426,17 @@ export class ReservationService {
         existing,
         { startMinutes, durationMinutes }
       );
-      const status = resolveSlotTableStatus({
-        tableStatus: table.status,
-        hasOverlappingReservation: existing.some((r) =>
-          overlaps(r, { startMinutes, durationMinutes })
-        ),
-      });
+      const hasOverlappingReservation = existing.some((r) =>
+        overlaps(r, { startMinutes, durationMinutes })
+      );
       availability.push({
         tableId: table.id,
         number: table.number,
         name: table.name,
         capacity: table.capacity,
         remainingSeats: remaining,
-        available: partySize <= remaining,
-        status,
+        available: !hasOverlappingReservation,
+        status: resolveSlotTableStatus({ hasOverlappingReservation }),
       });
     }
 
@@ -589,10 +589,10 @@ export class ReservationService {
    *                                              the first commits, then reads
    *                                              the LATEST rows (locking read)
    *       validate owner/branch/active/capacity
-   *       count overlapping LIVE reservations (PENDING/CONFIRMED/SEATED/
-   *              COMPLETED — CANCELLED/NO_SHOW are ignored) via
-   *              `canAccommodate` (half-open intervals); a table whose live
-   *              reservations leave no room is rejected
+   *       reject ANY live reservation overlapping the slot (PENDING/
+   *              CONFIRMED/SEATED/COMPLETED — CANCELLED/NO_SHOW are ignored)
+   *              via `overlaps` (half-open); binary reservation rule, no
+   *              capacity sharing
    *              → 409 TABLE_NOT_AVAILABLE (the SERVER-side race guard)
    *     duplicate booking check (guestPhone or customerId,
    *              date + startMinutes, LIVE statuses only)
@@ -697,15 +697,16 @@ export class ReservationService {
             );
           }
 
-          // Overlap capacity: every LIVE reservation that overlaps the
-          // half-open interval [start, start+duration) counts. CANCELLED and
-          // NO_SHOW release the slot and are NOT fetched.
+          // Binary reservation gate: ANY live reservation overlapping the
+          // half-open interval [start, start+duration) blocks the table.
+          // CANCELLED and NO_SHOW release the slot and are NOT fetched.
           //
           // This is the ONLY server-side availability gate: a reservation is
-          // the sole thing that can block a table (see the customer business
-          // rule). It runs under the table row lock, so a slot that a
-          // concurrent booking just claimed is rejected here as
-          // TABLE_NOT_AVAILABLE rather than silently double-booked.
+          // the sole thing that blocks a table (see the new business rule), so
+          // capacity sharing / partial overlap is no longer permitted. It runs
+          // under the table row lock, so a slot a concurrent booking just
+          // claimed is rejected here as TABLE_NOT_AVAILABLE rather than
+          // silently double-booked.
           const existing = await tx.reservation.findMany({
             where: {
               tableId: data.tableId,
@@ -719,17 +720,13 @@ export class ReservationService {
               status: true,
             },
           });
-          if (
-            !canAccommodate(
-              table.capacity,
-              existing,
-              {
-                startMinutes: data.startMinutes,
-                durationMinutes: data.durationMinutes,
-                partySize: data.partySize,
-              }
-            )
-          ) {
+          const hasOverlappingReservation = existing.some((r) =>
+            overlaps(r, {
+              startMinutes: data.startMinutes,
+              durationMinutes: data.durationMinutes,
+            })
+          );
+          if (hasOverlappingReservation) {
             throw new ConflictError(
               "Meja yang dipilih sudah tidak tersedia.",
               "TABLE_NOT_AVAILABLE"

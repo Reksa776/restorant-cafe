@@ -53,19 +53,15 @@ export interface FloorMapAvailabilityTable {
   status?: string;
 }
 
-/** The four display statuses a customer sees on the floor map / list. */
-export type FloorMapStatus =
-  | "AVAILABLE"
-  | "OCCUPIED"
-  | "RESERVED"
-  | "MAINTENANCE";
+/**
+ * The customer-reservation display statuses on the floor map / list. These are
+ * RESERVATION-ONLY: the customer never sees the operational `Table.status`
+ * (OCCUPIED / MAINTENANCE) here.
+ */
+export type FloorMapStatus = "AVAILABLE" | "RESERVED";
 
 function normalizeStatus(status: string | undefined): FloorMapStatus {
-  return status === "OCCUPIED" ||
-    status === "RESERVED" ||
-    status === "MAINTENANCE"
-    ? status
-    : "AVAILABLE";
+  return status === "RESERVED" ? "RESERVED" : "AVAILABLE";
 }
 
 /**

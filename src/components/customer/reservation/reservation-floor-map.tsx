@@ -44,26 +44,12 @@ const STATUS_STYLES: Record<
     label: "Tersedia",
     hint: "tersedia dan dapat dipilih",
   },
-  OCCUPIED: {
-    box: "border-red-400 bg-red-50 text-red-900",
-    badge: "bg-red-500",
-    dot: "bg-red-500",
-    label: "Terisi",
-    hint: "sedang digunakan",
-  },
   RESERVED: {
     box: "border-amber-400 bg-amber-50 text-amber-900",
     badge: "bg-amber-500",
     dot: "bg-amber-500",
     label: "Dipesan",
     hint: "sudah ada reservasi pada jam ini",
-  },
-  MAINTENANCE: {
-    box: "border-slate-400 bg-slate-100 text-slate-600",
-    badge: "bg-slate-500",
-    dot: "bg-slate-500",
-    label: "Maintenance",
-    hint: "sedang tidak dapat digunakan",
   },
 };
 
@@ -264,19 +250,18 @@ export function ReservationFloorMap({
   return (
     <figure className="w-full">
       <figcaption className="sr-only">
-        Denah meja restoran. Hijau tersedia dan dapat dipilih, merah sedang
-        terisi, jingga sudah dipesan pada jam ini, abu-abu maintenance. Meja
-        yang tidak dapat dipilih tetap ditampilkan. Alternatif yang dapat
-        diakses: gunakan daftar meja.
+        Denah meja restoran. Hijau tersedia dan dapat dipilih, jingga sudah
+        dipesan pada jam ini (tidak dapat dipilih). Status meja di halaman
+        reservasi hanya ditentukan oleh reservasi. Meja yang tidak dapat
+        dipilih tetap ditampilkan. Alternatif yang dapat diakses: gunakan
+        daftar meja.
       </figcaption>
 
       <ul
         className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1.5"
         aria-label="Legenda denah meja"
       >
-        {(
-          ["AVAILABLE", "OCCUPIED", "RESERVED", "MAINTENANCE"] as FloorMapStatus[]
-        ).map((status) => (
+        {(["AVAILABLE", "RESERVED"] as FloorMapStatus[]).map((status) => (
           <li
             key={status}
             className="flex items-center gap-1.5 text-xs text-gray-600"
