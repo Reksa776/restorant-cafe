@@ -16,24 +16,43 @@ interface ReservationFloorMapProps {
   onSelectTable: (tableId: string) => void;
 }
 
-/** Scales the fixed 900×600 virtual canvas to fit the container width (≤1×). */
+/**
+ * Minimum canvas scale on narrow screens.
+ *
+ * The admin canvas is a fixed 900×600 virtual space. Scaling it 1:1 with the
+ * viewport made mobile tables unreadable (~0.42× at 375px → ~4px labels and
+ * ~46×29px hit areas). We clamp the scale to this floor so a table keeps a
+ * comfortably tappable area and a legible label; when the floor scale makes
+ * the canvas wider than its frame, the frame itself scrolls horizontally —
+ * never the page.
+ */
+const FLOOR_MAP_MIN_SCALE = 0.8;
+
+/**
+ * Scales the fixed 900×600 virtual canvas to the container width, clamped to
+ * [FLOOR_MAP_MIN_SCALE, 1]. The geometry (x/y/width/height/rotation/shape)
+ * itself is never touched — only the uniform display scale changes.
+ */
 function useCanvasScale() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(0);
+  const [containerWidth, setContainerWidth] = useState(0);
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const compute = () => {
       const width = el.clientWidth;
       if (width <= 0) return;
-      setScale(Math.min(1, width / FLOOR_MAP_CANVAS_WIDTH));
+      setContainerWidth(width);
+      const fit = width / FLOOR_MAP_CANVAS_WIDTH;
+      setScale(Math.max(FLOOR_MAP_MIN_SCALE, Math.min(1, fit)));
     };
     compute();
     const observer = new ResizeObserver(compute);
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-  return { containerRef, scale };
+  return { containerRef, scale, containerWidth };
 }
 
 function TableNode({
@@ -125,10 +144,13 @@ export function ReservationFloorMap({
   selectedTableId,
   onSelectTable,
 }: ReservationFloorMapProps) {
-  const { containerRef, scale } = useCanvasScale();
+  const { containerRef, scale, containerWidth } = useCanvasScale();
   const scaledWidth = FLOOR_MAP_CANVAS_WIDTH * scale;
   const scaledHeight = FLOOR_MAP_CANVAS_HEIGHT * scale;
   const hasDrawn = scale > 0;
+  // True only when the floor scale kicked in (narrow screen): the frame
+  // scrolls horizontally, the page never does.
+  const isScrollable = hasDrawn && scaledWidth > containerWidth + 1;
 
   return (
     <figure className="w-full">
@@ -158,39 +180,58 @@ export function ReservationFloorMap({
         </li>
       </ul>
 
+      {/* Outer wrapper only reserves the canvas height before the first
+          measurement (aspect-ratio) and otherwise follows the frame. */}
       <div
-        ref={containerRef}
-        role="group"
-        aria-label="Denah meja interaktif"
-        className="relative w-full overflow-hidden rounded-xl border border-gray-200 bg-white"
-        style={{ aspectRatio: `${FLOOR_MAP_CANVAS_WIDTH} / ${FLOOR_MAP_CANVAS_HEIGHT}` }}
+        className="relative w-full"
+        style={{
+          aspectRatio: hasDrawn
+            ? undefined
+            : `${FLOOR_MAP_CANVAS_WIDTH} / ${FLOOR_MAP_CANVAS_HEIGHT}`,
+        }}
       >
-        {hasDrawn && (
-          <div
-            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
-            style={{ width: scaledWidth, height: scaledHeight }}
-          >
+        {/* Horizontally scrollable on narrow screens; clamped to the viewport
+            width on tablets/desktop so no page overflow ever appears. */}
+        <div
+          ref={containerRef}
+          role="group"
+          aria-label="Denah meja interaktif"
+          className="w-full max-w-full overflow-x-auto overflow-y-hidden overscroll-x-contain rounded-xl border border-gray-200 bg-white"
+          style={{ height: hasDrawn ? scaledHeight : undefined }}
+        >
+          {hasDrawn && (
             <div
               className="relative"
-              style={{
-                width: FLOOR_MAP_CANVAS_WIDTH,
-                height: FLOOR_MAP_CANVAS_HEIGHT,
-                transform: `scale(${scale})`,
-                transformOrigin: "top left",
-              }}
+              style={{ width: scaledWidth, height: scaledHeight }}
             >
-              {tables.map((table) => (
-                <TableNode
-                  key={table.tableId}
-                  table={table}
-                  selected={table.tableId === selectedTableId}
-                  onSelect={onSelectTable}
-                />
-              ))}
+              <div
+                className="relative"
+                style={{
+                  width: FLOOR_MAP_CANVAS_WIDTH,
+                  height: FLOOR_MAP_CANVAS_HEIGHT,
+                  transform: `scale(${scale})`,
+                  transformOrigin: "top left",
+                }}
+              >
+                {tables.map((table) => (
+                  <TableNode
+                    key={table.tableId}
+                    table={table}
+                    selected={table.tableId === selectedTableId}
+                    onSelect={onSelectTable}
+                  />
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
+
+      {isScrollable && (
+        <p className="mt-2 text-center text-xs text-gray-400">
+          Geser denah untuk melihat meja lainnya
+        </p>
+      )}
     </figure>
   );
 }
