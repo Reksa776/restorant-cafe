@@ -303,8 +303,8 @@ async function seedFixtures(): Promise<void> {
   await prisma.table.create({
     data: { restaurantId: restB, branchId: R2B, number: 5003, name: "QA-R2B-1", capacity: 4, isActive: true, status: "AVAILABLE" },
   });
-  // MAINTENANCE blocks every date/time, so the 409 TABLE_NOT_AVAILABLE path is
-  // deterministic over HTTP without depending on the wall clock.
+  // A MAINTENANCE table — under the new customer business rule its status is
+  // DISPLAY-ONLY and must NOT block reservations (only reservations do).
   const t3 = await prisma.table.create({
     data: { restaurantId: restA, branchId: MAIN, number: 5004, name: "QA-MAIN-MAINT", capacity: 4, isActive: true, status: "MAINTENANCE" },
   });
@@ -405,8 +405,29 @@ test("P2 public create — duplicate slot on same capacity-2 table → 409", asy
     }),
   });
   assert.equal(second.status, 409, JSON.stringify(second.body));
-  assert.equal(second.body?.error, "CONFLICT");
+  // A fully-reserved table is now reported as TABLE_NOT_AVAILABLE (the sole
+  // server-side availability gate is the live-reservation conflict).
+  assert.equal(second.body?.error, "TABLE_NOT_AVAILABLE");
   assert.equal(second.body?.success, false);
+
+  // Availability agrees: the table stays VISIBLE but is unavailable + RESERVED.
+  const avail = await api(
+    `/api/public/reservations/availability?${qs({
+      branchCode: "QA-MAIN",
+      date: DAY_DUP,
+      partySize: "2",
+      tableId: tMain,
+      startMinutes: String(SLOT_18),
+      durationMinutes: String(DUR_120),
+    })}`
+  );
+  assert.equal(avail.status, 200, JSON.stringify(avail.body));
+  const probe = (avail.body?.data as { tables: Array<Record<string, unknown>> }).tables.find(
+    (t) => t.tableId === tMain
+  );
+  assert.ok(probe, "table must still appear in availability");
+  assert.equal(probe?.available, false);
+  assert.equal(probe?.status, "RESERVED");
 });
 
 test("P3 public create — validation errors → 400 VALIDATION_ERROR", async () => {
@@ -587,7 +608,9 @@ test("P14 public availability — cross-tenant branchCode → 404", async () => 
   assert.equal(res.status, 404, JSON.stringify(res.body));
 });
 
-test("P15 public create — a MAINTENANCE table → 409 TABLE_NOT_AVAILABLE", async () => {
+test("P15 public — a MAINTENANCE table NO LONGER blocks availability or create", async () => {
+  // New customer business rule: ONLY reservations block a table. The current
+  // operational status stays as a VISUAL badge but is not a gate.
   const avail = await api(
     `/api/public/reservations/availability?${qs({
       branchCode: "QA-MAIN",
@@ -602,17 +625,15 @@ test("P15 public create — a MAINTENANCE table → 409 TABLE_NOT_AVAILABLE", as
   const probe = (avail.body?.data as { tables: Array<Record<string, unknown>> }).tables.find(
     (t) => t.tableId === tMaint
   );
-  assert.equal(probe?.available, false, "maintenance table is never available");
-  assert.equal(probe?.status, "MAINTENANCE");
+  assert.equal(probe?.status, "MAINTENANCE", "visual status is preserved");
+  assert.equal(probe?.available, true, "maintenance no longer blocks reservation");
 
   const res = await api("/api/public/reservations", {
     method: "POST",
     body: publicCreate({ tableId: tMaint, guestPhone: apiPhone() }),
   });
-  assert.equal(res.status, 409, JSON.stringify(res.body));
-  assert.equal(res.body?.success, false);
-  assert.equal(res.body?.error, "TABLE_NOT_AVAILABLE");
-  assert.equal(res.body?.message, "Meja yang dipilih sudah tidak tersedia.");
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  assert.equal((res.body?.data as { status: string }).status, "PENDING");
 });
 
 // ============================================================

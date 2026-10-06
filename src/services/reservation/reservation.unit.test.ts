@@ -16,10 +16,10 @@ import {
   isSlotInGrid,
   isValidDateOnly,
   minutesToLabel,
-  operationalOccupancyBlocked,
   overlaps,
   parseDateOnly,
   remainingCapacity,
+  resolveSlotTableStatus,
   validateReservationWindow,
   type ReservationCapacityRow,
   type ReservationNow,
@@ -570,63 +570,55 @@ describe("timezone safety", () => {
   });
 });
 
-describe("operationalOccupancyBlocked", () => {
-  const now: ReservationNow = { today: "2026-09-15", nowMinutes: 18 * 60 + 30 };
-
-  it("MAINTENANCE blocks unconditionally (any date, any time)", () => {
+describe("resolveSlotTableStatus (display-only)", () => {
+  it("MAINTENANCE wins over everything", () => {
     assert.equal(
-      operationalOccupancyBlocked(
-        "MAINTENANCE",
-        { reservationDate: now.today, startMinutes: 21 * 60, durationMinutes: 60 },
-        now
-      ),
-      true
+      resolveSlotTableStatus({
+        tableStatus: "MAINTENANCE",
+        hasOverlappingReservation: false,
+      }),
+      "MAINTENANCE"
     );
     assert.equal(
-      operationalOccupancyBlocked(
-        "MAINTENANCE",
-        { reservationDate: "2026-12-01", startMinutes: 19 * 60, durationMinutes: 60 },
-        now
-      ),
-      true
+      resolveSlotTableStatus({
+        tableStatus: "MAINTENANCE",
+        hasOverlappingReservation: true,
+      }),
+      "MAINTENANCE"
     );
   });
 
-  it("AVAILABLE never blocks", () => {
+  it("OCCUPIED is shown for a currently-used table regardless of reservations", () => {
     assert.equal(
-      operationalOccupancyBlocked(
-        "AVAILABLE",
-        { reservationDate: now.today, startMinutes: 19 * 60, durationMinutes: 60 },
-        now
-      ),
-      false
+      resolveSlotTableStatus({
+        tableStatus: "OCCUPIED",
+        hasOverlappingReservation: false,
+      }),
+      "OCCUPIED"
+    );
+    assert.equal(
+      resolveSlotTableStatus({
+        tableStatus: "OCCUPIED",
+        hasOverlappingReservation: true,
+      }),
+      "OCCUPIED"
     );
   });
 
-  it("OCCUPIED blocks only a SAME-DAY slot overlapping [now, now+120)", () => {
-    const slot = (start: number) => ({
-      reservationDate: now.today,
-      startMinutes: start,
-      durationMinutes: 60,
-    });
-    // 18:00–19:00 overlaps the horizon ([18:30, 20:30)).
-    assert.equal(operationalOccupancyBlocked("OCCUPIED", slot(18 * 60), now), true);
-    // 19:00–20:00 overlaps.
-    assert.equal(operationalOccupancyBlocked("OCCUPIED", slot(19 * 60), now), true);
-    // 20:00–21:00 overlaps (starts before the 20:30 horizon end).
-    assert.equal(operationalOccupancyBlocked("OCCUPIED", slot(20 * 60), now), true);
-    // 21:00 starts after the horizon ends → allowed.
-    assert.equal(operationalOccupancyBlocked("OCCUPIED", slot(21 * 60), now), false);
-  });
-
-  it("OCCUPIED never blocks a future date", () => {
+  it("a free table is RESERVED only when a live reservation overlaps, else AVAILABLE", () => {
     assert.equal(
-      operationalOccupancyBlocked(
-        "OCCUPIED",
-        { reservationDate: "2026-09-16", startMinutes: 19 * 60, durationMinutes: 60 },
-        now
-      ),
-      false
+      resolveSlotTableStatus({
+        tableStatus: "AVAILABLE",
+        hasOverlappingReservation: true,
+      }),
+      "RESERVED"
+    );
+    assert.equal(
+      resolveSlotTableStatus({
+        tableStatus: "AVAILABLE",
+        hasOverlappingReservation: false,
+      }),
+      "AVAILABLE"
     );
   });
 });

@@ -17,7 +17,6 @@ import {
   RESERVATION_SLOT_CONFIG,
   canAccommodate,
   dateOnlyFromDb,
-  operationalOccupancyBlocked,
   overlaps,
   remainingCapacity,
   resolveSlotTableStatus,
@@ -301,19 +300,18 @@ export class ReservationService {
    *
    * Scope: `restaurantId` + `branchId` are REQUIRED (server-derived). Only
    * ACTIVE tables of that exact branch are considered — legacy tables with
-   * `branchId` NULL are never candidates. Availability is computed from the
-   * table's capacity + LIVE reservation rows (PENDING/CONFIRMED/SEATED/
-   * COMPLETED hold the slot; CANCELLED/NO_SHOW do not) using the engine's
-   * half-open overlap math, PLUS the table's current operational status via
-   * the shared `operationalOccupancyBlocked` rule:
-   *   - MAINTENANCE tables are ALWAYS unavailable;
-   *   - an OCCUPIED table (active order) blocks only a SAME-DAY slot that
-   *     overlaps the current occupancy horizon [now, now + 120m).
+   * `branchId` NULL are never candidates.
+   *
+   * BUSINESS RULE: ONLY RESERVATIONS BLOCK A TABLE. Availability is computed
+   * SOLELY from the table's capacity + LIVE reservation rows (PENDING/
+   * CONFIRMED/SEATED/COMPLETED hold the slot; CANCELLED/NO_SHOW do not) using
+   * the engine's half-open overlap math:
+   *   - `partySize <= remainingCapacity(capacity, overlapping live rows)`;
+   *   - `Table.status` (OCCUPIED / MAINTENANCE) NEVER blocks here. The current
+   *     operational status is still returned as `status` (DISPLAY-ONLY) so the
+   *     floor map / list keep their colours.
    * The SAME rule runs inside `createReservation` under the table row lock, so
    * the read query and the write agree except for a genuine post-read race.
-   *
-   * `now` is injectable for determinism (tests); it defaults to the server
-   * clock, matching every other window decision in this service.
    */
   async checkAvailability(
     restaurantId: string,
@@ -324,10 +322,8 @@ export class ReservationService {
       startMinutes: number;
       durationMinutes?: number;
       tableId?: string | null;
-    },
-    opts?: { now?: ReservationNow }
+    }
   ): Promise<ReservationAvailabilityResult> {
-    const now = resolveNow(opts?.now);
     const dateParsed = ReservationDateOnlySchema.safeParse(input.reservationDate);
     if (!dateParsed.success) {
       throw new ValidationError("Tanggal reservasi tidak valid (format YYYY-MM-DD)");
@@ -382,12 +378,9 @@ export class ReservationService {
         existing,
         { startMinutes, durationMinutes }
       );
-      const blocked = operationalOccupancyBlocked(
-        table.status,
-        { reservationDate, startMinutes, durationMinutes },
-        now
-      );
-      const available = partySize <= remaining && !blocked;
+      // Only capacity + overlapping live reservations decide availability;
+      // `Table.status` is display-only and never blocks here.
+      const available = partySize <= remaining;
       const status = resolveSlotTableStatus({
         tableStatus: table.status,
         hasOverlappingReservation: existing.some((r) =>
@@ -430,11 +423,6 @@ export class ReservationService {
         existing,
         { startMinutes, durationMinutes }
       );
-      const blocked = operationalOccupancyBlocked(
-        table.status,
-        { reservationDate, startMinutes, durationMinutes },
-        now
-      );
       const status = resolveSlotTableStatus({
         tableStatus: table.status,
         hasOverlappingReservation: existing.some((r) =>
@@ -447,7 +435,7 @@ export class ReservationService {
         name: table.name,
         capacity: table.capacity,
         remainingSeats: remaining,
-        available: partySize <= remaining && !blocked,
+        available: partySize <= remaining,
         status,
       });
     }
@@ -601,12 +589,11 @@ export class ReservationService {
    *                                              the first commits, then reads
    *                                              the LATEST rows (locking read)
    *       validate owner/branch/active/capacity
-   *       reject MAINTENANCE + a same-day OCCUPIED table overlapping the
-   *              current occupancy horizon (`operationalOccupancyBlocked`)
-   *              → 409 TABLE_NOT_AVAILABLE
    *       count overlapping LIVE reservations (PENDING/CONFIRMED/SEATED/
    *              COMPLETED — CANCELLED/NO_SHOW are ignored) via
-   *              `canAccommodate` (half-open intervals)
+   *              `canAccommodate` (half-open intervals); a table whose live
+   *              reservations leave no room is rejected
+   *              → 409 TABLE_NOT_AVAILABLE (the SERVER-side race guard)
    *     duplicate booking check (guestPhone or customerId,
    *              date + startMinutes, LIVE statuses only)
    *     INSERT Reservation
@@ -710,32 +697,15 @@ export class ReservationService {
             );
           }
 
-          // Final availability gate — the SAME shared rule the read-only
-          // availability query uses. MAINTENANCE always blocks; an OCCUPIED
-          // table (active order) blocks only a SAME-DAY slot overlapping the
-          // current occupancy horizon. Runs under the table row lock, so a
-          // table that became occupied/maintenance after `GET availability`
-          // is rejected here rather than silently double-booked.
-          if (
-            operationalOccupancyBlocked(
-              table.status,
-              {
-                reservationDate: data.reservationDate,
-                startMinutes: data.startMinutes,
-                durationMinutes: data.durationMinutes,
-              },
-              now
-            )
-          ) {
-            throw new ConflictError(
-              "Meja yang dipilih sudah tidak tersedia.",
-              "TABLE_NOT_AVAILABLE"
-            );
-          }
-
           // Overlap capacity: every LIVE reservation that overlaps the
           // half-open interval [start, start+duration) counts. CANCELLED and
           // NO_SHOW release the slot and are NOT fetched.
+          //
+          // This is the ONLY server-side availability gate: a reservation is
+          // the sole thing that can block a table (see the customer business
+          // rule). It runs under the table row lock, so a slot that a
+          // concurrent booking just claimed is rejected here as
+          // TABLE_NOT_AVAILABLE rather than silently double-booked.
           const existing = await tx.reservation.findMany({
             where: {
               tableId: data.tableId,
@@ -761,7 +731,8 @@ export class ReservationService {
             )
           ) {
             throw new ConflictError(
-              "Kapasitas meja tidak mencukupi pada waktu tersebut"
+              "Meja yang dipilih sudah tidak tersedia.",
+              "TABLE_NOT_AVAILABLE"
             );
           }
         }

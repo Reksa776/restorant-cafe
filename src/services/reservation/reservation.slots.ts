@@ -52,20 +52,6 @@ export const RESERVATION_MAX_DURATION_MINUTES = 240;
 /** Durations must be a multiple of this (whole quarter-hours). */
 export const RESERVATION_DURATION_STEP_MINUTES = 15;
 
-/**
- * Operational-occupancy horizon (minutes) for a table that is CURRENTLY
- * occupied (`Table.status = OCCUPIED`, kept in sync by the order engine).
- *
- * A same-day reservation blocks only when its interval overlaps
- * `[now, now + RESERVATION_OCCUPANCY_BLOCK_MINUTES)`; later same-day slots and
- * every future date stay bookable. This is deliberately SEPARATE from
- * `RESERVATION_MAX_DURATION_MINUTES` (240 — how long a single booking may
- * last): the horizon is a short "the table is busy right now" window, not a
- * booking-length bound. `MAINTENANCE` is NOT horizon-bound and blocks
- * unconditionally.
- */
-export const RESERVATION_OCCUPANCY_BLOCK_MINUTES = 120;
-
 export const RESERVATION_MINUTES_PER_DAY = 24 * 60;
 
 // ============================================================
@@ -302,52 +288,20 @@ export function overlaps(
 }
 
 /**
- * True when a table's CURRENT operational status must block the requested
- * reservation slot.
- *
- * This is the single shared rule consumed by BOTH the read-only availability
- * query and the transactional create path, so "GET says available" and
- * "POST accepts" can never disagree except for a genuine race that happens
- * AFTER the read.
- *
- *   MAINTENANCE → always blocked (any date, any time).
- *   OCCUPIED    → blocked only for a SAME-DAY slot overlapping the current
- *                 occupancy horizon [now, now + RESERVATION_OCCUPANCY_BLOCK_MINUTES).
- *                 A future date is NEVER blocked: a table busy now may well be
- *                 free tomorrow.
- *   other       → never blocked by operational status (AVAILABLE, etc.).
- *
- * Uses the same HALF-OPEN overlap convention as every other decision here.
- */
-export function operationalOccupancyBlocked(
-  tableStatus: string,
-  requested: ReservationInterval & { reservationDate: string },
-  now: ReservationNow
-): boolean {
-  if (tableStatus === "MAINTENANCE") return true;
-  if (tableStatus !== "OCCUPIED") return false;
-  if (requested.reservationDate !== now.today) return false;
-  return overlaps(requested, {
-    startMinutes: now.nowMinutes,
-    durationMinutes: RESERVATION_OCCUPANCY_BLOCK_MINUTES,
-  });
-}
-
-/**
  * Display statuses a customer floor map / picker can show. These are DERIVED
  * per table for one requested slot — never persisted, never a new DB enum.
  *
- *   AVAILABLE   → free for the slot and not currently occupied/maintenance.
+ *   AVAILABLE   → no active order is using the table right now.
  *   OCCUPIED    → the table is CURRENTLY in use by an active order
- *                 (`Table.status = OCCUPIED`). It stays visible; selectable
- *                 only when the slot does not conflict (e.g. a future date).
+ *                 (`Table.status = OCCUPIED`). It stays visible AND selectable
+ *                 unless a live reservation conflicts with the slot.
  *   RESERVED    → a live reservation overlaps the requested slot.
- *   MAINTENANCE → blocked for every slot until maintenance ends.
+ *   MAINTENANCE → the table is flagged under maintenance right now.
  *
  * `OCCUPIED`/`MAINTENANCE` come from the table's current operational status;
- * `RESERVED` is slot-relative. Selectability is a SEPARATE decision
- * (`operationalOccupancyBlocked` + capacity) so a busy-now table can still be
- * shown as OCCUPIED while remaining bookable for a future slot.
+ * `RESERVED` is slot-relative. These are DISPLAY-ONLY: selectability is a
+ * SEPARATE decision driven SOLELY by capacity + live-reservation conflicts, so
+ * a busy-now table is still shown as OCCUPIED while remaining selectable.
  */
 export const TABLE_OPERATIONAL_STATUSES = [
   "AVAILABLE",
@@ -364,7 +318,8 @@ export type TableOperationalStatus =
  *
  * Precedence: MAINTENANCE (always) → OCCUPIED (current order) → RESERVED
  * (overlapping live reservation) → AVAILABLE. Pure, so the availability
- * query and any other consumer share exactly one rule.
+ * query and any other consumer share exactly one rule. DISPLAY-ONLY — the
+ * result never decides `available` (only capacity + reservation conflicts do).
  */
 export function resolveSlotTableStatus(args: {
   tableStatus: string;
