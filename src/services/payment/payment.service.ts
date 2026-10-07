@@ -1039,7 +1039,10 @@ export class PaymentService {
       }
     }
 
-    // Step 6: Update payment status in transaction
+    // Step 6: Update payment status in transaction. `confirmedReservationId`
+    // is set when THIS webhook auto-confirmed a linked reservation, so the
+    // existing confirmation WhatsApp is dispatched AFTER the commit.
+    let confirmedReservationId: string | null = null;
     const updatedPayment = await prisma.$transaction(async (tx) => {
       // Webhook race protection (M1): the old QRIS payment may already have
       // been CANCELLED server-side (e.g. the cashier switched to CASH) while
@@ -1123,6 +1126,22 @@ export class PaymentService {
           where: { id: payment.orderId, paymentStatus: current.status },
           data: { paymentStatus: "PAID" },
         });
+
+        // Phase 2 — reservation payment ownership (OPTION B: Reservation →
+        // Order → Payment via Reservation.orderId). A PAID order may belong to
+        // a reservation. Confirm it race-safely (CAS PENDING → CONFIRMED) in
+        // THIS transaction so the payment flip and the reservation state commit
+        // atomically. A CANCELLED reservation is NEVER resurrected, and any
+        // other status is left untouched — the seam enforces both rules.
+        const { reservationService } = await import(
+          "@/services/reservation/reservation.service"
+        );
+        confirmedReservationId =
+          await reservationService.confirmFromPaidOrderInTransaction(
+            tx,
+            payment.orderId,
+            payment.restaurantId
+          );
       } else if (
         webhookData.status === "FAILED" ||
         webhookData.status === "EXPIRED" ||
@@ -1148,6 +1167,26 @@ export class PaymentService {
     // PAID status must never be emitted downstream.
     if (!updatedPayment) {
       return payment;
+    }
+
+    // Phase 2 — the reservation confirmation is committed; dispatch the
+    // EXISTING confirmation WhatsApp through the normal reservation path.
+    // Best-effort: a WhatsApp failure can never alter the committed state.
+    if (confirmedReservationId) {
+      try {
+        const { reservationService } = await import(
+          "@/services/reservation/reservation.service"
+        );
+        await reservationService.notifyReservationConfirmedFromPayment(
+          confirmedReservationId,
+          payment.restaurantId
+        );
+      } catch (error) {
+        console.error(
+          "[Payment] Reservation confirmation notification failed:",
+          error
+        );
+      }
     }
 
     // Realtime: payment status changed (webhook → paid/failed/expired).

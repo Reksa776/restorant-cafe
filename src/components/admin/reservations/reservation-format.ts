@@ -28,6 +28,39 @@ export const RESERVATION_SOURCE_LABELS: Record<string, string> = {
   ADMIN: "Admin",
 };
 
+/**
+ * Phase 4 — Indonesian labels for the DERIVED reservation payment status
+ * (server value = linked Order.paymentStatus). Distinct from
+ * RESERVATION_STATUS_LABELS: the two states must never be conflated.
+ */
+export const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  UNPAID: "Belum Bayar",
+  PENDING: "Menunggu Pembayaran",
+  PAID: "Lunas",
+  FAILED: "Pembayaran Gagal",
+  EXPIRED: "Pembayaran Kedaluwarsa",
+  CANCELLED: "Dibatalkan",
+  REFUNDED: "Dana Dikembalikan",
+};
+
+/** Tailwind pairs for the payment status pill (mirrors ReservationStatusBadge). */
+export const PAYMENT_STATUS_BADGE_CLASSES: Record<string, string> = {
+  UNPAID: "bg-gray-100 text-gray-600",
+  PENDING: "bg-yellow-100 text-yellow-800",
+  PAID: "bg-green-100 text-green-800",
+  FAILED: "bg-red-100 text-red-800",
+  EXPIRED: "bg-orange-100 text-orange-800",
+  CANCELLED: "bg-gray-200 text-gray-600",
+  REFUNDED: "bg-blue-100 text-blue-800",
+};
+
+/** Indonesian labels for payment method enum values. */
+export const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  QRIS: "QRIS",
+  KASIR: "Kasir",
+  VA: "Virtual Account",
+};
+
 /** `2026-09-17` → "17 Sep 2026" (local date built from parts, no TZ shift). */
 export function formatReservationDate(dateOnly: string): string {
   if (!isValidDateOnly(dateOnly)) return dateOnly;
@@ -70,4 +103,15 @@ export function formatReservationDateTime(iso: string | null | undefined): strin
 /** `600` → "10:00". Thin passthrough so components don't import the engine. */
 export function formatStartMinutes(startMinutes: number): string {
   return minutesToLabel(startMinutes);
+}
+
+/**
+ * `125000` → "Rp125.000" (same convention as the other admin components).
+ * Non-finite input (null/undefined/NaN) renders as "Rp0" rather than leaking
+ * a broken string into the detail modal.
+ */
+export function formatRupiah(value: number | null | undefined): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "Rp0";
+  return `Rp${n.toLocaleString("id-ID")}`;
 }

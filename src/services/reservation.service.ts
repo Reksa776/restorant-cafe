@@ -40,6 +40,27 @@ export interface ReservationTableView {
   table: { id: string; number: number; name: string; capacity: number } | null;
   branch: { id: string; code: string; name: string } | null;
   customer: { id: string; name: string; phone: string | null } | null;
+  /** Payment summary — null when the reservation has no linked order. */
+  payment: ReservationPaymentView | null;
+}
+
+/**
+ * Reservation payment summary (Phase 2/4) as serialized by the admin
+ * endpoints. `status` is DERIVED server-side from the linked Order's
+ * `paymentStatus` (single source of truth) — the UI must NEVER infer it from
+ * `ReservationStatus`. READ-ONLY: internal Payment/Order ids are not included;
+ * `reference` is the gateway providerRef (non-secret correlation id).
+ */
+export interface ReservationPaymentView {
+  /** Order.paymentStatus, e.g. UNPAID/PENDING/PAID/FAILED/EXPIRED/CANCELLED/REFUNDED. */
+  status: string;
+  method: string | null;
+  amount: number;
+  provider: string | null;
+  /** ISO timestamp over the wire (server value is a Date | null). */
+  expiresAt: string | null;
+  paidAt: string | null;
+  reference: string | null;
 }
 
 export interface ReservationListResult {

@@ -43,6 +43,7 @@ import type {
   FloorMapLoadStatus,
 } from "@/components/customer/reservation/reservation-floor-map.helpers";
 import { RESERVATION_DEFAULT_DURATION_MINUTES } from "@/services/reservation/reservation.slots";
+import { saveReservationPaymentContext } from "./reservation-payment-storage";
 import {
   PAYMENT_STATUS_LABELS,
   PURCHASE_EMPTY_MESSAGE,
@@ -839,7 +840,18 @@ export default function ReservationPage() {
     try {
       const res = await api.post("/public/reservations", payload);
       if (res.status === 201 && res.data?.data) {
-        setCreated(res.data.data as CreatedReservation);
+        const createdReservation = res.data.data as CreatedReservation;
+        setCreated(createdReservation);
+        // PHASE 3 — stash the ownership phone (and restaurant hint) the wizard
+        // already collected, so the reservation payment page never asks the
+        // customer for it twice. Server-side validation is unchanged.
+        saveReservationPaymentContext(createdReservation.code, {
+          phone: guestPhone.trim(),
+          restaurantId: effectiveRestaurantId ?? undefined,
+          // Full create snapshot (reservation + order summary) so the payment
+          // page renders items/totals without an extra lookup.
+          details: createdReservation,
+        });
         setStep("success");
       } else {
         setSubmitError("Gagal membuat reservasi. Silakan coba lagi.");
@@ -1828,20 +1840,22 @@ export default function ReservationPage() {
                   </span>
                 </DetailRow>
               </dl>
-              {/* Payment CTA — reuses the EXISTING payment/order pages. */}
+              {/* Payment CTA — PHASE 3: QRIS pays INSIDE the reservation flow
+                  (reservation code identifier), never the Order payment page.
+                  KASIR keeps its existing order/cashier flow. */}
               {created.order.paymentStatus !== "PAID" &&
                 created.order.status !== "CANCELLED" && (
                   <Link
                     href={
                       paymentMethod === "KASIR"
                         ? `/order/${created.order.orderNumber}`
-                        : `/payment/${created.order.orderNumber}`
+                        : `/reservasi/${created.code}/payment`
                     }
                     className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary text-brand-primary-foreground py-3 px-4 font-semibold hover:bg-brand-primary/90 transition-colors"
                   >
                     {paymentMethod === "KASIR"
                       ? "Lihat Pesanan & Bayar di Kasir"
-                      : "Bayar Sekarang (QRIS)"}
+                      : "Bayar Sekarang"}
                   </Link>
                 )}
             </div>

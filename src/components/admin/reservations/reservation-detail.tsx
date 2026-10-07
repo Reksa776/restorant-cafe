@@ -12,10 +12,13 @@ import { formatPhoneDisplay } from "@/lib/phone";
 import type { ReservationTableView } from "@/services/reservation.service";
 import { reservationService } from "@/services/reservation.service";
 import { ReservationStatusBadge } from "./reservation-status-badge";
+import { ReservationPaymentStatusBadge } from "./reservation-payment-status-badge";
 import {
   formatReservationDate,
   formatReservationDateTime,
+  formatRupiah,
   formatTimeSlot,
+  PAYMENT_METHOD_LABELS,
   RESERVATION_SOURCE_LABELS,
 } from "./reservation-format";
 
@@ -157,6 +160,50 @@ export function ReservationDetail({
                 {formatReservationDateTime(reservation.createdAt)}
               </DetailRow>
             </dl>
+
+            {/* Pembayaran (read-only) — Phase 4. Status is DERIVED server-side
+                from the linked Order.paymentStatus; it is never inferred from
+                ReservationStatus. No internal ids, no secrets. */}
+            <div className="mt-4">
+              <p className="mb-1 text-sm font-semibold">Pembayaran</p>
+              {reservation.payment ? (
+                <dl>
+                  <div className="flex items-start justify-between gap-4 border-b border-gray-100 py-2">
+                    <dt className="shrink-0 text-sm text-gray-500">Status</dt>
+                    <dd>
+                      <ReservationPaymentStatusBadge
+                        status={reservation.payment.status}
+                      />
+                    </dd>
+                  </div>
+                  <DetailRow label="Metode">
+                    {reservation.payment.method
+                      ? (PAYMENT_METHOD_LABELS[reservation.payment.method] ??
+                        reservation.payment.method)
+                      : "-"}
+                  </DetailRow>
+                  <DetailRow label="Jumlah">
+                    {formatRupiah(reservation.payment.amount)}
+                  </DetailRow>
+                  <DetailRow label="Provider">
+                    {reservation.payment.provider ?? "-"}
+                  </DetailRow>
+                  <DetailRow label="Reference">
+                    {reservation.payment.reference ?? "-"}
+                  </DetailRow>
+                  <DetailRow label="Dibayar Pada">
+                    {formatReservationDateTime(reservation.payment.paidAt)}
+                  </DetailRow>
+                  <DetailRow label="Kadaluarsa Pada">
+                    {formatReservationDateTime(reservation.payment.expiresAt)}
+                  </DetailRow>
+                </dl>
+              ) : (
+                <p className="rounded-md bg-gray-50 px-3 py-2 text-sm text-gray-500">
+                  Belum ada pembayaran
+                </p>
+              )}
+            </div>
 
             {hasTimeline && (
               <div className="mt-4">

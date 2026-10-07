@@ -202,6 +202,27 @@ export interface ReservationOrderSummary {
   }>;
 }
 
+/**
+ * Reservation payment summary — Phase 2 (payment ownership redesign).
+ *
+ * DERIVED, never a second source of truth: `status` is the linked Order's
+ * `paymentStatus` (the authoritative field the payment engine already mirrors).
+ * The remaining fields mirror the order's latest Payment intent when one
+ * exists; `amount` falls back to the order's grand total before any intent.
+ * No schema change, no enum, no new table.
+ */
+export interface ReservationPaymentSummary {
+  /** Derived from Order.paymentStatus (single source of truth). */
+  status: string;
+  method: string | null;
+  amount: number;
+  provider: string | null;
+  expiresAt: Date | null;
+  paidAt: Date | null;
+  /** Gateway reference (providerRef) — a non-secret correlation id. */
+  reference: string | null;
+}
+
 async function reservationViews(rows: Reservation[]) {
   const tableIds = [
     ...new Set(
@@ -263,7 +284,15 @@ async function reservationViews(rows: Reservation[]) {
               },
             },
             payments: {
-              select: { method: true, status: true },
+              select: {
+                method: true,
+                status: true,
+                amount: true,
+                provider: true,
+                providerRef: true,
+                paidAt: true,
+                expiresAt: true,
+              },
               orderBy: { createdAt: "desc" },
               take: 1,
             },
@@ -300,6 +329,27 @@ async function reservationViews(rows: Reservation[]) {
     ])
   );
 
+  // Payment summary keyed by order id — the STATUS is derived from
+  // Order.paymentStatus (single source of truth); the rest mirrors the latest
+  // intent. No reservation-level payment column is introduced.
+  const paymentMap = new Map(
+    orders.map((o) => {
+      const latest = o.payments[0] ?? null;
+      return [
+        o.id,
+        {
+          status: o.paymentStatus,
+          method: latest?.method ?? null,
+          amount: latest ? Number(latest.amount) : Number(o.grandTotal),
+          provider: latest?.provider ?? null,
+          expiresAt: latest?.expiresAt ?? null,
+          paidAt: latest?.paidAt ?? null,
+          reference: latest?.providerRef ?? null,
+        } satisfies ReservationPaymentSummary,
+      ];
+    })
+  );
+
   return rows.map((r) => ({
     ...r,
     reservationDate: dateOnlyFromDb(r.reservationDate),
@@ -307,6 +357,7 @@ async function reservationViews(rows: Reservation[]) {
     branch: branchMap.get(r.branchId) ?? null,
     customer: r.customerId ? (customerMap.get(r.customerId) ?? null) : null,
     order: r.orderId ? (orderMap.get(r.orderId) ?? null) : null,
+    payment: r.orderId ? (paymentMap.get(r.orderId) ?? null) : null,
   }));
 }
 
@@ -394,6 +445,60 @@ export class ReservationService {
     } catch (error) {
       console.error(
         `[Reservation] WhatsApp notification dispatch failed for reservation ${view.code}:`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Phase 2 — PAYMENT WEBHOOK SEAM (write). Confirm the reservation linked to
+   * an order that was just PAID, inside the CALLER's transaction, so the
+   * payment flip and the reservation confirmation commit atomically.
+   *
+   * Race-safe: a guarded `updateMany` only flips PENDING → CONFIRMED, so a
+   * duplicate webhook can never double-confirm. A CANCELLED reservation is
+   * NEVER resurrected (no-op), and any other status is left untouched.
+   * Tenant scope is enforced by `restaurantId` on both sides. Returns the
+   * confirmed reservation id ONLY when THIS call performed the transition (the
+   * caller then dispatches the existing confirmation WhatsApp once), else null.
+   */
+  async confirmFromPaidOrderInTransaction(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    restaurantId: string
+  ): Promise<string | null> {
+    const reservation = await tx.reservation.findFirst({
+      where: { orderId, restaurantId },
+      select: { id: true, status: true },
+    });
+    if (!reservation || reservation.status !== "PENDING") return null;
+
+    const confirmed = await tx.reservation.updateMany({
+      where: { id: reservation.id, status: "PENDING" },
+      data: { status: "CONFIRMED", confirmedAt: new Date() },
+    });
+    return confirmed.count > 0 ? reservation.id : null;
+  }
+
+  /**
+   * Phase 2 — PAYMENT WEBHOOK SEAM (notify). Best-effort: after a PAID webhook
+   * auto-confirmed a reservation, dispatch the EXISTING confirmation WhatsApp
+   * through the normal reservation path. Never throws to the caller.
+   */
+  async notifyReservationConfirmedFromPayment(
+    id: string,
+    restaurantId: string
+  ): Promise<void> {
+    try {
+      const reservation = await prisma.reservation.findFirst({
+        where: { id, restaurantId },
+      });
+      if (!reservation || reservation.status !== "CONFIRMED") return;
+      const view = (await reservationViews([reservation]))[0];
+      await this.notifyReservationWhatsApp(view);
+    } catch (error) {
+      console.error(
+        `[Reservation] WhatsApp notify after payment confirmation failed for ${id}:`,
         error
       );
     }
@@ -1356,6 +1461,22 @@ export class ReservationService {
           restaurantId,
           cancelReason
         );
+
+        // Phase 2 — kill any LIVE online intent on the linked order too.
+        // Otherwise a delayed iPaymu PAID callback could still settle a
+        // payment for a reservation that is already cancelled (the webhook
+        // already ignores CANCELLED payments). Guarded updateMany flips ONLY
+        // rows still PENDING, so a racing webhook PAID or a cashier collection
+        // can never be overwritten. PAID / FAILED / EXPIRED / REFUNDED /
+        // already-CANCELLED rows are never touched.
+        await tx.payment.updateMany({
+          where: {
+            orderId: current.orderId,
+            restaurantId,
+            status: "PENDING",
+          },
+          data: { status: "CANCELLED" },
+        });
       }
 
       const fresh = await tx.reservation.findUnique({
