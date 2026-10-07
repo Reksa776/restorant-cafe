@@ -11,6 +11,10 @@
 // Availability truth never lives here: the customer UI only builds the
 // candidate slot grid (same engine the server uses) and asks the server per
 // slot. This file never decides what is available.
+//
+// The PURCHASE helpers below are a LOCAL wizard cart (display only). Prices,
+// totals, tax and the grand total are ALWAYS recomputed server-side by the
+// existing order engine — this module only builds the payload and the preview.
 // ============================================================
 
 import {
@@ -108,6 +112,12 @@ export function formatReservationDateTime(
   });
 }
 
+/** `73000` → "Rp73.000" (id-ID grouping). Display only — never authoritative. */
+export function formatRupiah(value: number): string {
+  const amount = Number.isFinite(value) ? Math.round(value) : 0;
+  return `Rp${amount.toLocaleString("id-ID")}`;
+}
+
 /** Indonesian labels for the reservation status enum values. */
 export const RESERVATION_STATUS_LABELS: Record<string, string> = {
   PENDING: "Menunggu",
@@ -116,6 +126,28 @@ export const RESERVATION_STATUS_LABELS: Record<string, string> = {
   COMPLETED: "Selesai",
   CANCELLED: "Dibatalkan",
   NO_SHOW: "Tidak Hadir",
+};
+
+/** Indonesian labels for the payment status enum values. */
+export const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  UNPAID: "Belum Dibayar",
+  PENDING: "Menunggu Pembayaran",
+  PAID: "Lunas",
+  FAILED: "Gagal",
+  EXPIRED: "Kedaluwarsa",
+  REFUNDED: "Dikembalikan",
+  CANCELLED: "Dibatalkan",
+};
+
+/** DINE-IN payment intent for a reservation purchase. */
+export type ReservationPaymentMethod = "QRIS" | "KASIR";
+
+export const RESERVATION_PAYMENT_METHOD_LABELS: Record<
+  ReservationPaymentMethod,
+  string
+> = {
+  QRIS: "QRIS (bayar sekarang)",
+  KASIR: "Bayar di Kasir",
 };
 
 // ============================================================
@@ -134,20 +166,6 @@ export const TABLE_NOT_AVAILABLE_MESSAGE =
   "Maaf, meja ini baru saja tidak tersedia. Silakan pilih meja lain.";
 
 // ============================================================
-// Minimum-purchase gate (server-authoritative reservation rule)
-// ============================================================
-
-/**
- * 409 `PURCHASE_REQUIRED` code + copy — reservation requires the customer/guest
- * to have at least ONE qualifying purchase (paid, not cancelled, >=1 item) at
- * the same restaurant. The exact wording matches the server message so the
- * wizard can surface it verbatim.
- */
-export const PURCHASE_REQUIRED_CODE = "PURCHASE_REQUIRED";
-export const PURCHASE_REQUIRED_MESSAGE =
-  "Reservasi hanya tersedia setelah Anda menyelesaikan minimal 1 pembelian.";
-
-// ============================================================
 // Reservation QR payload
 // ============================================================
 
@@ -163,15 +181,14 @@ export function reservationQrPayload(code: string): string {
 }
 
 // ============================================================
-// Wizard step order (R6.5)
+// Wizard step order
 //
-// The minimum-purchase requirement is a STEP of the reservation wizard, placed
-// AFTER the table pick and BEFORE the guest data / review — so the customer
-// learns about it early instead of only after Submit
-// (`PURCHASE_REQUIRED` on Review). The server rule is unchanged; this is
-// position only.
+// Reservation and purchase are ONE flow: the customer picks products INSIDE
+// the wizard on the "Pembelian" step (between the table pick and the guest
+// data). There is no redirect to the menu and no historical-purchase
+// prerequisite.
 //
-//   branch → date → party → time → table → PURCHASE → guest → review
+//   branch → date → party → time → table → purchase → guest → review
 // ============================================================
 
 export type ReservationWizardStep =
@@ -236,166 +253,117 @@ export function previousWizardStep(
 }
 
 // ============================================================
-// Purchase step copy + view (UX early feedback only)
-// ============================================================
-
-/**
- * Client-side state of the early purchase check. This is UX ONLY — it never
- * authorizes anything: `POST /public/reservations` re-runs the same rule
- * server-side and still answers 409 `PURCHASE_REQUIRED` when nothing
- * qualifies (race-safe, authoritative).
- *
- *   idle       → identity unknown yet (guest has not typed a valid phone)
- *   checking   → probe in flight
- *   eligible   → server says a qualifying purchase exists
- *   ineligible → server says no qualifying purchase (show the menu CTA)
- *   error      → probe failed (offer retry; never blocks the flow logic)
- */
-export type PurchaseCheckState =
-  | "idle"
-  | "checking"
-  | "eligible"
-  | "ineligible"
-  | "error";
-
-export const PURCHASE_STEP_TITLE = "Verifikasi Pembelian";
-export const PURCHASE_FOUND_TITLE = "Pembelian ditemukan";
-export const PURCHASE_FOUND_MESSAGE =
-  "Anda memenuhi syarat untuk melakukan reservasi.";
-export const PURCHASE_REQUIRED_TITLE = "Pembelian Diperlukan";
-export const PURCHASE_REQUIRED_CTA = "Pesan Menu Dulu";
-/** Existing customer menu/order flow — no new checkout/order/payment engine. */
-export const PURCHASE_CTA_HREF = "/menu";
-export const PURCHASE_IDLE_MESSAGE =
-  "Masukkan nomor WhatsApp yang Anda gunakan saat memesan untuk memverifikasi pembelian Anda.";
-export const PURCHASE_CHECKING_MESSAGE = "Memeriksa pembelian…";
-export const PURCHASE_ERROR_MESSAGE =
-  "Gagal memeriksa pembelian. Silakan coba lagi.";
-
-export interface PurchaseStepView {
-  tone: "idle" | "checking" | "eligible" | "required" | "error";
-  title: string;
-  message: string;
-  /** Label of the purchase-required CTA, or null when not applicable. */
-  ctaLabel: string | null;
-  ctaHref: string | null;
-  /** True only when the customer may advance (server-confirmed purchase). */
-  canContinue: boolean;
-}
-
-/** Pure mapping of the purchase check state to what the step renders. */
-export function purchaseStepView(state: PurchaseCheckState): PurchaseStepView {
-  switch (state) {
-    case "eligible":
-      return {
-        tone: "eligible",
-        title: PURCHASE_FOUND_TITLE,
-        message: PURCHASE_FOUND_MESSAGE,
-        ctaLabel: null,
-        ctaHref: null,
-        canContinue: true,
-      };
-    case "ineligible":
-      return {
-        tone: "required",
-        title: PURCHASE_REQUIRED_TITLE,
-        message: PURCHASE_REQUIRED_MESSAGE,
-        ctaLabel: PURCHASE_REQUIRED_CTA,
-        ctaHref: PURCHASE_CTA_HREF,
-        canContinue: false,
-      };
-    case "checking":
-      return {
-        tone: "checking",
-        title: PURCHASE_STEP_TITLE,
-        message: PURCHASE_CHECKING_MESSAGE,
-        ctaLabel: null,
-        ctaHref: null,
-        canContinue: false,
-      };
-    case "error":
-      return {
-        tone: "error",
-        title: PURCHASE_STEP_TITLE,
-        message: PURCHASE_ERROR_MESSAGE,
-        ctaLabel: null,
-        ctaHref: null,
-        canContinue: false,
-      };
-    default:
-      return {
-        tone: "idle",
-        title: PURCHASE_STEP_TITLE,
-        message: PURCHASE_IDLE_MESSAGE,
-        ctaLabel: null,
-        ctaHref: null,
-        canContinue: false,
-      };
-  }
-}
-
-// ============================================================
-// Return-to-reservation draft (minimal mechanism)
+// Reservation purchase — LOCAL wizard cart (display only)
 //
-// The app has NO return-url/session mechanism for "go order first, then come
-// back". When the customer is sent to the existing menu flow from the
-// purchase step, the wizard snapshots its selections in sessionStorage so
-// reopening /reservasi resumes AT the purchase step (re-checking the purchase)
-// instead of starting over. Pure serialize/parse only — no auth, no order.
+// This is deliberately NOT the global `useCart` (localStorage `restaurant_cart`)
+// so a reservation never leaks items into the shared menu/cart/checkout. It is
+// a pure display model; the server re-prices everything from the database.
 // ============================================================
 
-export const RESERVATION_DRAFT_STORAGE_KEY = "reservation_draft";
-
-export interface ReservationDraft {
-  branchCode: string;
-  date: string;
-  partySize: number | null;
-  selectedStart: number | null;
-  selectedTableId: string | null;
-  guestName: string;
-  guestPhone: string;
-  notes: string;
+export interface ReservationPurchaseSelection {
+  groupId: string;
+  groupName: string;
+  optionId: string;
+  optionName: string;
+  priceAdjustment: number;
 }
 
-/** JSON snapshot of the wizard selections (never any auth/payment data). */
-export function serializeReservationDraft(draft: ReservationDraft): string {
-  return JSON.stringify({ version: 1, ...draft });
+export interface ReservationPurchaseAddon {
+  addonId: string;
+  name: string;
+  price: number;
+  quantity: number;
+}
+
+export interface ReservationPurchaseLine {
+  /** Client-only line identity (never sent to the server). */
+  lineId: string;
+  productId: string;
+  name: string;
+  /** Base (variant-adjusted) unit price for DISPLAY only. */
+  unitPrice: number;
+  quantity: number;
+  selections: ReservationPurchaseSelection[];
+  addons: ReservationPurchaseAddon[];
+  notes?: string;
+}
+
+/** One line's display total = unit price × quantity. */
+export function reservationPurchaseLineTotal(
+  line: ReservationPurchaseLine
+): number {
+  return line.unitPrice * line.quantity;
+}
+
+/** Display subtotal across all lines (server recomputes authoritatively). */
+export function reservationPurchaseSubtotal(
+  lines: ReservationPurchaseLine[]
+): number {
+  return lines.reduce(
+    (sum, line) => sum + reservationPurchaseLineTotal(line),
+    0
+  );
+}
+
+/** Display total quantity across all lines. */
+export function reservationPurchaseCount(
+  lines: ReservationPurchaseLine[]
+): number {
+  return lines.reduce((sum, line) => sum + line.quantity, 0);
+}
+
+/** Human summary of a line's choices, e.g. "Level 2, Keju, Extra Shot ×2". */
+export function reservationPurchaseLineNotes(
+  line: ReservationPurchaseLine
+): string {
+  const parts = [
+    ...line.selections.map((s) => s.optionName),
+    ...line.addons.map((a) =>
+      a.quantity > 1 ? `${a.name} ×${a.quantity}` : a.name
+    ),
+  ];
+  return parts.join(", ");
 }
 
 /**
- * Parse + defensively validate a stored draft. Returns null for anything that
- * is not a plausible draft (missing branch/date, malformed JSON, future
- * schema) so a corrupt value can never break the wizard.
+ * Build the EXACT `items[]` payload the server expects (identical shape to the
+ * public order input). Only ids + quantities + notes cross the wire — never a
+ * price. `selections`/`addons` are omitted when empty.
  */
-export function parseReservationDraft(raw: string | null): ReservationDraft | null {
-  if (!raw) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== "object") return null;
-  const value = parsed as Record<string, unknown>;
-  if (typeof value.branchCode !== "string" || !value.branchCode) return null;
-  if (typeof value.date !== "string" || !isValidDateOnly(value.date)) return null;
-
-  const optionalNumber = (input: unknown): number | null =>
-    typeof input === "number" && Number.isFinite(input) ? input : null;
-  const optionalString = (input: unknown): string =>
-    typeof input === "string" ? input : "";
-
-  return {
-    branchCode: value.branchCode,
-    date: value.date,
-    partySize: optionalNumber(value.partySize),
-    selectedStart: optionalNumber(value.selectedStart),
-    selectedTableId:
-      typeof value.selectedTableId === "string" && value.selectedTableId
-        ? value.selectedTableId
-        : null,
-    guestName: optionalString(value.guestName),
-    guestPhone: optionalString(value.guestPhone),
-    notes: optionalString(value.notes),
-  };
+export function toReservationOrderItems(lines: ReservationPurchaseLine[]) {
+  return lines.map((line) => ({
+    productId: line.productId,
+    quantity: line.quantity,
+    ...(line.selections.length
+      ? {
+          selections: line.selections.map((s) => ({
+            groupId: s.groupId,
+            groupName: s.groupName,
+            optionId: s.optionId,
+            optionName: s.optionName,
+            priceAdjustment: s.priceAdjustment,
+          })),
+        }
+      : {}),
+    ...(line.addons.length
+      ? {
+          addons: line.addons.map((a) => ({
+            addonId: a.addonId,
+            name: a.name,
+            price: a.price,
+            quantity: a.quantity,
+          })),
+        }
+      : {}),
+    ...(line.notes ? { notes: line.notes } : {}),
+  }));
 }
+
+/** Customer-facing copy for the purchase step. */
+export const PURCHASE_STEP_TITLE = "Pembelian untuk Reservasi";
+export const PURCHASE_STEP_SUBTITLE =
+  "Pilih makanan/minuman untuk meja Anda. Pembayaran mengikuti alur pembayaran yang tersedia.";
+export const PURCHASE_EMPTY_MESSAGE =
+  "Belum ada produk dipilih. Pilih minimal 1 produk untuk melanjutkan reservasi.";
+export const PURCHASE_REQUIRED_HINT =
+  "Reservasi harus menyertakan minimal 1 produk.";

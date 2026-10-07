@@ -2,7 +2,6 @@ import "dotenv/config";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { prisma } from "@/lib/prisma";
-import { queueWhatsAppReservation } from "@/services/whatsapp/whatsapp.queue";
 import {
   buildReservationWhatsAppMessage,
   dispatchReservationWhatsApp,
@@ -19,18 +18,18 @@ import {
 //   • resolveReservationWhatsAppTarget — pure target resolution.
 //   • dispatchReservationWhatsApp      — best-effort dispatcher whose
 //     failure-isolation is proven by swapping the exported gateway seam
-//     (reservationWhatsAppGateway.enqueue) and stubbing the server-side
-//     restaurant lookup (prisma.restaurant.findUnique) — the queue never
-//     touches BullMQ/Baileys and no database is needed.
+//     (reservationWhatsAppGateway.send) and stubbing the server-side
+//     restaurant lookup (prisma.restaurant.findUnique) — the gateway never
+//     touches the queue/Baileys and no database is needed.
 // Run: npx tsx --test src/services/reservation/reservation-whatsapp.unit.test.ts
 // ============================================================
 
-type ReservationEnqueueJob = Awaited<
-  ReturnType<typeof queueWhatsAppReservation>
+type ReservationSendResult = Awaited<
+  ReturnType<typeof reservationWhatsAppGateway.send>
 >;
 
-function mockReservationEnqueueJob(): ReservationEnqueueJob {
-  return {} as unknown as ReservationEnqueueJob;
+function mockReservationSendResult(): ReservationSendResult {
+  return true;
 }
 
 interface ViewOverrides {
@@ -127,28 +126,28 @@ describe("resolveReservationWhatsAppTarget", () => {
 });
 
 describe("dispatchReservationWhatsApp", () => {
-  it("returns false (never throws) when the WhatsApp queue fails", async () => {
-    const original = reservationWhatsAppGateway.enqueue;
-    reservationWhatsAppGateway.enqueue = async () => {
-      throw new Error("queue down");
+  it("returns false (never throws) when the WhatsApp send fails", async () => {
+    const original = reservationWhatsAppGateway.send;
+    reservationWhatsAppGateway.send = async () => {
+      throw new Error("send down");
     };
 
     let result = true;
     try {
       result = await dispatchReservationWhatsApp(makeView(), "CONFIRMED");
     } finally {
-      reservationWhatsAppGateway.enqueue = original;
+      reservationWhatsAppGateway.send = original;
     }
 
     assert.equal(result, false);
   });
 
-  it("does NOT enqueue when there is no usable target", async () => {
-    const original = reservationWhatsAppGateway.enqueue;
-    let enqueued = 0;
-    reservationWhatsAppGateway.enqueue = async () => {
-      enqueued += 1;
-      return mockReservationEnqueueJob();
+  it("does NOT send when there is no usable target", async () => {
+    const original = reservationWhatsAppGateway.send;
+    let sends = 0;
+    reservationWhatsAppGateway.send = async () => {
+      sends += 1;
+      return mockReservationSendResult();
     };
 
     let result = true;
@@ -158,28 +157,26 @@ describe("dispatchReservationWhatsApp", () => {
         "CONFIRMED"
       );
     } finally {
-      reservationWhatsAppGateway.enqueue = original;
+      reservationWhatsAppGateway.send = original;
     }
 
     assert.equal(result, false);
-    assert.equal(enqueued, 0);
+    assert.equal(sends, 0);
   });
 
-  it("enqueues the built message with the resolved target on success", async () => {
-    const originalGateway = reservationWhatsAppGateway.enqueue;
+  it("sends the built message with the resolved target on success", async () => {
+    const originalGateway = reservationWhatsAppGateway.send;
     const originalFindUnique = prisma.restaurant.findUnique;
     let target = "";
     let message = "";
-    reservationWhatsAppGateway.enqueue = async (
+    reservationWhatsAppGateway.send = async (
       restaurantId: string,
-      reservationId: string,
-      status: string,
       to: string,
       msg: string
     ) => {
       target = to;
       message = msg;
-      return mockReservationEnqueueJob();
+      return mockReservationSendResult();
     };
     prisma.restaurant.findUnique = (async () => ({
       name: "Restoran Senja",
@@ -189,7 +186,7 @@ describe("dispatchReservationWhatsApp", () => {
     try {
       result = await dispatchReservationWhatsApp(makeView(), "CONFIRMED");
     } finally {
-      reservationWhatsAppGateway.enqueue = originalGateway;
+      reservationWhatsAppGateway.send = originalGateway;
       prisma.restaurant.findUnique = originalFindUnique;
     }
 

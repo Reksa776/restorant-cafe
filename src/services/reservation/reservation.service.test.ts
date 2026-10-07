@@ -17,7 +17,7 @@ import {
 } from "./reservation.slots";
 import {
   cleanupPurchases,
-  seedQualifyingPurchase,
+  seedReservationProduct,
 } from "./reservation.purchase.fixtures";
 
 // ============================================================
@@ -95,6 +95,13 @@ interface PublicOverrides {
   notes?: string | null;
 }
 
+/**
+ * Public reservations now CARRY their own purchase: `items` is REQUIRED, so
+ * every public input ships one line of a shared product seeded per branch.
+ * The seeded product is orderable from every branch this suite books against.
+ */
+let publicItem: { productId: string; quantity: number };
+
 function publicInput(overrides: PublicOverrides = {}) {
   return {
     branchCode: "QA-MAIN",
@@ -105,6 +112,7 @@ function publicInput(overrides: PublicOverrides = {}) {
     guestName: "Tes Publik",
     guestPhone: incrementingPhone(),
     tableId: null as string | null,
+    items: [publicItem],
     ...overrides,
   };
 }
@@ -236,6 +244,15 @@ before(async () => {
       },
     })
   ).id;
+
+  publicItem = (
+    await seedReservationProduct(restAId, {
+      branchId: branchMain,
+      branchIds: [branchAlt, branchList],
+      price: 25000,
+      stock: 9999,
+    })
+  ).item;
 });
 
 after(async () => {
@@ -260,11 +277,6 @@ after(async () => {
 
 describe("reservation.service — create", () => {
   it("1. creates a valid reservation (PENDING, non-sequential code, holds slot)", async () => {
-    // Minimum-purchase rule: the public flow requires a qualifying purchase.
-    await seedQualifyingPurchase(restAId, {
-      phone: "081234567890",
-      branchId: branchMain,
-    });
     const res = await reservationService.createPublicReservation(
       restAId,
       publicInput({
@@ -858,7 +870,6 @@ describe("reservation.service — validation (window / horizon / grid)", () => {
   it("18b. accepts the last day inside the horizon", async () => {
     const lastDay = addDaysToDateOnly(NOW.today, 60);
     const input = publicInput({ reservationDate: lastDay });
-    await seedQualifyingPurchase(restAId, { phone: input.guestPhone });
     const res = await reservationService.createPublicReservation(restAId, input, {
       now: NOW,
     });
@@ -1624,7 +1635,6 @@ describe("reservation.service — admin list / reads / isolation", () => {
   });
 
   it("guest lookup requires a matching phone and returns a safe DTO", async () => {
-    await seedQualifyingPurchase(restAId, { phone: "081200000052" });
     const res = await reservationService.createPublicReservation(
       restAId,
       publicInput({ guestPhone: "081200000052" }),

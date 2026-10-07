@@ -9,7 +9,7 @@ import { CUSTOMER_SESSION_COOKIE } from "@/lib/customer-session";
 import { addDaysToDateOnly, type ReservationNow } from "./reservation.slots";
 import {
   cleanupPurchases,
-  seedQualifyingPurchase,
+  seedReservationProduct,
 } from "./reservation.purchase.fixtures";
 import { GET as listGet } from "@/app/api/public/customer/account/reservations/route";
 import { GET as detailGet } from "@/app/api/public/customer/account/reservations/[code]/route";
@@ -51,6 +51,9 @@ function uniqueBookingDate(): string {
   return d;
 }
 
+/** One orderable product per restaurant — every public booking carries items. */
+const publicItems = new Map<string, { productId: string; quantity: number }>();
+
 async function booking(
   restaurantId: string,
   branchCode: string,
@@ -58,9 +61,6 @@ async function booking(
   tableId: string,
   guestName: string
 ) {
-  // Minimum-purchase rule: the public flow requires a qualifying purchase for
-  // the acting identity (here: the linked session customer).
-  await seedQualifyingPurchase(restaurantId, { customerId });
   return reservationService.createPublicReservation(
     restaurantId,
     {
@@ -72,6 +72,7 @@ async function booking(
       guestName,
       guestPhone: incrementingPhone(),
       tableId,
+      items: [publicItems.get(restaurantId)!],
     },
     { now: NOW, customerId }
   );
@@ -166,6 +167,27 @@ before(async () => {
   customerA = cA.id;
   customerB = cB.id;
   customerForeign = cF.id;
+
+  publicItems.set(
+    restA,
+    (
+      await seedReservationProduct(restA, {
+        branchId: branchA,
+        price: 25000,
+        stock: 9999,
+      })
+    ).item
+  );
+  publicItems.set(
+    restB,
+    (
+      await seedReservationProduct(restB, {
+        branchId: branchB,
+        price: 25000,
+        stock: 9999,
+      })
+    ).item
+  );
 });
 
 after(async () => {

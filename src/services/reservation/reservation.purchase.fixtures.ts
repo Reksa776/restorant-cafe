@@ -1,117 +1,162 @@
 import { prisma } from "@/lib/prisma";
-import { normalizePhone } from "@/lib/phone";
 
 // ============================================================
-// TEST-ONLY fixtures for the reservation MINIMUM-PURCHASE gate.
+// TEST-ONLY fixtures for the RESERVATION PURCHASE flow.
 //
-// "Qualifying purchase" = an Order that is PAID, NOT CANCELLED and has at
-// least one OrderItem — the exact rule the reservation create gate enforces.
-// Creating one requires the minimal Product graph an OrderItem needs
-// (restaurant → category → product → order → order_item).
+// A public reservation now CARRIES its own purchase, so the tests need a real
+// product to order: restaurant → category → product (+ optional option group /
+// addon) and, when a branch is given, a BranchProduct row carrying the stock
+// the order engine enforces.
 //
 // This module is imported by tests only; no app code depends on it.
 // ============================================================
 
 let sequence = 0;
 
-export interface PurchaseSeedOverrides {
-  /** Reuse an existing customer (logged-in flow) instead of creating one. */
-  customerId?: string | null;
-  /** Phone for the auto-created Customer (guest flow). */
-  phone?: string | null;
+export interface ReservationProductOverrides {
+  /** Branch whose BranchProduct row carries stock (needed to order). */
   branchId?: string | null;
-  paymentStatus?:
-    | "UNPAID"
-    | "PENDING"
-    | "PAID"
-    | "FAILED"
-    | "EXPIRED"
-    | "REFUNDED"
-    | "CANCELLED";
-  status?:
-    | "PENDING"
-    | "CONFIRMED"
-    | "PROCESSING"
-    | "READY"
-    | "COMPLETED"
-    | "CANCELLED";
-  /** false → the order is created WITHOUT any OrderItem (fails >=1 item). */
-  withItem?: boolean;
+  /**
+   * Extra branches that should also carry this product (same price). Suites
+   * that seed one shared product for many branches pass them here instead of
+   * seeding a product per branch.
+   */
+  branchIds?: string[];
+  price?: number;
+  /** Branch stock for the seeded product (default 50). */
+  stock?: number;
+  /** REQUIRED single-select option group with one option (paket/variant). */
+  requiredOption?: { name: string; priceAdjustment?: number };
+  /** Optional addon. */
+  addon?: { name: string; price?: number };
 }
 
-export async function seedQualifyingPurchase(
+export interface ReservationProductFixture {
+  productId: string;
+  categoryId: string;
+  /** Ready-to-send `items[]` entry (quantity 1). */
+  item: { productId: string; quantity: number };
+  optionId?: string;
+  optionGroupId?: string;
+  addonId?: string;
+  price: number;
+}
+
+export async function seedReservationProduct(
   restaurantId: string,
-  overrides: PurchaseSeedOverrides = {}
-): Promise<{ customerId: string; orderId: string; productId: string }> {
+  overrides: ReservationProductOverrides = {}
+): Promise<ReservationProductFixture> {
   sequence += 1;
   const stamp = `${Date.now()}-${sequence}`;
-
-  let customerId = overrides.customerId ?? null;
-  if (!customerId) {
-    // Store the CANONICAL phone form — the reservation gate matches the
-    // normalized `guestPhone` the Zod schema produces.
-    const phone = overrides.phone ? normalizePhone(overrides.phone) : null;
-    const customer = await prisma.customer.create({
-      data: {
-        restaurantId,
-        phone,
-        name: "QA Buyer",
-      },
-    });
-    customerId = customer.id;
-  }
+  const price = overrides.price ?? 25000;
 
   const category = await prisma.category.create({
-    data: { restaurantId, name: `QA Cat ${stamp}`, sortOrder: 0 },
+    data: { restaurantId, name: `QA Menu ${stamp}`, sortOrder: 0 },
   });
   const product = await prisma.product.create({
     data: {
       restaurantId,
       categoryId: category.id,
-      name: `QA Prod ${stamp}`,
-      price: 10000,
+      name: `QA Produk ${stamp}`,
+      price,
     },
   });
 
-  const order = await prisma.order.create({
-    data: {
-      restaurantId,
-      branchId: overrides.branchId ?? null,
-      orderNumber: `QA-${stamp}`,
-      customerId,
-      status: overrides.status ?? "COMPLETED",
-      paymentStatus: overrides.paymentStatus ?? "PAID",
-      subtotal: 10000,
-      grandTotal: 10000,
-      ...(overrides.withItem === false
-        ? {}
-        : {
-            items: {
-              create: [
-                {
-                  productId: product.id,
-                  quantity: 1,
-                  unitPrice: 10000,
-                  totalPrice: 10000,
-                },
-              ],
-            },
-          }),
-    },
-    select: { id: true },
-  });
+  let optionGroupId: string | undefined;
+  let optionId: string | undefined;
+  if (overrides.requiredOption) {
+    const group = await prisma.productOptionGroup.create({
+      data: {
+        productId: product.id,
+        name: overrides.requiredOption.name,
+        type: "SINGLE",
+        isRequired: true,
+        minSelect: 1,
+        maxSelect: 1,
+      },
+    });
+    const option = await prisma.productOption.create({
+      data: {
+        optionGroupId: group.id,
+        name: `${overrides.requiredOption.name} A`,
+        priceAdjustment: overrides.requiredOption.priceAdjustment ?? 0,
+      },
+    });
+    optionGroupId = group.id;
+    optionId = option.id;
+  }
 
-  return { customerId, orderId: order.id, productId: product.id };
+  let addonId: string | undefined;
+  if (overrides.addon) {
+    const addon = await prisma.productAddon.create({
+      data: {
+        productId: product.id,
+        name: overrides.addon.name,
+        price: overrides.addon.price ?? 5000,
+      },
+    });
+    addonId = addon.id;
+  }
+
+  const branchIds = [
+    ...new Set(
+      [overrides.branchId ?? null, ...(overrides.branchIds ?? [])].filter(
+        (id): id is string => Boolean(id)
+      )
+    ),
+  ];
+  for (const branchId of branchIds) {
+    await prisma.branchProduct.create({
+      data: {
+        branchId,
+        productId: product.id,
+        isAvailable: true,
+        stock: overrides.stock ?? 50,
+      },
+    });
+  }
+
+  return {
+    productId: product.id,
+    categoryId: category.id,
+    item: { productId: product.id, quantity: 1 },
+    optionGroupId,
+    optionId,
+    addonId,
+    price,
+  };
 }
 
 /** Remove the seeded purchase graph (call BEFORE deleting customers). */
 export async function cleanupPurchases(restaurantIds: string[]): Promise<void> {
   const ids = restaurantIds.filter(Boolean);
   if (ids.length === 0) return;
+
+  // Payments/refunds/status-history carry an FK to the order and are NOT
+  // cascade-deleted, so they must go first.
+  await prisma.refundItem.deleteMany({
+    where: { refund: { order: { restaurantId: { in: ids } } } },
+  });
+  await prisma.refund.deleteMany({
+    where: { order: { restaurantId: { in: ids } } },
+  });
+  await prisma.cancellationRequest.deleteMany({
+    where: { order: { restaurantId: { in: ids } } },
+  });
+  await prisma.paymentTransaction.deleteMany({
+    where: { payment: { order: { restaurantId: { in: ids } } } },
+  });
+  await prisma.payment.deleteMany({
+    where: { order: { restaurantId: { in: ids } } },
+  });
+  await prisma.orderStatusHistory.deleteMany({
+    where: { order: { restaurantId: { in: ids } } },
+  });
   await prisma.orderItem.deleteMany({
     where: { order: { restaurantId: { in: ids } } },
   });
   await prisma.order.deleteMany({ where: { restaurantId: { in: ids } } });
+  // Deleting products cascades their BranchProduct/option/addon rows.
   await prisma.product.deleteMany({ where: { restaurantId: { in: ids } } });
   await prisma.category.deleteMany({ where: { restaurantId: { in: ids } } });
 }

@@ -4,21 +4,17 @@ import {
   RESERVATION_MAX_HORIZON_DAYS,
 } from "@/services/reservation/reservation.slots";
 import {
-  PURCHASE_CTA_HREF,
-  PURCHASE_ERROR_MESSAGE,
-  PURCHASE_FOUND_MESSAGE,
-  PURCHASE_IDLE_MESSAGE,
-  PURCHASE_REQUIRED_CODE,
-  PURCHASE_REQUIRED_CTA,
-  PURCHASE_REQUIRED_MESSAGE,
-  PURCHASE_REQUIRED_TITLE,
+  PAYMENT_STATUS_LABELS,
+  PURCHASE_EMPTY_MESSAGE,
+  PURCHASE_STEP_TITLE,
   RESERVATION_CONFLICT_MESSAGE,
-  RESERVATION_DRAFT_STORAGE_KEY,
+  RESERVATION_PAYMENT_METHOD_LABELS,
   RESERVATION_STEP_LABELS,
   RESERVATION_STATUS_LABELS,
   RESERVATION_WIZARD_STEPS,
   buildCandidateSlots,
   formatReservationDate,
+  formatRupiah,
   formatStartMinutes,
   formatTimeSlot,
   localDateOnly,
@@ -26,13 +22,15 @@ import {
   maxReservationDate,
   minReservationDate,
   nextWizardStep,
-  parseReservationDraft,
   previousWizardStep,
-  purchaseStepView,
+  reservationPurchaseCount,
+  reservationPurchaseLineNotes,
+  reservationPurchaseLineTotal,
+  reservationPurchaseSubtotal,
   reservationQrPayload,
-  serializeReservationDraft,
+  toReservationOrderItems,
 } from "./reservation-flow";
-import type { ReservationDraft } from "./reservation-flow";
+import type { ReservationPurchaseLine } from "./reservation-flow";
 
 const FIXED_NOW = new Date(2026, 8, 15, 9, 30, 0); // 2026-09-15 09:30 local
 
@@ -172,21 +170,12 @@ describe("reservation-flow (customer reservation UI pure helpers)", () => {
     });
   });
 
-  describe("minimum-purchase gate copy", () => {
-    it("matches the server's 409 business error", () => {
-      assert.equal(PURCHASE_REQUIRED_CODE, "PURCHASE_REQUIRED");
-      assert.equal(
-        PURCHASE_REQUIRED_MESSAGE,
-        "Reservasi hanya tersedia setelah Anda menyelesaikan minimal 1 pembelian."
-      );
-    });
-  });
-
   // ==========================================================
-  // R6.5 — the purchase requirement is its OWN wizard step, BEFORE Review
+  // Reservation + purchase = ONE flow: the purchase is its OWN wizard step
+  // (between the table and the guest data) and is picked INSIDE the wizard.
   // ==========================================================
 
-  describe("wizard step order (R6.5)", () => {
+  describe("wizard step order", () => {
     it("places the purchase step between the table and the guest data", () => {
       assert.deepEqual(RESERVATION_WIZARD_STEPS, [
         "branch",
@@ -208,9 +197,7 @@ describe("reservation-flow (customer reservation UI pure helpers)", () => {
       assert.equal(RESERVATION_STEP_LABELS.purchase, "Pembelian");
     });
 
-    it("never routes the table step straight to the guest/review step", () => {
-      // A guest without a purchase must land on the purchase step — never
-      // skip ahead to Data Tamu / Review where the gate used to appear.
+    it("routes the table step to the in-wizard purchase step (never away)", () => {
       assert.equal(nextWizardStep("table"), "purchase");
       assert.notEqual(nextWizardStep("table"), "guest");
       assert.notEqual(nextWizardStep("table"), "review");
@@ -231,100 +218,135 @@ describe("reservation-flow (customer reservation UI pure helpers)", () => {
     });
   });
 
-  describe("purchase step view (early UX feedback)", () => {
-    it("eligible → 'Pembelian ditemukan' and may continue, with no CTA", () => {
-      const view = purchaseStepView("eligible");
-      assert.equal(view.tone, "eligible");
-      assert.equal(view.title, "Pembelian ditemukan");
-      assert.equal(view.message, PURCHASE_FOUND_MESSAGE);
+  describe("purchase step copy", () => {
+    it("titles the step 'Pembelian untuk Reservasi' and requires >=1 product", () => {
+      assert.equal(PURCHASE_STEP_TITLE, "Pembelian untuk Reservasi");
+      assert.ok(PURCHASE_EMPTY_MESSAGE.toLowerCase().includes("minimal 1"));
+    });
+
+    it("exposes DINE-IN payment method labels for the EXISTING methods", () => {
       assert.equal(
-        view.message,
-        "Anda memenuhi syarat untuk melakukan reservasi."
+        RESERVATION_PAYMENT_METHOD_LABELS.QRIS,
+        "QRIS (bayar sekarang)"
       );
-      assert.equal(view.canContinue, true);
-      assert.equal(view.ctaLabel, null);
-      assert.equal(view.ctaHref, null);
+      assert.equal(RESERVATION_PAYMENT_METHOD_LABELS.KASIR, "Bayar di Kasir");
     });
 
-    it("ineligible → required card + 'Pesan Menu Dulu' pointing at the menu flow", () => {
-      const view = purchaseStepView("ineligible");
-      assert.equal(view.tone, "required");
-      assert.equal(view.title, PURCHASE_REQUIRED_TITLE);
-      assert.equal(view.title, "Pembelian Diperlukan");
-      assert.equal(view.message, PURCHASE_REQUIRED_MESSAGE);
-      assert.equal(view.ctaLabel, PURCHASE_REQUIRED_CTA);
-      assert.equal(view.ctaLabel, "Pesan Menu Dulu");
-      assert.equal(view.ctaHref, PURCHASE_CTA_HREF);
-      assert.equal(view.ctaHref, "/menu");
-      assert.equal(view.canContinue, false);
-    });
-
-    it("idle → asks the guest for the WhatsApp number used when ordering", () => {
-      const view = purchaseStepView("idle");
-      assert.equal(view.tone, "idle");
-      assert.equal(view.canContinue, false);
-      assert.equal(view.ctaLabel, null);
-      assert.equal(view.message, PURCHASE_IDLE_MESSAGE);
-    });
-
-    it("checking/error never allow advancing", () => {
-      assert.equal(purchaseStepView("checking").canContinue, false);
-      const errorView = purchaseStepView("error");
-      assert.equal(errorView.canContinue, false);
-      assert.equal(errorView.message, PURCHASE_ERROR_MESSAGE);
+    it("labels every payment status in Indonesian", () => {
+      for (const status of [
+        "UNPAID",
+        "PENDING",
+        "PAID",
+        "FAILED",
+        "EXPIRED",
+        "REFUNDED",
+        "CANCELLED",
+      ]) {
+        assert.ok(PAYMENT_STATUS_LABELS[status], `missing label for ${status}`);
+      }
     });
   });
 
-  describe("return-to-reservation draft (minimal)", () => {
-    const draft: ReservationDraft = {
-      branchCode: "MAIN",
-      date: "2026-09-20",
-      partySize: 4,
-      selectedStart: 19 * 60,
-      selectedTableId: "tbl-1",
-      guestName: "Asep",
-      guestPhone: "081234567890",
-      notes: "dekat jendela",
-    };
-
-    it("round-trips a wizard snapshot", () => {
-      assert.deepEqual(
-        parseReservationDraft(serializeReservationDraft(draft)),
-        draft
-      );
-      assert.equal(RESERVATION_DRAFT_STORAGE_KEY, "reservation_draft");
+  describe("rupiah formatting (display only)", () => {
+    it("formats with id-ID grouping", () => {
+      assert.equal(formatRupiah(73000), "Rp73.000");
+      assert.equal(formatRupiah(0), "Rp0");
+      assert.equal(formatRupiah(1234567), "Rp1.234.567");
     });
 
-    it("rejects junk instead of breaking the wizard", () => {
-      assert.equal(parseReservationDraft(null), null);
-      assert.equal(parseReservationDraft(""), null);
-      assert.equal(parseReservationDraft("{not json"), null);
-      assert.equal(
-        parseReservationDraft(JSON.stringify({ date: "2026-09-20" })),
-        null
-      );
-      assert.equal(
-        parseReservationDraft(JSON.stringify({ branchCode: "MAIN" })),
-        null
-      );
-      assert.equal(
-        parseReservationDraft(
-          JSON.stringify({ branchCode: "MAIN", date: "2026-02-30" })
-        ),
-        null
-      );
+    it("tolerates non-finite input without crashing the preview", () => {
+      assert.equal(formatRupiah(Number.NaN), "Rp0");
+    });
+  });
+
+  describe("local reservation purchase cart (NOT the global useCart)", () => {
+    const line = (
+      overrides: Partial<ReservationPurchaseLine>
+    ): ReservationPurchaseLine => ({
+      lineId: "l1",
+      productId: "p1",
+      name: "Burger",
+      unitPrice: 35000,
+      quantity: 1,
+      selections: [],
+      addons: [],
+      ...overrides,
     });
 
-    it("carries only wizard selections — no auth/payment data", () => {
-      const raw = serializeReservationDraft(draft);
-      for (const forbidden of [
-        "customerId",
-        "orderId",
-        "paymentStatus",
-        "token",
-        "password",
-      ]) {
-        assert.equal(raw.includes(forbidden), false);
+    it("computes a line total, subtotal and count from DISPLAY prices", () => {
+      const a = line({ lineId: "a", unitPrice: 35000, quantity: 1 });
+      const b = line({ lineId: "b", unitPrice: 10000, quantity: 2 });
+      assert.equal(reservationPurchaseLineTotal(a), 35000);
+      assert.equal(reservationPurchaseLineTotal(b), 20000);
+      assert.equal(reservationPurchaseSubtotal([a, b]), 55000);
+      assert.equal(reservationPurchaseCount([a, b]), 3);
+      assert.equal(reservationPurchaseSubtotal([]), 0);
+    });
+
+    it("summarises variant/addon choices for the review line", () => {
+      const withChoices = line({
+        selections: [
+          {
+            groupId: "g1",
+            groupName: "Level",
+            optionId: "o1",
+            optionName: "Level 2",
+            priceAdjustment: 0,
+          },
+        ],
+        addons: [{ addonId: "a1", name: "Keju", price: 5000, quantity: 2 }],
+      });
+      assert.equal(
+        reservationPurchaseLineNotes(withChoices),
+        "Level 2, Keju ×2"
+      );
+      assert.equal(reservationPurchaseLineNotes(line({})), "");
+    });
+
+    it("builds the server payload with ids + quantities ONLY (never authoritative prices)", () => {
+      const items = toReservationOrderItems([
+        line({
+          productId: "p1",
+          quantity: 2,
+          selections: [
+            {
+              groupId: "g1",
+              groupName: "Level",
+              optionId: "o1",
+              optionName: "Level 2",
+              priceAdjustment: 2000,
+            },
+          ],
+          addons: [{ addonId: "a1", name: "Keju", price: 5000, quantity: 1 }],
+          notes: "tanpa sambal",
+        }),
+        line({ lineId: "l2", productId: "p2" }),
+      ]);
+
+      assert.equal(items.length, 2);
+      assert.deepEqual(items[0], {
+        productId: "p1",
+        quantity: 2,
+        selections: [
+          {
+            groupId: "g1",
+            groupName: "Level",
+            optionId: "o1",
+            optionName: "Level 2",
+            priceAdjustment: 2000,
+          },
+        ],
+        addons: [{ addonId: "a1", name: "Keju", price: 5000, quantity: 1 }],
+        notes: "tanpa sambal",
+      });
+      // A plain line omits every optional key entirely.
+      assert.deepEqual(items[1], { productId: "p2", quantity: 1 });
+      // No client-authoritative field or internal identity is ever sent.
+      for (const item of items) {
+        assert.equal("unitPrice" in item, false);
+        assert.equal("totalPrice" in item, false);
+        assert.equal("restaurantId" in item, false);
+        assert.equal("lineId" in item, false);
       }
     });
   });

@@ -11,7 +11,7 @@ import { normalizePhone } from "@/lib/phone";
 import { addDaysToDateOnly, dateOnlyFromDb } from "./reservation.slots";
 import {
   cleanupPurchases,
-  seedQualifyingPurchase,
+  seedReservationProduct,
 } from "./reservation.purchase.fixtures";
 
 // ============================================================
@@ -78,6 +78,11 @@ let emailC = "";
 let tokenA = "";
 let tokenB = "";
 let tokenC = "";
+
+// A public reservation CARRIES its own purchase (`items` is REQUIRED), so the
+// HTTP bodies below ship one line of a shared product seeded per branch.
+let pubItemMain: { productId: string; quantity: number };
+let pubItemAlt: { productId: string; quantity: number };
 
 // ---- dev server ----------------
 let server: ChildProcess | null = null;
@@ -242,6 +247,7 @@ function publicCreate(overrides: Record<string, unknown> = {}) {
     partySize: 2,
     guestName: "Tes Publik",
     guestPhone: apiPhone(),
+    items: [pubItemMain],
     ...overrides,
   };
 }
@@ -316,6 +322,13 @@ async function seedFixtures(): Promise<void> {
   tAlt = t2.id;
   tMaint = t3.id;
 
+  pubItemMain = (
+    await seedReservationProduct(restA, { branchId: MAIN, price: 25000, stock: 9999 })
+  ).item;
+  pubItemAlt = (
+    await seedReservationProduct(restA, { branchId: ALT, price: 25000, stock: 9999 })
+  ).item;
+
   // adminA — restA, ADMIN, all-branch (no UserBranch rows)
   emailA = `${tag}-a@r3.test`;
   const ua = await prisma.user.create({
@@ -368,8 +381,6 @@ after(async () => {
 
 test("P1 public create — happy path returns a safe public DTO", async () => {
   const phone = apiPhone();
-  // Minimum-purchase rule: the guest needs a qualifying purchase.
-  await seedQualifyingPurchase(restA, { phone });
   const res = await api("/api/public/reservations", {
     method: "POST",
     body: publicCreate({ tableId: tMain, guestPhone: phone }),
@@ -392,7 +403,6 @@ test("P1 public create — happy path returns a safe public DTO", async () => {
 test("P2 public create — duplicate slot on same capacity-2 table → 409", async () => {
   // Dedicated day so the first booking is the one that fills the table.
   const firstPhone = apiPhone();
-  await seedQualifyingPurchase(restA, { phone: firstPhone });
   const first = await api("/api/public/reservations", {
     method: "POST",
     body: publicCreate({
@@ -404,10 +414,9 @@ test("P2 public create — duplicate slot on same capacity-2 table → 409", asy
   });
   assert.equal(first.status, 201, JSON.stringify(first.body));
 
-  // The second guest also has a valid purchase so it reaches the TABLE gate
-  // (409 TABLE_NOT_AVAILABLE) rather than stopping at the purchase gate.
+  // The second guest also carries a valid purchase so it reaches the TABLE
+  // gate (409 TABLE_NOT_AVAILABLE).
   const secondPhone = apiPhone();
-  await seedQualifyingPurchase(restA, { phone: secondPhone });
   const second = await api("/api/public/reservations", {
     method: "POST",
     body: publicCreate({
@@ -511,10 +520,15 @@ test("P7 public create — malformed JSON → generic 500 (no stack leak)", asyn
 
 test("P8 public lookup — code + correct phone → 200 with safe DTO", async () => {
   const phone0 = apiPhone();
-  await seedQualifyingPurchase(restA, { phone: phone0 });
   const created = await api("/api/public/reservations", {
     method: "POST",
-    body: publicCreate({ tableId: tAlt, branchCode: "QA-ALT", guestPhone: phone0, guestName: "Cari Saya" }),
+    body: publicCreate({
+      tableId: tAlt,
+      branchCode: "QA-ALT",
+      guestPhone: phone0,
+      guestName: "Cari Saya",
+      items: [pubItemAlt],
+    }),
   });
   assert.equal(created.status, 201, JSON.stringify(created.body));
   const { code } = created.body?.data as { code: string };
@@ -534,7 +548,6 @@ test("P9 public lookup — wrong phone → 404 (phone must match stored)", async
   // Non-overlapping slot (20:00 just touches P8's 18:00–20:00): under the
   // binary reservation rule an overlapping slot on the same table is rejected.
   const p9Phone = apiPhone();
-  await seedQualifyingPurchase(restA, { phone: p9Phone });
   const created = await api("/api/public/reservations", {
     method: "POST",
     body: publicCreate({
@@ -542,6 +555,7 @@ test("P9 public lookup — wrong phone → 404 (phone must match stored)", async
       branchCode: "QA-ALT",
       startMinutes: 20 * 60,
       guestPhone: p9Phone,
+      items: [pubItemAlt],
     }),
   });
   assert.equal(created.status, 201, JSON.stringify(created.body));
@@ -655,7 +669,6 @@ test("P15 public — a MAINTENANCE table NO LONGER blocks availability or create
   assert.equal(probe?.available, true, "maintenance no longer blocks reservation");
 
   const maintPhone = apiPhone();
-  await seedQualifyingPurchase(restA, { phone: maintPhone });
   const res = await api("/api/public/reservations", {
     method: "POST",
     body: publicCreate({ tableId: tMaint, guestPhone: maintPhone }),
@@ -913,12 +926,9 @@ test("A15 admin cancel — PENDING → CANCELLED with reason", async () => {
 // ============================================================
 
 test("A16 concurrent identical public creates → exactly one 201, rest 409", async () => {
-  // Every racer must own a qualifying purchase so they all reach the table
-  // gate; the winner is decided by the FOR UPDATE row lock, not the gate.
+  // Every racer ships a valid purchase so they all reach the TABLE gate; the
+  // winner is decided by the FOR UPDATE row lock.
   const phones = Array.from({ length: 5 }, () => apiPhone());
-  await Promise.all(
-    phones.map((phone) => seedQualifyingPurchase(restA, { phone }))
-  );
   const requests = phones.map((phone) =>
     api("/api/public/reservations", {
       method: "POST",

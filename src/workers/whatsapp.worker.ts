@@ -28,6 +28,8 @@ interface WhatsAppSendJobData {
 interface WhatsAppConnectJobData {
   restaurantId: string;
   type: "connect";
+  /** R7.2 Phase 1 — true = ask for a fresh socket (existing forceReconnect()). */
+  force?: boolean;
 }
 
 interface WhatsAppDisconnectJobData {
@@ -87,7 +89,15 @@ const whatsappWorker = new Worker(
         break;
       }
       case "connect": {
-        await whatsappSessionManager.connect(restaurantId);
+        // R7.2 Phase 1 — this worker is the ONLY Baileys socket owner. A
+        // plain connect() is idempotent; force=true reuses the existing
+        // forceReconnect() for the admin "reconnect" command.
+        const { force } = job.data as WhatsAppConnectJobData;
+        if (force) {
+          await whatsappSessionManager.forceReconnect(restaurantId);
+        } else {
+          await whatsappSessionManager.connect(restaurantId);
+        }
         break;
       }
       case "disconnect": {
@@ -146,5 +156,40 @@ process.on("SIGINT", gracefulShutdown);
 process.on("SIGTERM", gracefulShutdown);
 
 console.log("[WhatsApp Worker] Starting worker...");
+
+// ============================================================
+// R7.2 Phase 1 — SESSION RESTORE (worker is the sole Baileys owner)
+//
+// The worker owns the ONLY Baileys socket, so it is also the only process that
+// may restore persisted sessions. This wires the EXISTING `restoreSessions()`
+// to worker boot using the same lazy dynamic import the job handler already
+// uses (no new infrastructure).
+//
+// With no valid credentials it restores 0 sessions — that is the normal,
+// expected outcome: no dummy credentials are created, nothing is paired and no
+// QR is requested here.
+// ============================================================
+
+void (async () => {
+  try {
+    const { whatsappSessionManager } = await import(
+      "@/services/whatsapp/session-manager"
+    );
+    console.log(
+      "[WhatsApp Worker] Restoring persisted WhatsApp sessions..."
+    );
+    await whatsappSessionManager.restoreSessions();
+    console.log(
+      "[WhatsApp Worker] Session restore finished"
+    );
+  } catch (error) {
+    // Never crash the queue consumer because of a session-restore problem;
+    // restoreSessions() already swallows per-session errors internally.
+    console.error(
+      "[WhatsApp Worker] Session restore failed:",
+      error instanceof Error ? error.message : error
+    );
+  }
+})();
 
 export { whatsappWorker };

@@ -11,7 +11,7 @@ import {
 import { addDaysToDateOnly, type ReservationNow } from "./reservation.slots";
 import {
   cleanupPurchases,
-  seedQualifyingPurchase,
+  seedReservationProduct,
 } from "./reservation.purchase.fixtures";
 
 // ============================================================
@@ -72,6 +72,9 @@ interface LinkOpts {
   reservationDate?: string;
 }
 
+/** One orderable product per restaurant — every public booking carries items. */
+const publicItems = new Map<string, { productId: string; quantity: number }>();
+
 async function futureBooking(
   restaurantId: string,
   branchCode: string,
@@ -79,9 +82,6 @@ async function futureBooking(
 ) {
   const customerId = opts.customerId ?? null;
   const guestPhone = incrementingPhone();
-  // Minimum-purchase rule: the public flow requires a qualifying purchase for
-  // the acting identity (session customer when linked, else the guest phone).
-  await seedQualifyingPurchase(restaurantId, { customerId, phone: guestPhone });
   return reservationService.createPublicReservation(
     restaurantId,
     {
@@ -93,6 +93,7 @@ async function futureBooking(
       guestName: opts.guestName ?? "Tamu R6",
       guestPhone,
       tableId: opts.tableId ?? null,
+      items: [publicItems.get(restaurantId)!],
     },
     { now: NOW, customerId }
   );
@@ -188,6 +189,27 @@ before(async () => {
   customerB = cB.id;
   customerForeign = cF.id;
   customerInactive = cZ.id;
+
+  publicItems.set(
+    restA,
+    (
+      await seedReservationProduct(restA, {
+        branchId: branchA,
+        price: 25000,
+        stock: 9999,
+      })
+    ).item
+  );
+  publicItems.set(
+    restB,
+    (
+      await seedReservationProduct(restB, {
+        branchId: branchB,
+        price: 25000,
+        stock: 9999,
+      })
+    ).item
+  );
 });
 
 after(async () => {

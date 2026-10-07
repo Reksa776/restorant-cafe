@@ -6,14 +6,14 @@ import {
   RESERVATION_STATUS_LABELS,
 } from "@/components/admin/reservations/reservation-format";
 import type { ReservationStatusValue } from "@/services/reservation/reservation.types";
-import { queueWhatsAppReservation } from "@/services/whatsapp/whatsapp.queue";
+import { sendWhatsAppNotification } from "@/services/whatsapp/whatsapp-notifier";
 
 // ============================================================
 // PHASE R7 — RESERVATION → WHATSAPP notification (best-effort).
 //
-// This is the ONLY reservation→WhatsApp seam. It reuses the EXISTING
-// BullMQ/Baileys pipeline (queueWhatsAppReservation → whatsapp queue →
-// whatsapp worker → session-manager → Baileys provider) — no engine is
+// This is the ONLY reservation→WhatsApp seam. It reuses the EXISTING Baileys
+// pipeline (sendWhatsAppNotification → session-manager → Baileys provider,
+// all inside the WEB process — no queue, no worker) — no engine is
 // duplicated. dispatchReservationWhatsApp is called by the reservation
 // service AFTER a successful server-side create/transition, so the
 // reservation itself is ALWAYS authoritative: a WhatsApp failure can never
@@ -49,10 +49,10 @@ export interface ReservationWhatsAppView {
 
 /**
  * Test seam (failure-isolation tests only). Production never overrides it;
- * swap it in tests to force an enqueue failure without touching the engine.
+ * swap it in tests to force a send failure without touching the engine.
  */
 export const reservationWhatsAppGateway = {
-  enqueue: queueWhatsAppReservation,
+  send: sendWhatsAppNotification,
 };
 
 function detailLine(lines: string, label: string, value: string): string {
@@ -176,9 +176,9 @@ export function resolveReservationWhatsAppTarget(
 /**
  * Best-effort dispatch for one reservation lifecycle event. Never throws.
  * Order of work: resolve the restaurant name (server lookup) → resolve the
- * target phone → build the message → enqueue onto the existing WhatsApp
- * queue. Any failure is logged and reported as `false` so the caller can
- * continue treating the reservation as authoritative.
+ * target phone → build the message → send through the existing web-owned
+ * session manager. Any failure is logged and reported as `false` so the
+ * caller can continue treating the reservation as authoritative.
  */
 export async function dispatchReservationWhatsApp(
   view: ReservationWhatsAppView,
@@ -202,18 +202,14 @@ export async function dispatchReservationWhatsApp(
       restaurantName
     );
 
-    await reservationWhatsAppGateway.enqueue(
+    return await reservationWhatsAppGateway.send(
       view.restaurantId,
-      view.id,
-      status,
       target,
       message
     );
-
-    return true;
   } catch (error) {
     console.error(
-      `[Reservation] Failed to queue WhatsApp notification for reservation ${view.id} (${status}):`,
+      `[Reservation] Failed to send WhatsApp notification for reservation ${view.id} (${status}):`,
       error
     );
     return false;

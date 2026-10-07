@@ -36,6 +36,8 @@ import {
   type ReservationStatusValue,
 } from "./reservation.types";
 import { dispatchReservationWhatsApp } from "./reservation-whatsapp";
+import { orderService } from "@/services/order/order.service";
+import type { ReservationOrderItemInput } from "./reservation.types";
 
 // ============================================================
 // PHASE R2 — RESERVATION SERVICE (single source of truth).
@@ -108,15 +110,6 @@ function dbDateFromDateOnly(dateOnly: string): Date {
 // consulted: it is the order/QR lifecycle flag, unrelated to availability.
 const HOLDING: ReservationStatus[] = [...RESERVATION_HOLDING_STATUSES];
 
-// ============================================================
-// Minimum-purchase gate (customer reservation only)
-// ============================================================
-
-/** 409 code + copy — the customer/guest has no qualifying purchase. */
-const PURCHASE_REQUIRED_CODE = "PURCHASE_REQUIRED";
-const PURCHASE_REQUIRED_MESSAGE =
-  "Reservasi hanya tersedia setelah Anda menyelesaikan minimal 1 pembelian.";
-
 /**
  * Legal status transitions.
  *
@@ -183,6 +176,32 @@ const UNIQUE_RETRY_ATTEMPTS = 5;
 // a single batched lookup instead of Prisma `include`.
 // ============================================================
 
+/**
+ * Purchase summary attached to a reservation view (the reservation's OWN
+ * Order). Resolved by a batched lookup on the scalar `Reservation.orderId`
+ * (the model declares no Prisma relations) — no nested relation traversal.
+ */
+export interface ReservationOrderSummary {
+  orderNumber: string;
+  status: string;
+  paymentStatus: string;
+  /** Latest payment intent method (KASIR / QRIS), or null before an intent. */
+  paymentMethod: string | null;
+  orderType: string;
+  subtotal: number;
+  discount: number;
+  tax: number;
+  serviceCharge: number;
+  grandTotal: number;
+  items: Array<{
+    name: string;
+    quantity: number;
+    unitPrice: number;
+    totalPrice: number;
+    customizations: Prisma.JsonValue;
+  }>;
+}
+
 async function reservationViews(rows: Reservation[]) {
   const tableIds = [
     ...new Set(
@@ -195,8 +214,13 @@ async function reservationViews(rows: Reservation[]) {
       rows.map((r) => r.customerId).filter((id): id is string => Boolean(id))
     ),
   ];
+  const orderIds = [
+    ...new Set(
+      rows.map((r) => r.orderId).filter((id): id is string => Boolean(id))
+    ),
+  ];
 
-  const [tables, branches, customers] = await Promise.all([
+  const [tables, branches, customers, orders] = await Promise.all([
     tableIds.length
       ? prisma.table.findMany({
           where: { id: { in: tableIds } },
@@ -215,11 +239,66 @@ async function reservationViews(rows: Reservation[]) {
           select: { id: true, name: true, phone: true },
         })
       : Promise.resolve([]),
+    orderIds.length
+      ? prisma.order.findMany({
+          where: { id: { in: orderIds } },
+          select: {
+            id: true,
+            orderNumber: true,
+            status: true,
+            paymentStatus: true,
+            orderType: true,
+            subtotal: true,
+            discount: true,
+            tax: true,
+            serviceCharge: true,
+            grandTotal: true,
+            items: {
+              select: {
+                quantity: true,
+                unitPrice: true,
+                totalPrice: true,
+                customizations: true,
+                product: { select: { name: true } },
+              },
+            },
+            payments: {
+              select: { method: true, status: true },
+              orderBy: { createdAt: "desc" },
+              take: 1,
+            },
+          },
+        })
+      : Promise.resolve([]),
   ]);
 
   const tableMap = new Map(tables.map((t) => [t.id, t]));
   const branchMap = new Map(branches.map((b) => [b.id, b]));
   const customerMap = new Map(customers.map((c) => [c.id, c]));
+  const orderMap = new Map(
+    orders.map((o) => [
+      o.id,
+      {
+        orderNumber: o.orderNumber,
+        status: o.status,
+        paymentStatus: o.paymentStatus,
+        paymentMethod: o.payments[0]?.method ?? null,
+        orderType: o.orderType,
+        subtotal: Number(o.subtotal),
+        discount: Number(o.discount),
+        tax: Number(o.tax),
+        serviceCharge: Number(o.serviceCharge),
+        grandTotal: Number(o.grandTotal),
+        items: o.items.map((item) => ({
+          name: item.product?.name ?? "Produk",
+          quantity: item.quantity,
+          unitPrice: Number(item.unitPrice),
+          totalPrice: Number(item.totalPrice),
+          customizations: item.customizations,
+        })),
+      } satisfies ReservationOrderSummary,
+    ])
+  );
 
   return rows.map((r) => ({
     ...r,
@@ -227,6 +306,7 @@ async function reservationViews(rows: Reservation[]) {
     table: r.tableId ? (tableMap.get(r.tableId) ?? null) : null,
     branch: branchMap.get(r.branchId) ?? null,
     customer: r.customerId ? (customerMap.get(r.customerId) ?? null) : null,
+    order: r.orderId ? (orderMap.get(r.orderId) ?? null) : null,
   }));
 }
 
@@ -249,11 +329,14 @@ interface CreateReservationData {
   notes?: string | null;
   source: "PUBLIC" | "ADMIN";
   /**
-   * When true, the create kernel enforces the minimum-purchase rule for the
-   * acting customer/guest (PUBLIC entry point only). Admin/kasir bookings
-   * (walk-in, phone booking) are staff-created and deliberately NOT gated.
+   * Public flow only: the purchase that BELONGS to this reservation. When
+   * present an Order (+ OrderItems, + a KASIR Payment) is created in the SAME
+   * transaction. Admin/kasir bookings carry none (staff walk-ins stay exactly
+   * as before — no purchase is forced on them).
    */
-  requirePurchase?: boolean;
+  items?: ReservationOrderItemInput[];
+  /** DINE-IN payment intent recorded with the order (public flow). */
+  paymentMethod?: "QRIS" | "KASIR";
 }
 
 // ============================================================
@@ -492,105 +575,55 @@ export class ReservationService {
     }));
   }
 
+  // ============================================================
+  // Reservation ↔ Order (ONE purchase flow)
+  //
+  // A public reservation CARRIES its own purchase. The reservation, its Order
+  // (OrderItem) and its Payment are created as ONE atomic unit through the
+  // EXISTING order + payment engines — no new cart/order/payment engine. The
+  // previous R6 rule ("must already have a historical PAID order") is RETIRED:
+  // a first-time guest with no history can reserve AND buy in one flow.
+  // ============================================================
+
   /**
-   * Minimum-purchase gate (CUSTOMER reservation only).
+   * Create the reservation's Order through the existing order engine, INSIDE
+   * the reservation transaction. Every price/discount/tax/total and every
+   * product/variant/addon/required-option/stock decision is recomputed
+   * server-side by `orderService` from the database — the client only supplies
+   * ids, quantities and choices (never prices).
    *
-   * A reservation is allowed only when the acting customer/guest has at least
-   * one QUALIFYING order at THIS restaurant:
-   *   - `paymentStatus = PAID`
-   *   - `status != CANCELLED`
-   *   - at least one OrderItem
-   * The branch may differ (purchase scope is the restaurant, not the branch).
-   *
-   * Ownership is resolved SERVER-SIDE and never from client input:
-   *   - logged-in customer → the verified session `customerId`;
-   *   - guest → the `Customer` row matched by the normalized `guestPhone` —
-   *     the SAME mechanism the guest order flow uses to find-or-create the
-   *     customer, and the guest self-lookup uses to prove ownership.
-   * `customerId`/`orderId`/`restaurantId`/`paymentStatus` from the client are
-   * never trusted.
-   *
-   * Runs INSIDE the reservation transaction (server-authoritative recheck)
-   * and throws 409 `PURCHASE_REQUIRED` when nothing qualifies.
-   *
-   * The RULE lives in `hasQualifyingPurchase` below and is shared with the
-   * read-only UX probe (`checkPurchaseEligibility`) — one source of truth, so
-   * the early UI feedback can never drift from the write gate.
-   *
-   * KNOWN GAP (reported): a guest phone number is not OTP-verified, so a guest
-   * who knows another customer's phone could satisfy the gate with that
-   * customer's orders. This is the strongest ownership signal the existing
-   * guest flow provides; no new auth is introduced.
+   * `reservationMode` keeps the order from touching the table lifecycle
+   * (a booking is not "seated" — see `CustomerOrderEngineOptions`).
    */
-  private async assertQualifyingPurchase(
+  private async createReservationOrder(
     tx: Prisma.TransactionClient,
     restaurantId: string,
-    data: Pick<CreateReservationData, "customerId" | "guestPhone">
-  ): Promise<void> {
-    if (!(await this.hasQualifyingPurchase(tx, restaurantId, data))) {
-      throw new ConflictError(PURCHASE_REQUIRED_MESSAGE, PURCHASE_REQUIRED_CODE);
+    data: CreateReservationData,
+    sessionCustomerId: string | null
+  ) {
+    if (!data.items || data.items.length === 0) {
+      throw new ValidationError("Minimal 1 produk harus dipilih");
     }
-  }
 
-  /**
-   * The minimum-purchase RULE, shared by the write gate and the read-only
-   * probe: resolve the acting customer SERVER-SIDE (session `customerId`, else
-   * the `Customer` matched by the normalized `guestPhone`) and report whether
-   * at least one QUALIFYING order exists at THIS restaurant (PAID, not
-   * CANCELLED, >= 1 item; any branch). Accepts a transaction client or the
-   * base client — a probe never opens a write transaction.
-   */
-  private async hasQualifyingPurchase(
-    client: Prisma.TransactionClient,
-    restaurantId: string,
-    data: Pick<CreateReservationData, "customerId" | "guestPhone">
-  ): Promise<boolean> {
-    let customerId = data.customerId ?? null;
-    if (!customerId) {
-      const customer = await client.customer.findFirst({
-        where: { restaurantId, phone: data.guestPhone },
-        select: { id: true },
-      });
-      customerId = customer?.id ?? null;
-    }
-    if (!customerId) return false;
-
-    const qualifying = await client.order.findFirst({
-      where: {
-        restaurantId,
-        customerId,
-        paymentStatus: "PAID",
-        status: { not: "CANCELLED" },
-        items: { some: {} },
+    return orderService.createCustomerOrderInTransaction(
+      tx,
+      {
+        customerName: data.guestName,
+        // The follow-up phone doubles as the order/customer phone (decision:
+        // ONE input, no new field, no migration).
+        customerPhone: data.guestPhone,
+        orderType: "DINE_IN",
+        tableId: data.tableId ?? undefined,
+        visitorCount: data.partySize,
+        notes: data.notes ?? undefined,
+        items: data.items,
+        ...(data.paymentMethod ? { paymentMethod: data.paymentMethod } : {}),
       },
-      select: { id: true },
-    });
-    return Boolean(qualifying);
-  }
-
-  /**
-   * READ-ONLY purchase-eligibility probe for the customer reservation wizard
-   * (R6.5 UX early feedback). It answers the SAME question as the write gate,
-   * with the SAME server-side ownership rule, but NEVER authorizes a booking:
-   * `POST /public/reservations` still re-runs `assertQualifyingPurchase` inside
-   * its transaction and still answers 409 `PURCHASE_REQUIRED`, so a stale or
-   * spoofed client result cannot bypass anything (race-safe).
-   *
-   * `customerId` comes from the verified customer SESSION (route-provided);
-   * the guest path only passes the phone the caller typed. No client-supplied
-   * customerId/orderId/paymentStatus is ever used.
-   */
-  async checkPurchaseEligibility(
-    restaurantId: string,
-    input: { customerId?: string | null; guestPhone?: string | null }
-  ): Promise<{ eligible: boolean }> {
-    const eligible = await this.hasQualifyingPurchase(prisma, restaurantId, {
-      customerId: input.customerId ?? null,
-      // Canonicalize at the boundary (the write path receives the canonical
-      // form from the Zod schema; this probe must match the same form).
-      guestPhone: input.guestPhone ? (normalizePhone(input.guestPhone) ?? "") : "",
-    });
-    return { eligible };
+      restaurantId,
+      sessionCustomerId ?? undefined,
+      data.branchId,
+      { reservationMode: true }
+    );
   }
 
   // ============================================================
@@ -639,8 +672,9 @@ export class ReservationService {
         customerId: opts?.customerId ?? null,
         notes: parsed.data.notes ?? null,
         source: parsed.data.source,
-        // PUBLIC flow only: enforce the minimum-purchase rule.
-        requirePurchase: true,
+        // PUBLIC flow: the reservation carries its own purchase.
+        items: parsed.data.items,
+        paymentMethod: parsed.data.paymentMethod,
       },
       now
     );
@@ -776,13 +810,6 @@ export class ReservationService {
           }
         }
 
-        // Minimum-purchase gate (customer reservation only) — server
-        // authoritative, inside this transaction. Reuses the existing Order
-        // engine (paid + not cancelled + >=1 item); no new purchase engine.
-        if (data.requirePurchase) {
-          await this.assertQualifyingPurchase(tx, restaurantId, data);
-        }
-
         // Table capacity gate — SELECT ... FOR UPDATE under the branch lock.
         if (data.tableId) {
           const tableRows = await tx.$queryRaw<
@@ -885,6 +912,24 @@ export class ReservationService {
           );
         }
 
+        // The reservation CARRIES its own purchase (public flow): Order +
+        // OrderItems (+ KASIR Payment) are created through the EXISTING order
+        // engine IN THIS SAME transaction, so anything that fails here rolls
+        // the whole purchase back — a failed reservation can never leave an
+        // orphan order. Admin/kasir bookings carry no items and stay
+        // purchase-free (their behaviour is unchanged).
+        let orderResult: Awaited<
+          ReturnType<ReservationService["createReservationOrder"]>
+        > | null = null;
+        if (data.items && data.items.length > 0) {
+          orderResult = await this.createReservationOrder(
+            tx,
+            restaurantId,
+            data,
+            data.customerId ?? null
+          );
+        }
+
         const created = await tx.reservation.create({
           data: {
             restaurantId,
@@ -901,20 +946,24 @@ export class ReservationService {
             status: "PENDING",
             notes: data.notes ?? null,
             source: data.source,
+            // Link the reservation to its own order (existing scalar field —
+            // no relation, no migration).
+            orderId: orderResult ? orderResult.order.id : null,
           },
         });
-        return created;
+        return { reservation: created, orderResult };
       });
 
-    let reservation: Awaited<ReturnType<typeof createInTx>> | null = null;
+    let committed: Awaited<ReturnType<typeof createInTx>> | null = null;
     for (let attempt = 0; attempt < UNIQUE_RETRY_ATTEMPTS; attempt++) {
       try {
-        reservation = await createInTx(generateReservationCode());
+        committed = await createInTx(generateReservationCode());
         break;
       } catch (error) {
         // Only retry a collision on the reservation code itself — a fresh
         // code is the only thing that can fix it. Everything else (capacity,
-        // duplicate, invalid window, ownership) must propagate immediately.
+        // duplicate, invalid window, ownership, product/price validation) must
+        // propagate immediately.
         const isCodeCollision =
           isUniqueViolation(error) &&
           reservationCodeTarget(error).includes("code");
@@ -923,11 +972,21 @@ export class ReservationService {
         }
       }
     }
-    if (!reservation) {
+    if (!committed) {
       throw new Error("Failed to create reservation after retries");
     }
 
-    const view = (await reservationViews([reservation]))[0];
+    const view = (await reservationViews([committed.reservation]))[0];
+
+    // Reservation ↔ Order: the order (+ items + KASIR payment) and the
+    // reservation committed together, so announce the purchase's realtime
+    // effects NOW — never before commit.
+    if (committed.orderResult) {
+      orderService.emitCustomerOrderEffects(
+        restaurantId,
+        committed.orderResult.effects
+      );
+    }
 
     // R7 — reservation is persisted and resolved; dispatch the created
     // (PENDING) WhatsApp notification best-effort.
@@ -1234,6 +1293,7 @@ export class ReservationService {
       select: {
         id: true,
         status: true,
+        orderId: true,
         confirmedAt: true,
         seatedAt: true,
         completedAt: true,
@@ -1281,6 +1341,20 @@ export class ReservationService {
       if (result.count === 0) {
         throw new ConflictError(
           "Status reservasi sudah berubah — silakan muat ulang"
+        );
+      }
+
+      // Reservation ↔ Order: cancelling a reservation must NOT leave an orphan
+      // order behind. The UNPAID linked order is cancelled in THIS transaction
+      // (minimal, reusing the existing Order model — no new refund engine); a
+      // PAID order is deliberately left untouched so the EXISTING refund /
+      // cancellation workflow remains the source of truth.
+      if (target === "CANCELLED" && current.orderId) {
+        await orderService.cancelUnpaidLinkedOrderInTransaction(
+          tx,
+          current.orderId,
+          restaurantId,
+          cancelReason
         );
       }
 

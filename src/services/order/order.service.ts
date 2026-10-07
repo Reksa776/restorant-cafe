@@ -106,6 +106,78 @@ function buildOrderReadyMessage(
 // Order Service
 // ============================================================
 
+// ============================================================
+// Customer-order engine contracts (reservation integration)
+// ============================================================
+
+/** The order row returned by `createCustomerOrder` (with its relations). */
+export type CreatedCustomerOrder = Prisma.OrderGetPayload<{
+  include: { customer: true; table: true; items: { include: { product: true } } };
+}>;
+
+/**
+ * Post-commit realtime side effects of creating a customer order. When the
+ * order is created INSIDE a caller-owned transaction (reservation flow) these
+ * are returned instead of emitted, so the caller can announce them only after
+ * its transaction actually commits.
+ */
+export interface CustomerOrderEffects {
+  orderId: string;
+  orderNumber: string;
+  orderType: string;
+  status: string;
+  tableId: string | null;
+  visitorCount: number | null;
+  customerId: string;
+  grandTotal: number;
+  createdCustomerId: string | null;
+  updatedCustomerId: string | null;
+  createdCustomerPhone: string | null;
+  createdCashierPaymentId: string | null;
+  /** True when this order flipped its table to OCCUPIED. */
+  tableOccupied: boolean;
+}
+
+export interface CustomerOrderResult {
+  order: CreatedCustomerOrder;
+  effects: CustomerOrderEffects;
+}
+
+/**
+ * Optional engine behaviour for customer orders.
+ *
+ * `reservationMode` marks an order created as part of a RESERVATION. The
+ * reservation — not the order — owns the table lifecycle:
+ *   - `Table.status` is NEVER flipped to OCCUPIED (a booking ≠ seated), and
+ *   - the table's operational status (MAINTENANCE) is not re-validated, because
+ *     reservation availability (R5.1) is the authority for booking.
+ * Normal checkout keeps the default (`false`) and is byte-for-byte unchanged.
+ */
+export interface CustomerOrderEngineOptions {
+  reservationMode?: boolean;
+}
+
+/** Priced line item ready to be written as an OrderItem. */
+interface PricedOrderItemInput {
+  productId: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  notes: string | null;
+  customizations: string;
+}
+
+/**
+ * Server-authoritative order context (validated + priced from the database)
+ * built once and reused across the create step / retries.
+ */
+interface CustomerOrderContext {
+  resolvedBranchId: string | null;
+  normalizedPhone: string | null;
+  orderItems: PricedOrderItemInput[];
+  subtotal: number;
+}
+
 export class OrderService {
   /**
    * Create a new order from items (admin-initiated).
@@ -514,7 +586,212 @@ export class OrderService {
     restaurantId: string,
     sessionCustomerId?: string,
     branchId?: string | null
-  ) {
+  ): Promise<CreatedCustomerOrder> {
+    const context = await this.buildCustomerOrderContext(
+      prisma,
+      input,
+      restaurantId,
+      branchId
+    );
+
+    // Retry on an order-number collision with a fresh number (bounded).
+    let result: CustomerOrderResult | null = null;
+    for (let attempt = 0; attempt < UNIQUE_RETRY_ATTEMPTS; attempt++) {
+      try {
+        result = await prisma.$transaction((tx) =>
+          this.persistCustomerOrder(
+            tx,
+            input,
+            restaurantId,
+            sessionCustomerId,
+            context
+          )
+        );
+        break;
+      } catch (error) {
+        const isCollision =
+          isUniqueViolation(error) &&
+          orderNumberTarget(error).includes("orderNumber");
+        if (!isCollision || attempt === UNIQUE_RETRY_ATTEMPTS - 1) {
+          throw error;
+        }
+      }
+    }
+    if (!result) {
+      throw new Error("Failed to create order after retries");
+    }
+
+    // Realtime AFTER the transaction above committed.
+    this.emitCustomerOrderEffects(restaurantId, result.effects);
+    return result.order;
+  }
+
+  /**
+   * Create a customer order INSIDE a caller-owned transaction (reservation
+   * integration). Validation + pricing are IDENTICAL to the public checkout
+   * (same server-authoritative rules, same engine); the caller commits or
+   * rolls back the whole unit, so a failed reservation rolls back its Order,
+   * OrderItems and Payment together — no orphan order is possible.
+   *
+   * Post-commit realtime effects are RETURNED (not emitted); the caller must
+   * call `emitCustomerOrderEffects` after its transaction commits.
+   */
+  async createCustomerOrderInTransaction(
+    tx: Prisma.TransactionClient,
+    input: CreateCustomerOrderInput,
+    restaurantId: string,
+    sessionCustomerId?: string,
+    branchId?: string | null,
+    options?: CustomerOrderEngineOptions
+  ): Promise<CustomerOrderResult> {
+    const context = await this.buildCustomerOrderContext(
+      tx,
+      input,
+      restaurantId,
+      branchId,
+      options
+    );
+    return this.persistCustomerOrder(
+      tx,
+      input,
+      restaurantId,
+      sessionCustomerId,
+      context,
+      options
+    );
+  }
+
+  /**
+   * Announce a customer order's post-commit realtime side effects. Public so
+   * the reservation flow (which owns its transaction) can emit them AFTER its
+   * own commit — never before.
+   */
+  emitCustomerOrderEffects(
+    restaurantId: string,
+    effects: CustomerOrderEffects
+  ): void {
+    if (effects.createdCustomerId) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.CUSTOMER_CREATED,
+        effects.createdCustomerId,
+        {
+          customerId: effects.createdCustomerId,
+          phone: effects.createdCustomerPhone,
+        }
+      );
+    }
+    if (effects.updatedCustomerId) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.CUSTOMER_UPDATED,
+        effects.updatedCustomerId,
+        { customerId: effects.updatedCustomerId }
+      );
+    }
+    if (effects.createdCashierPaymentId) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.PAYMENT_CREATED,
+        effects.createdCashierPaymentId,
+        {
+          paymentId: effects.createdCashierPaymentId,
+          orderId: effects.orderId,
+          orderNumber: effects.orderNumber,
+          amount: effects.grandTotal,
+          status: "UNPAID",
+          method: "KASIR",
+          provider: null,
+        }
+      );
+    }
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.ORDER_CREATED,
+      effects.orderId,
+      {
+        orderId: effects.orderId,
+        orderNumber: effects.orderNumber,
+        orderType: effects.orderType,
+        status: effects.status,
+        tableId: effects.tableId,
+        visitorCount: effects.visitorCount,
+        customerId: effects.customerId,
+        grandTotal: effects.grandTotal,
+      }
+    );
+    emitRealtime(
+      restaurantId,
+      REALTIME_EVENT_TYPES.DASHBOARD_UPDATED,
+      effects.orderId
+    );
+    if (effects.tableOccupied && effects.tableId) {
+      emitRealtime(
+        restaurantId,
+        REALTIME_EVENT_TYPES.TABLE_STATUS_CHANGED,
+        `${effects.tableId}-OCCUPIED`,
+        { tableId: effects.tableId, status: "OCCUPIED" }
+      );
+    }
+  }
+
+  /**
+   * Cancel the UNPAID order linked to a reservation that is being cancelled,
+   * INSIDE the caller-owned transaction — so cancelling a reservation can never
+   * leave an orphan order behind. Deliberately minimal and reusing the existing
+   * Order model (NO new cancellation/refund engine):
+   *   - a PAID order is NEVER touched here — the existing refund/cancellation
+   *     workflow (Refund / CancellationRequest) stays the source of truth;
+   *   - `Table.status` is never touched (reservation orders never set OCCUPIED,
+   *     so another flow may own the table).
+   * Returns true when the order was cancelled, false when nothing was done.
+   */
+  async cancelUnpaidLinkedOrderInTransaction(
+    tx: Prisma.TransactionClient,
+    orderId: string,
+    restaurantId: string,
+    notes?: string | null
+  ): Promise<boolean> {
+    const order = await tx.order.findFirst({
+      where: { id: orderId, restaurantId },
+      select: { id: true, status: true, paymentStatus: true },
+    });
+    if (!order) return false;
+    if (order.paymentStatus === "PAID") return false;
+
+    const allowed = VALID_STATUS_TRANSITIONS[order.status] || [];
+    if (!allowed.includes("CANCELLED")) return false;
+
+    // Conditional update: only from the status we just validated, so a racing
+    // order transition can never be silently overwritten.
+    const result = await tx.order.updateMany({
+      where: { id: orderId, restaurantId, status: order.status },
+      data: { status: "CANCELLED" },
+    });
+    if (result.count === 0) return false;
+
+    await tx.orderStatusHistory.create({
+      data: {
+        orderId,
+        status: "CANCELLED",
+        notes: notes ?? "Reservasi dibatalkan",
+      },
+    });
+    return true;
+  }
+
+  /**
+   * Validate + price an order entirely from the database (server-authoritative).
+   * Accepts the base client OR a transaction client so the exact same rules run
+   * for public checkout and reservation-originated orders.
+   */
+  private async buildCustomerOrderContext(
+    client: Prisma.TransactionClient,
+    input: CreateCustomerOrderInput,
+    restaurantId: string,
+    branchId?: string | null,
+    options?: CustomerOrderEngineOptions
+  ): Promise<CustomerOrderContext> {
     // The QRIS/KASIR payment intent is DINE_IN-only. TAKEAWAY/DELIVERY must
     // keep the legacy gateway flow, so a paymentMethod on those types is a
     // server-side validation error (never silently ignored).
@@ -525,7 +802,7 @@ export class OrderService {
     }
 
     // Validate restaurant exists and is active
-    const restaurant = await prisma.restaurant.findFirst({
+    const restaurant = await client.restaurant.findFirst({
       where: { id: restaurantId, isActive: true },
     });
     if (!restaurant) {
@@ -538,7 +815,7 @@ export class OrderService {
     // Validate table if provided
     let resolvedBranchId = branchId ?? null;
     if (input.tableId) {
-      const table = await prisma.table.findFirst({
+      const table = await client.table.findFirst({
         where: {
           id: input.tableId,
           restaurantId,
@@ -549,7 +826,10 @@ export class OrderService {
         throw new NotFoundError("Table not found");
       }
 
-      if (table.status === "MAINTENANCE") {
+      // Reservation availability (R5.1) is the sole authority for booking, so
+      // a reservation-originated order does not re-validate the table's
+      // operational status; normal checkout keeps the guard.
+      if (table.status === "MAINTENANCE" && !options?.reservationMode) {
         throw new ValidationError("Table is under maintenance");
       }
 
@@ -570,7 +850,7 @@ export class OrderService {
     // appear several times with different customizations (see H7).
     const productIds = input.items.map((item) => item.productId);
     const uniqueProductIds = [...new Set(productIds)];
-    const products = await prisma.product.findMany({
+    const products = await client.product.findMany({
       where: {
         id: { in: uniqueProductIds },
         restaurantId,
@@ -606,7 +886,7 @@ export class OrderService {
     // override ?? Product.price (an override of 0 is a valid free price).
     const priceOverrideByProduct = new Map<string, Prisma.Decimal | null>();
     if (resolvedBranchId) {
-      const branchProducts = await prisma.branchProduct.findMany({
+      const branchProducts = await client.branchProduct.findMany({
         where: {
           branchId: resolvedBranchId,
           productId: { in: uniqueProductIds },
@@ -640,7 +920,7 @@ export class OrderService {
           (qtyByProduct.get(item.productId) || 0) + item.quantity
         );
       }
-      const branchStockRows = await prisma.branchProduct.findMany({
+      const branchStockRows = await client.branchProduct.findMany({
         where: {
           branchId: resolvedBranchId,
           productId: { in: uniqueProductIds },
@@ -805,22 +1085,45 @@ export class OrderService {
       };
     });
 
+    // Server-authoritative pricing is complete — hand the validated context to
+    // the create step (see persistCustomerOrder).
+    return { resolvedBranchId, orderItems, subtotal, normalizedPhone };
+  }
+
+  /**
+   * Persist a validated customer order on the CALLER-PROVIDED transaction
+   * client. The public checkout opens its own transaction; the reservation
+   * flow supplies its own so Order + OrderItems + Payment + Reservation are
+   * ONE atomic unit. Returns the created order and its post-commit effects.
+   */
+  private async persistCustomerOrder(
+    tx: Prisma.TransactionClient,
+    input: CreateCustomerOrderInput,
+    restaurantId: string,
+    sessionCustomerId: string | undefined,
+    context: CustomerOrderContext,
+    options?: CustomerOrderEngineOptions
+  ): Promise<CustomerOrderResult> {
+    const { resolvedBranchId, orderItems, subtotal, normalizedPhone } =
+      context;
+
     // DINE_IN orders are tax-free and service-free: total = subtotal.
     // TAKEAWAY / DELIVERY keep the 10% tax + 5% service charge, computed on
     // the discounted subtotal when a promo is applied.
     const isDineIn = input.orderType === "DINE_IN";
 
-    // Track customer side effects to notify the admin in realtime after the
-    // transaction commits (a guest checkout creates a new Customer row).
+    // Customer side effects are collected here and RETURNED so the caller can
+    // announce them AFTER its transaction commits (a guest checkout creates a
+    // new Customer row).
     let createdCustomerId: string | null = null;
     let updatedCustomerId: string | null = null;
     let createdCustomerPhone: string | null = null;
     let createdCashierPaymentId: string | null = null;
+    let tableOccupied = false;
 
-    // Create order in transaction, retrying on an order-number collision
-    // with a fresh number (bounded — see UNIQUE_RETRY_ATTEMPTS).
-    const createInTx = (orderNumber: string) =>
-      prisma.$transaction(async (tx) => {
+    const orderNumber = generateOrderNumber();
+
+    return await (async () => {
       // Find or create customer. A promo REQUIRES the logged-in customer
       // (promos are only usable by logged-in customers) — the order is then
       // tied to that account so usage limits can be enforced per customer.
@@ -961,12 +1264,16 @@ export class OrderService {
         },
       });
 
-      // Update table status if table is assigned
-      if (input.tableId) {
+      // Update table status if table is assigned. A reservation-originated
+      // order must NEVER flip the table to OCCUPIED: a booking is not
+      // "seated" — the reservation (R5.1) owns availability and the order
+      // only references the table.
+      if (input.tableId && !options?.reservationMode) {
         await tx.table.update({
           where: { id: input.tableId },
           data: { status: "OCCUPIED" },
         });
+        tableOccupied = true;
       }
 
       // KASIR intent: record the UNPAID cashier payment atomically with the
@@ -986,84 +1293,25 @@ export class OrderService {
         createdCashierPaymentId = cashierPayment.id;
       }
 
-      return newOrder;
-    });
-
-    let order: Awaited<ReturnType<typeof createInTx>> | null = null;
-    for (let attempt = 0; attempt < UNIQUE_RETRY_ATTEMPTS; attempt++) {
-      try {
-        order = await createInTx(generateOrderNumber());
-        break;
-      } catch (error) {
-        const isCollision =
-          isUniqueViolation(error) &&
-          orderNumberTarget(error).includes("orderNumber");
-        if (!isCollision || attempt === UNIQUE_RETRY_ATTEMPTS - 1) {
-          throw error;
-        }
-      }
-    }
-    if (!order) {
-      throw new Error("Failed to create order after retries");
-    }
-
-    // Realtime (after commit): notify the admin's restaurant channel.
-    if (createdCustomerId) {
-      emitRealtime(
-        restaurantId,
-        REALTIME_EVENT_TYPES.CUSTOMER_CREATED,
-        createdCustomerId,
-        {
-          customerId: createdCustomerId,
-          phone: createdCustomerPhone,
-        }
-      );
-    }
-    if (updatedCustomerId) {
-      emitRealtime(
-        restaurantId,
-        REALTIME_EVENT_TYPES.CUSTOMER_UPDATED,
-        updatedCustomerId,
-        { customerId: updatedCustomerId }
-      );
-    }
-    if (createdCashierPaymentId) {
-      emitRealtime(
-        restaurantId,
-        REALTIME_EVENT_TYPES.PAYMENT_CREATED,
-        createdCashierPaymentId,
-        {
-          paymentId: createdCashierPaymentId,
-          orderId: order.id,
-          orderNumber: order.orderNumber,
-          amount: Number(order.grandTotal),
-          status: "UNPAID",
-          method: "KASIR",
-          provider: null,
-        }
-      );
-    }
-    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.ORDER_CREATED, order.id, {
-      orderId: order.id,
-      orderNumber: order.orderNumber,
-      orderType: order.orderType,
-      status: order.status,
-      tableId: order.tableId || null,
-      visitorCount: order.visitorCount,
-      customerId: order.customerId,
-      grandTotal: Number(order.grandTotal),
-    });
-    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.DASHBOARD_UPDATED, order.id);
-    if (order.tableId) {
-      emitRealtime(
-        restaurantId,
-        REALTIME_EVENT_TYPES.TABLE_STATUS_CHANGED,
-        `${order.tableId}-OCCUPIED`,
-        { tableId: order.tableId, status: "OCCUPIED" }
-      );
-    }
-
-    return order;
+      return {
+        order: newOrder,
+        effects: {
+          orderId: newOrder.id,
+          orderNumber: newOrder.orderNumber,
+          orderType: newOrder.orderType,
+          status: newOrder.status,
+          tableId: newOrder.tableId ?? null,
+          visitorCount: newOrder.visitorCount ?? null,
+          customerId: newOrder.customerId,
+          grandTotal: Number(newOrder.grandTotal),
+          createdCustomerId,
+          updatedCustomerId,
+          createdCustomerPhone,
+          createdCashierPaymentId,
+          tableOccupied,
+        },
+      };
+    })();
   }
 
   /**
@@ -1578,33 +1826,40 @@ export class OrderService {
             );
 
             // Lazy import to avoid circular deps
-            const { queueWhatsAppNotification } = await import(
-              "@/services/whatsapp/whatsapp.queue"
+            const { sendWhatsAppNotification } = await import(
+              "@/services/whatsapp/whatsapp-notifier"
             );
 
-            await queueWhatsAppNotification(
+            // Demo: the WEB process owns the Baileys socket, so the
+            // notification is delivered in-process (no queue, no worker).
+            const sent = await sendWhatsAppNotification(
               restaurantId,
-              order.customerId,
-              order.orderNumber,
               customerPhone,
               message
             );
 
-            // Mark as notified (idempotency)
-            await prisma.order.update({
-              where: { id },
-              data: { notifiedAt: new Date() },
-            });
+            if (sent) {
+              // Mark as notified only after the send actually succeeded
+              // (idempotency guard for the NEXT READY transition).
+              await prisma.order.update({
+                where: { id },
+                data: { notifiedAt: new Date() },
+              });
 
-            whatsappTriggered = true;
+              whatsappTriggered = true;
 
-            console.log(
-              `[Order] WhatsApp notification queued for order ${order.orderNumber}`
-            );
+              console.log(
+                `[Order] WhatsApp notification sent for order ${order.orderNumber}`
+              );
+            } else {
+              console.warn(
+                `[Order] WhatsApp notification not delivered for order ${order.orderNumber} (WhatsApp not connected)`
+              );
+            }
           } catch (error) {
             // WhatsApp failure should NOT affect order status
             console.error(
-              `[Order] Failed to queue WhatsApp notification for order ${order.orderNumber}:`,
+              `[Order] Failed to send WhatsApp notification for order ${order.orderNumber}:`,
               error
             );
           }

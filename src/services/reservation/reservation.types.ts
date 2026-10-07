@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import type { ReservationStatus } from "@prisma/client";
 import { isValidDateOnly, RESERVATION_DEFAULT_DURATION_MINUTES } from "./reservation.slots";
 import { normalizePhone } from "@/lib/phone";
+import { OrderItemInputSchema } from "@/services/order/order.types";
 
 // ============================================================
 // PHASE R1 — RESERVATION validation schemas (Zod v4).
@@ -134,6 +135,21 @@ export const CreatePublicReservationSchema = z.object({
   guestName: GuestNameSchema,
   guestPhone: GuestPhoneSchema,
   notes: NotesSchema.optional().nullable(),
+  /**
+   * The purchase that BELONGS to this reservation (reservation = booking +
+   * order + payment, one flow). REQUIRED and identical in shape to the public
+   * order-item input — prices/discount/tax/total are recomputed server-side by
+   * the EXISTING order engine; the client only sends ids + quantity + choices.
+   */
+  items: z
+    .array(OrderItemInputSchema)
+    .min(1, "Minimal 1 produk harus dipilih"),
+  /**
+   * DINE-IN payment intent recorded with the order ("KASIR" creates the UNPAID
+   * cashier payment atomically; "QRIS" is initiated on the existing payment
+   * page). Optional — absent leaves the order UNPAID with no intent.
+   */
+  paymentMethod: z.enum(["QRIS", "KASIR"]).optional(),
   /** Literal: a public request can never claim to be an ADMIN booking. */
   source: z.literal("PUBLIC").default("PUBLIC"),
 });
@@ -141,6 +157,9 @@ export const CreatePublicReservationSchema = z.object({
 export type CreatePublicReservationInput = z.infer<
   typeof CreatePublicReservationSchema
 >;
+
+/** One line item of the reservation's purchase (server re-priced). */
+export type ReservationOrderItemInput = z.infer<typeof OrderItemInputSchema>;
 
 // ============================================================
 // Create — admin / kasir (walk-in, phone booking, front desk)
