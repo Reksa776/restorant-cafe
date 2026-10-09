@@ -23,7 +23,17 @@ import {
   StockRefType,
 } from "@/services/stock/stock.service";
 import { consumeOrderIngredients } from "@/services/ingredient/ingredient-stock.service";
+import {
+  resolveReportRange,
+  revenueWhere,
+} from "@/services/report/report.service";
 import { createOrderItemCostSnapshots } from "@/services/costing/historical-snapshot";
+import { auditService } from "@/services/audit/audit.service";
+import { MONEY_EPSILON } from "@/lib/money";
+import {
+  computeNetCollected,
+  ORDER_STILL_HOLDS_MONEY_MESSAGE,
+} from "@/services/approval/approval.service";
 
 // ============================================================
 // Constants
@@ -111,8 +121,16 @@ function buildOrderReadyMessage(
 // ============================================================
 
 /** The order row returned by `createCustomerOrder` (with its relations). */
+// F1 (security) — the customer relation is projected to PUBLIC fields only.
+// `password` (bcrypt) and `whatsappId` must never be selected here or anywhere
+// else an order is serialized. This matches the API-facing `AdminOrder.customer`
+// contract in order.types.ts ({ id, name, phone }).
 export type CreatedCustomerOrder = Prisma.OrderGetPayload<{
-  include: { customer: true; table: true; items: { include: { product: true } } };
+  include: {
+    customer: { select: { id: true; name: true; phone: true } };
+    table: true;
+    items: { include: { product: true } };
+  };
 }>;
 
 /**
@@ -494,7 +512,7 @@ export class OrderService {
             },
           },
           include: {
-            customer: true,
+            customer: { select: { id: true, name: true, phone: true } },
             table: true,
             items: {
               include: {
@@ -1240,7 +1258,7 @@ export class OrderService {
           },
         },
         include: {
-          customer: true,
+          customer: { select: { id: true, name: true, phone: true } },
           table: true,
           items: {
             include: {
@@ -1357,7 +1375,7 @@ export class OrderService {
       prisma.order.findMany({
         where,
         include: {
-          customer: true,
+          customer: { select: { id: true, name: true, phone: true } },
           table: true,
           // Branch name/code so the UI can label orders when the admin views
           // "Semua Cabang" — never the raw database id.
@@ -1418,7 +1436,7 @@ export class OrderService {
         branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
-        customer: true,
+        customer: { select: { id: true, name: true, phone: true } },
         table: true,
         branch: {
           select: { id: true, name: true, code: true },
@@ -1480,7 +1498,7 @@ export class OrderService {
         branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
-        customer: true,
+        customer: { select: { id: true, name: true, phone: true } },
         table: true,
         branch: {
           select: { id: true, name: true, code: true },
@@ -1599,7 +1617,7 @@ export class OrderService {
       },
       include: {
         table: true,
-        customer: true,
+        customer: { select: { id: true, name: true, phone: true } },
         restaurant: {
           select: { name: true },
         },
@@ -1639,6 +1657,22 @@ export class OrderService {
         );
       }
 
+      // P0 (PHASE 7B) — a cancelled order must not silently drop collected
+      // money. Direct status updates (this path) previously had NO payment
+      // guard, so a PAID order could become CANCELLED with no refund, no
+      // payment void and no financial record (live evidence:
+      // ORD-20260908-HCOK1L). Reuse the EXACT semantic the approval engine
+      // already enforces in `decideCancellation` (`computeNetCollected`, the
+      // shared net-collected basis) — no second formula. Read inside this
+      // transaction so a concurrently-approved refund is observed; the throw
+      // rolls back the status flip above.
+      if (input.status === "CANCELLED") {
+        const netCollected = await computeNetCollected(tx, id);
+        if (netCollected > MONEY_EPSILON) {
+          throw new ConflictError(ORDER_STILL_HOLDS_MONEY_MESSAGE);
+        }
+      }
+
       // H3.6 — an APPROVED refund means the money was already returned for
       // this order, so it must NOT be completed (which would consume stock and
       // freeze COGS for a sale that no longer exists). Read INSIDE this same
@@ -1659,7 +1693,7 @@ export class OrderService {
       const fresh = await tx.order.findUnique({
         where: { id },
         include: {
-          customer: true,
+          customer: { select: { id: true, name: true, phone: true } },
           table: true,
           items: {
             include: {
@@ -1900,6 +1934,31 @@ export class OrderService {
       );
     }
 
+    // P1 (PHASE 7B) — a DIRECT cancellation (no CancellationRequest row) was
+    // the only financial workflow in the app with no audit trail. Record it
+    // with the SAME action the approval engine uses (`ORDER_CANCELLED`) so the
+    // audit viewer stays consistent — one row per successful cancellation,
+    // written only AFTER the mutation committed (a rejected/failed attempt
+    // throws above and never reaches this point). The approval engine never
+    // calls this method, so the event is never duplicated.
+    if (input.status === "CANCELLED") {
+      await auditService.log({
+        restaurantId,
+        branchId: order.branchId,
+        userId: changedBy ?? null,
+        action: "ORDER_CANCELLED",
+        entityType: "Order",
+        entityId: id,
+        details: {
+          orderNumber: order.orderNumber,
+          reason: input.notes ?? null,
+          previousStatus: order.status,
+          newStatus: "CANCELLED",
+          source: "DIRECT_STATUS_UPDATE",
+        },
+      });
+    }
+
     return { order: updatedOrder, whatsappTriggered };
   }
 
@@ -1910,6 +1969,14 @@ export class OrderService {
   async getDashboardStats(restaurantId: string, branchFilters?: string[] | null) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+
+    // PHASE 5B — revenue basis. `Order.status` is a fulfillment/workflow state,
+    // NOT revenue recognition; money is recognised by the payment. Reuse the
+    // report engine's authoritative predicate (`revenueWhere`) and its range
+    // resolver so `todayRevenue` ===
+    // `reportService.getSalesReport().summary.totalSales` for period "today"
+    // and the same restaurant/branch scope. No second revenue predicate here.
+    const revenueRange = resolveReportRange("today");
 
     const whereBase: Record<string, unknown> = { restaurantId };
     if (branchFilters?.length) {
@@ -1960,11 +2027,12 @@ export class OrderService {
           status: "COMPLETED",
         }),
       }),
+      // Revenue = the report engine's revenue set: status != CANCELLED AND
+      // (paymentStatus = PAID OR a collected-then-refunded payment exists).
+      // A COMPLETED-but-unpaid/pending/expired order is NOT revenue, and a
+      // PAID order that is not yet COMPLETED still IS.
       prisma.order.aggregate({
-        where: orderWhere({
-          status: "COMPLETED",
-          createdAt: { gte: today },
-        }),
+        where: revenueWhere(restaurantId, revenueRange, branchFilters),
         _sum: { grandTotal: true },
       }),
       prisma.payment.count({

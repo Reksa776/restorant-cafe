@@ -201,7 +201,10 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pendapatan Hari Ini</CardTitle>
+            {/* PHASE 8B (B4) — this card is the canonical GROSS sales
+                (`todayRevenue` = Σ order.grandTotal over `revenueWhere`); the
+                accounting net (after refunds) lives in the Sales Report. */}
+            <CardTitle className="text-sm font-medium">Penjualan Hari Ini</CardTitle>
             <DollarSign className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>

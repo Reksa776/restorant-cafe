@@ -25,6 +25,10 @@ import {
   type ReportPeriod,
 } from "@/services/report/report.service";
 import { profitabilityService } from "@/services/profitability/profitability.service";
+// D1 — same coverage rules as Profitabilitas (empty scope is never covered).
+import { isItemSetCoverageComplete } from "@/services/profitability/coverage";
+// M1 — pure headline builder: product basis kept, header basis added as reference.
+import { buildMenuEngineeringSummary } from "./menu-engineering.summary";
 import type {
   ProfitabilityProductRow,
   ProfitabilityBranchRow,
@@ -227,7 +231,7 @@ export class MenuEngineeringService {
     const pageStart = (page - 1) * limit;
     const paginatedProducts = visibleRows.slice(pageStart, pageStart + limit);
 
-    const summary = this.buildSummary(rows, firstProfitability.summary.coverage);
+    const summary = buildMenuEngineeringSummary(rows, firstProfitability.summary);
     const classification = this.buildClassificationCounts(visibleRows);
 
     return {
@@ -491,39 +495,6 @@ export class MenuEngineeringService {
     row.negativeMargin = result.negativeMargin;
   }
 
-  private buildSummary(
-    rows: MenuEngineeringProductRow[],
-    coverage: ProfitabilityReport["summary"]["coverage"]
-  ): MenuEngineeringReport["summary"] {
-    const sold = rows.filter((r) => r.qtySold > 0);
-    const totalNetSales = num(sold.reduce((s, r) => s + r.netSales, 0));
-    const historicalCogs = num(sold.reduce((s, r) => s + r.historicalCogs, 0));
-    // H3 — the profit-bearing cost is RETAINED COGS (partial refunds release
-    // cost; a full refund keeps all of it).
-    const retainedCogs = num(sold.reduce((s, r) => s + r.retainedCogs, 0));
-    // H2 — the summary COGS is the covered (known) COGS; when coverage is
-    // incomplete the gross profit is UNKNOWN (null), never revenue − 0.
-    const coverageComplete =
-      coverage.uncostedOrderItems +
-        coverage.legacyOrderItems +
-        coverage.pendingOrderItems ===
-      0;
-    const grossProfit = coverageComplete
-      ? num(totalNetSales - retainedCogs)
-      : null;
-    return {
-      totalNetSales,
-      historicalCogs,
-      grossProfit,
-      grossMarginPct:
-        grossProfit !== null && totalNetSales > 0
-          ? num((grossProfit / totalNetSales) * 100)
-          : null,
-      productCount: rows.length,
-      coverageComplete,
-    };
-  }
-
   private buildClassificationCounts(rows: MenuEngineeringProductRow[]) {
     const counts: MenuEngineeringReport["classification"] = {
       STAR: 0,
@@ -587,8 +558,13 @@ export class MenuEngineeringService {
     }
     const result: MenuEngineeringCategoryRow[] = [];
     for (const g of groups.values()) {
-      g.coverageComplete =
-        g.uncostedItems + g.legacyItems + g.pendingItems === 0;
+      // D1 — an empty category is NOT covered either.
+      g.coverageComplete = isItemSetCoverageComplete({
+        costedItems: g.costedItems,
+        uncostedItems: g.uncostedItems,
+        legacyItems: g.legacyItems,
+        pendingItems: g.pendingItems,
+      });
       if (g.qtySold > 0) {
         // H2 — unknown COGS is never turned into a full-margin profit.
         g.grossProfit = g.coverageComplete

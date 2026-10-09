@@ -30,6 +30,7 @@ import {
   Package,
   TrendingUp,
   Undo2,
+  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useUserRole } from "@/hooks/use-user-role";
@@ -187,7 +188,9 @@ export default function ReportsPage() {
     }
   };
 
-  const summaryCards = useMemo(() => {
+  const summaryCards = useMemo<
+    Array<{ label: string; value: string; icon: LucideIcon; hint?: string }>
+  >(() => {
     if (!report) return [];
     const s = report.summary;
     return [
@@ -196,10 +199,12 @@ export default function ReportsPage() {
       { label: "Item Terjual", value: `${s.totalItemsSold}`, icon: Package },
       { label: "Rata-rata Order", value: rupiah(s.averageOrderValue), icon: Banknote },
       { label: "Total Diskon", value: rupiah(s.totalDiscount), icon: Banknote },
-      { label: "Total Refund", value: rupiah(s.totalRefund), icon: Undo2 },
+      // PHASE 8B (B8) — "Total Refund" is the RAW approved refund amount, NOT
+      // the proportional product-revenue reversal applied inside `netSales`.
+      { label: "Total Refund", value: rupiah(s.totalRefund), icon: Undo2, hint: "Nilai refund bruto yang disetujui" },
       { label: "Total Pajak", value: rupiah(s.totalTax), icon: Landmark },
       { label: "Service Charge", value: rupiah(s.totalServiceCharge), icon: Landmark },
-      { label: "Net Sales", value: rupiah(s.netSales), icon: TrendingUp },
+      { label: "Net Sales", value: rupiah(s.netSales), icon: TrendingUp, hint: "Penjualan bersih setelah dampak refund" },
     ];
   }, [report]);
 
@@ -383,6 +388,9 @@ export default function ReportsPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="text-xl font-bold">{card.value}</div>
+                  {card.hint && (
+                    <p className="text-xs text-muted-foreground mt-1">{card.hint}</p>
+                  )}
                 </CardContent>
               </Card>
             ))}

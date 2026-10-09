@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { customerService } from "@/services/customer/customer.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireAdmin, branchHintFrom } from "@/lib/auth-helpers";
+import { requireAdmin, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
 
 export async function GET(
   request: NextRequest,
@@ -10,9 +10,14 @@ export async function GET(
 ) {
   try {
     const branchId = branchHintFrom(request);
-    const { restaurantId } = await requireAdmin(branchId);
+    const ctx = await requireAdmin(branchId);
     const { id } = await params;
-    const customer = await customerService.getCustomer(id, restaurantId);
+    // PHASE 9B (C3) — branch scope is server-derived from the session/assignments.
+    const customer = await customerService.getCustomer(
+      id,
+      ctx.restaurantId,
+      authorizedBranches(ctx)
+    );
 
     return successResponse(customer);
   } catch (error) {

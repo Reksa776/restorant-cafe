@@ -35,6 +35,7 @@ import {
   ChevronDown,
   CalendarDays,
   LayoutGrid,
+  BookOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
@@ -132,6 +133,12 @@ const navigation: NavEntry[] = [
     children: [
       { name: "Payments", href: "/admin/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
       { name: "Riwayat Penjualan", href: "/admin/cashier/sales", icon: Receipt, roles: ["ADMIN", "CASHIER"] },
+      // ACCOUNTING PHASE B — operational expense tracking (ADMIN only).
+      { name: "Pengeluaran", href: "/admin/accounting/expenses", icon: Wallet, roles: ["ADMIN"] },
+      // ACCOUNTING PHASE C — cashbook read-model (ADMIN only).
+      { name: "Buku Kas", href: "/admin/accounting/cashbook", icon: BookOpen, roles: ["ADMIN"] },
+      // ACCOUNTING PHASE D — profit & loss read-model (ADMIN only).
+      { name: "Laba Rugi", href: "/admin/accounting/pnl", icon: TrendingUp, roles: ["ADMIN"] },
     ],
   },
   {

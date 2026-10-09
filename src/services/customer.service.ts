@@ -9,10 +9,13 @@ export interface Customer {
   id: string;
   name?: string;
   phone: string;
+  email?: string;
+  isActive?: boolean;
   whatsappId?: string;
   createdAt: string;
   updatedAt: string;
   orderCount?: number;
+  /** Canonical refund-aware customer spend (product revenue − refund). */
   totalSpent?: string;
   lastOrderAt?: string;
 }

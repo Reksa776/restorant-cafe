@@ -158,6 +158,13 @@ export function OrderCard({
   const isProcessing = order.status === "PROCESSING";
   const isReady = order.status === "READY";
 
+  // P0 (PHASE 7B) — a PAID order must not be cancelled through this direct
+  // status path (the server rejects it with a conflict; see
+  // `OrderService.updateOrderStatus`). We use the data already on the DTO
+  // (`order.paymentStatus`) — no extra fetch and no client-side money math —
+  // to disable the affordance, while the server remains authoritative.
+  const isPaid = order.paymentStatus === "PAID";
+
   // KASIR payment intent (latest unpaid one wins; fall back to any row).
   const payments = order.payments || [];
   const cashierPayment =
@@ -370,7 +377,12 @@ export function OrderCard({
                 variant="destructive"
                 size="sm"
                 onClick={() => onStatusChange(order.id, "CANCELLED")}
-                disabled={isUpdating}
+                disabled={isUpdating || isPaid}
+                title={
+                  isPaid
+                    ? "Order sudah dibayar — selesaikan refund terlebih dahulu sebelum membatalkan"
+                    : "Batalkan pesanan"
+                }
               >
                 <XCircle className="h-3.5 w-3.5" />
               </Button>

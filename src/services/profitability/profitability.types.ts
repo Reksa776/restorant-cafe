@@ -31,8 +31,11 @@ export interface ProfitabilityFilters {
 }
 
 /**
- * H2.1 — derived COGS coverage state (NO new DB enum/model).
- *   COVERED      — every relevant OrderItem has a SNAPSHOTTED snapshot
+ * H2.1 / D1 — derived COGS coverage state (NO new DB enum/model).
+ *   NO_ITEMS     — no in-scope OrderItem at all → COGS cannot be verified
+ *                  (D1: empty scope is NEVER "covered"; Gross Profit is null)
+ *   COVERED      — at least one relevant OrderItem and every one is SNAPSHOTTED
+ *                  (a valid SNAPSHOTTED COGS of 0 still counts as COVERED)
  *   PARTIAL      — some items are covered, others are not (any reason)
  *   PENDING_COGS — order is PAID but NOT COMPLETED (COGS not yet incurred)
  *   UNCOVERED    — a snapshot row exists but its status <> SNAPSHOTTED
@@ -40,6 +43,7 @@ export interface ProfitabilityFilters {
  *   LEGACY       — order is COMPLETED but the OrderItem has no snapshot row
  */
 export type ProfitabilityCogsState =
+  | "NO_ITEMS"
   | "COVERED"
   | "PARTIAL"
   | "PENDING_COGS"
@@ -86,9 +90,21 @@ export interface ProfitabilitySummary {
   grossMarginPct: number | null;
   foodCostPct: number | null;
   coverage: ProfitabilityCoverage;
-  /** True only when every relevant item is COVERED (COGS fully known). */
+  /**
+   * True only when at least one relevant item exists AND every one is
+   * SNAPSHOTTED (COGS fully known). D1: an empty scope is NEVER complete.
+   */
   coverageComplete: boolean;
   cogsState: ProfitabilityCogsState;
+  /**
+   * D1 — disclosure: revenue-bearing orders with NO OrderItem rows in scope.
+   * These orders inflate Net Sales without any verifiable COGS, so the count
+   * and their header value are surfaced explicitly (aggregate, read-only).
+   */
+  revenueWithoutItems: {
+    orders: number;
+    headerValue: number;
+  };
   /** H3.4 — original eligible sales revenue (Σ grandTotal, incl. refunded). */
   grossRevenue: number;
   /** H3.4 — approved refund amount reversed out of revenue. */

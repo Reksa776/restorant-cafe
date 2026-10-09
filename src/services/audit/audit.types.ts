@@ -57,6 +57,24 @@ export const AuditLogListQuerySchema = z.object({
     .max(100, "Pencarian maksimal 100 karakter")
     .optional()
     .nullable(),
+}).refine(
+  // Cross-field: an inverted range is a caller mistake, not an empty page.
+  // Both sides are strict `YYYY-MM-DD`, so a lexicographic compare is also a
+  // chronological one. Local-day semantics are unchanged.
+  (q) => !q.dateFrom || !q.dateTo || q.dateFrom <= q.dateTo,
+  {
+    message: "Tanggal awal tidak boleh melebihi tanggal akhir",
+    path: ["dateTo"],
+  }
+);
+
+/**
+ * Facet (picker) mode of the same endpoint: only the branch hint is
+ * meaningful — the tenant always comes from the session and the scope is
+ * still enforced through `authorizedBranches` in the service.
+ */
+export const AuditLogFacetsQuerySchema = z.object({
+  branchId: z.string().trim().min(1).max(64).optional().nullable(),
 });
 
 export type AuditLogListQuery = z.infer<typeof AuditLogListQuerySchema>;

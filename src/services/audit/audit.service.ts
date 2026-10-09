@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/lib/errors";
-import { AuditLogListQuerySchema } from "./audit.types";
+import { clientIp } from "@/lib/rate-limit";
+import { AuditLogFacetsQuerySchema, AuditLogListQuerySchema } from "./audit.types";
 
 /**
  * Centralized audit trail. Every sensitive/financial action records one row
@@ -48,6 +49,38 @@ export function redactAuditDetails(value: unknown, depth = 0): unknown {
   return value;
 }
 
+// ============================================================
+// Request-derived client IP.
+//
+// Audit writers are plain service functions, so they have no request object.
+// Instead of a global/global-mutable request state (race-prone) or threading
+// an `ipAddress` argument through every route + service signature, the IP is
+// resolved once per audit write from the CURRENT request scope that Next.js
+// already exposes (an AsyncLocalStorage-backed accessor — request-scoped, not
+// process-global).
+//
+// The header parsing is delegated to the project's existing `clientIp()`
+// helper (src/lib/rate-limit.ts) so audit rows use exactly the same trusted-
+// proxy convention as rate limiting: CF-Connecting-IP → first X-Forwarded-For
+// hop → X-Real-IP. `clientIp()` returns the literal "unknown" when no proxy
+// header is present — that sentinel is NOT stored as data (a row would get the
+// bogus value "unknown" instead of NULL).
+//
+// Outside a request scope (whatsapp worker, seed/test scripts) the accessor
+// throws and the row simply keeps `ipAddress = NULL`, as every historical row
+// does. No backfill, no widening of what is collected.
+// ============================================================
+async function requestIpAddress(): Promise<string | null> {
+  try {
+    const { headers } = await import("next/headers");
+    const h = await headers();
+    const ip = clientIp({ headers: { get: (name: string) => h.get(name) } } as unknown as Request);
+    return ip === "unknown" ? null : ip;
+  } catch {
+    return null;
+  }
+}
+
 /** Safe, read-only projection of an AuditLog row for the admin viewer. */
 export interface AuditLogView {
   id: string;
@@ -77,9 +110,13 @@ export class AuditService {
     entityType?: string | null;
     entityId?: string | null;
     details?: Record<string, unknown> | null;
+    /** Explicit override. Omitted/null → the current request's client IP. */
     ipAddress?: string | null;
   }): Promise<void> {
     try {
+      // An explicit value always wins; otherwise derive it from the request
+      // that is currently being served (NULL outside a request scope).
+      const ipAddress = input.ipAddress ?? (await requestIpAddress());
       await prisma.auditLog.create({
         data: {
           restaurantId: input.restaurantId,
@@ -92,7 +129,7 @@ export class AuditService {
             input.details && Object.keys(input.details).length > 0
               ? (input.details as object)
               : undefined,
-          ipAddress: input.ipAddress || null,
+          ipAddress: ipAddress || null,
         },
       });
     } catch (error) {
@@ -124,18 +161,10 @@ export class AuditService {
     const q = parsed.data;
     const skip = (q.page - 1) * q.limit;
 
-    // A branch-scoped caller can never widen or redirect the listing to a
-    // branch outside their assignments.
-    if (q.branchId && branchFilters?.length && !branchFilters.includes(q.branchId)) {
-      throw new ForbiddenError("Anda tidak memiliki akses ke cabang ini");
-    }
-
-    const where: Record<string, unknown> = { restaurantId };
-    if (q.branchId) {
-      where.branchId = q.branchId;
-    } else if (branchFilters?.length) {
-      where.branchId = { in: branchFilters };
-    }
+    const where: Record<string, unknown> = {
+      restaurantId,
+      ...this.branchPredicate(q.branchId, branchFilters),
+    };
     if (q.action) where.action = q.action;
     if (q.entityType) where.entityType = q.entityType;
     if (q.entityId) where.entityId = q.entityId;
@@ -177,6 +206,57 @@ export class AuditService {
       limit: q.limit,
       totalPages: Math.ceil(total / q.limit),
     };
+  }
+
+  /**
+   * Branch predicate shared by `list()` and `listActionOptions()` so the two
+   * can never drift apart.
+   *
+   * A branch-scoped caller can never widen or redirect a query to a branch
+   * outside their assignments (explicit `branchId` outside the list → 403).
+   * Otherwise: the explicit branch, else every authorized branch, else the
+   * whole restaurant (undefined = no branch predicate).
+   */
+  private branchPredicate(
+    requestedBranchId: string | null | undefined,
+    branchFilters?: string[] | null
+  ): Record<string, unknown> {
+    if (requestedBranchId && branchFilters?.length && !branchFilters.includes(requestedBranchId)) {
+      throw new ForbiddenError("Anda tidak memiliki akses ke cabang ini");
+    }
+    if (requestedBranchId) return { branchId: requestedBranchId };
+    if (branchFilters?.length) return { branchId: { in: branchFilters } };
+    return {};
+  }
+
+  /**
+   * Distinct `action` values the caller may filter by — the Action picker's
+   * source. Same tenant scope (always) and same branch predicate as `list()`,
+   * including the explicit `branchId` filter, so the picker offers exactly the
+   * actions reachable through the current view and can never widen the scope.
+   * Read-only; capped so a pathological tenant cannot return an unbounded list.
+   */
+  async listActionOptions(
+    restaurantId: string,
+    raw: unknown,
+    branchFilters?: string[] | null
+  ): Promise<string[]> {
+    const parsed = AuditLogFacetsQuerySchema.safeParse(raw ?? {});
+    if (!parsed.success) {
+      throw new ValidationError(parsed.error.message);
+    }
+    const where: Record<string, unknown> = {
+      restaurantId,
+      ...this.branchPredicate(parsed.data.branchId, branchFilters),
+    };
+    const rows = await prisma.auditLog.findMany({
+      where,
+      distinct: ["action"],
+      select: { action: true },
+      orderBy: { action: "asc" },
+      take: 200,
+    });
+    return rows.map((r) => r.action);
   }
 
   /**

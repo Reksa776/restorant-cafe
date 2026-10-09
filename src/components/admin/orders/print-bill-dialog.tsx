@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { Printer } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { formatPhoneDisplay } from "@/lib/phone";
 import type { Order } from "@/services/order.service";
 
 // ============================================================
@@ -366,6 +367,16 @@ function FullBill({
           <span className="text-gray-500">Customer</span>
           <span>{order.customer?.name || "Guest"}</span>
         </div>
+        {/* Customer phone — only when the order actually carries one (the
+            admin payload includes Customer.phone; guests without a phone
+            simply omit the row). Rendered with the shared display formatter
+            (falls back to the raw value when it is not a valid ID number). */}
+        {order.customer?.phone && (
+          <div className="flex justify-between gap-2">
+            <span className="text-gray-500">No. HP</span>
+            <span>{formatPhoneDisplay(order.customer.phone)}</span>
+          </div>
+        )}
         {/* Branch — only when the order carries it (admin endpoints already
             include name/code). Absent branch simply omits the row. */}
         {order.branch?.name && (
@@ -427,8 +438,13 @@ function FullBill({
                   Catatan: {item.notes}
                 </p>
               )}
-              {Number(item.unitPrice) !==
-                Number(item.totalPrice) / Math.max(item.quantity, 1) && (
+              {/* Unit price: shown for any multi-unit line (quantity ≠ 1) and
+                  for single-unit lines whose line total differs from the base
+                  unit price (line-level discount/adjustment). Values come
+                  straight from the server-priced OrderItem. */}
+              {(item.quantity > 1 ||
+                Number(item.unitPrice) !==
+                  Number(item.totalPrice) / Math.max(item.quantity, 1)) && (
                 <p className="pl-3 text-[11px] text-gray-500">
                   @ {rupiah(item.unitPrice)}
                 </p>

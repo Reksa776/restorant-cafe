@@ -99,7 +99,33 @@ export interface MenuEngineeringThreshold {
 }
 
 export interface MenuEngineeringSummary {
+  /**
+   * M1 — per-product (item-attributed) net sales: Σ netSales of products with
+   * qtySold > 0. Revenue-bearing orders with NO OrderItem rows cannot be
+   * attributed to a product and are therefore excluded from this figure.
+   * Unchanged by M1 (no numeric change).
+   */
   totalNetSales: number;
+  /**
+   * M1 — explicit contract for `totalNetSales`. Always "PRODUCT" so a consumer
+   * can tell this is the item-attributed basis, not the order-header basis.
+   */
+  netSalesBasis: "PRODUCT";
+  /**
+   * M1 — reference only: order/header-basis net sales, identical to
+   * Profitabilitas & Laba Rugi (`summary.netSales`). Never attributed to a
+   * product. Read from the already-fetched Profitabilitas report (no new query).
+   */
+  netSalesHeaderBasis: number;
+  /**
+   * M1 — D1 disclosure: revenue-bearing orders with NO OrderItem rows in scope.
+   * Their header value is not part of `totalNetSales`; when `orders > 0` the
+   * gross/net profit must be treated as unverifiable (not 0).
+   */
+  revenueWithoutItems: {
+    orders: number;
+    headerValue: number;
+  };
   historicalCogs: number;
   /** H2 — null when COGS coverage is incomplete (unknown, never 0). */
   grossProfit: number | null;

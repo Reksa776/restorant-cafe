@@ -64,7 +64,8 @@ export async function GET(request: NextRequest) {
       "Orders",
       "Gross Sales",
       "Discount",
-      "Net Sales",
+      // M1 — per-product Net Sales stays on the PRODUCT (item-attributed) basis.
+      "Net Sales (Produk)",
       "Historical COGS",
       "Gross Profit",
       "Historical Margin",
@@ -103,7 +104,33 @@ export async function GET(request: NextRequest) {
       .toISOString()
       .slice(0, 10)}.csv`;
 
-    return new NextResponse(buildCsv(header, rows), {
+    // M1 — disclosure block appended after the product rows. The existing
+    // flat product-row format is preserved; these trailing rows make the
+    // PRODUCT basis of the "Net Sales (Produk)" column explicit and surface
+    // the order-header reference + D1 revenue-without-items disclosure.
+    const disclosureRows: Array<Array<string | number | null | undefined>> = [
+      [],
+      ["Disclosure"],
+      [
+        "Net Sales (Produk) = basis item: hanya revenue yang dapat diatribusikan ke produk yang memiliki baris item.",
+      ],
+      ["Net Sales (Basis Order)", report.summary.netSalesHeaderBasis],
+      [
+        "Order ber-revenue tanpa baris item",
+        report.summary.revenueWithoutItems.orders,
+      ],
+      [
+        "Nilai header order tanpa baris item",
+        report.summary.revenueWithoutItems.headerValue,
+      ],
+      ["COGS coverage lengkap", report.summary.coverageComplete ? "ya" : "tidak"],
+      [
+        "Profit dapat diverifikasi",
+        report.summary.coverageComplete ? "ya" : "tidak",
+      ],
+    ];
+
+    return new NextResponse(buildCsv(header, [...rows, ...disclosureRows]), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
         "Content-Disposition": `attachment; filename="${fileName}"`,

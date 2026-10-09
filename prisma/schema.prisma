@@ -206,6 +206,7 @@ model User {
   cancellationsRejected  CancellationRequest[] @relation("CancellationRejecter")
   stockMovements StockMovement[]
   ingredientStockMovements IngredientStockMovement[]
+  expensesCreated Expense[] @relation("ExpenseCreator")
 
   @@map("user")
 }
@@ -244,6 +245,8 @@ model Restaurant {
   ingredientStockMovements IngredientStockMovement[]
   recipes     Recipe[]
   orderItemCostSnapshots OrderItemCostSnapshot[]
+  expenses    Expense[]
+  expenseCategories ExpenseCategory[]
 
   @@map("restaurant")
 }
@@ -275,6 +278,7 @@ model Branch {
   branchIngredients BranchIngredient[]
   ingredientStockMovements IngredientStockMovement[]
   orderItemCostSnapshots OrderItemCostSnapshot[]
+  expenses   Expense[]
 
   @@unique([restaurantId, code])
   @@index([restaurantId])
@@ -1534,4 +1538,78 @@ model RecipeItem {
   @@index([ingredientId])
 
   @@map("recipeitem")
+}
+
+// ============================================================
+// ACCOUNTING — PHASE B: EXPENSE MANAGEMENT
+//
+// Operational (NON-COGS) expenses only. This is NOT a cashbook, journal,
+// general ledger, or P&L — and Purchase is NEVER auto-recorded here:
+// a purchase is inventory (an asset) whose cost becomes COGS only when the
+// product is sold (via OrderItemCostSnapshot). Recording a purchase as an
+// expense too would double-count it.
+//
+// Every Expense row is tenant-scoped (restaurantId) AND branch-bound
+// (branchId, required — mirrors Purchase). amount is Decimal(12,2), the same
+// money precision as Purchase.total / CashierShift amounts.
+// ============================================================
+
+enum ExpenseMethod {
+  CASH
+  TRANSFER
+  QRIS
+  CARD
+  OTHER
+}
+
+// Restaurant-scoped expense category. Names are unique WITHIN a tenant
+// (@@unique([restaurantId, name])) so two tenants may each have
+// "Operasional", but one tenant cannot have it twice. Categories carry no
+// branchId: they are shared across the tenant's branches. Soft-disabled via
+// isActive (never hard-deleted while referenced by an Expense).
+model ExpenseCategory {
+  id           String   @id @default(cuid())
+  restaurantId String
+  name         String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  expenses   Expense[]
+
+  @@unique([restaurantId, name])
+  @@index([restaurantId])
+  @@index([restaurantId, isActive])
+
+  @@map("expensecategory")
+}
+
+// One operational expense. spentAt is the expense date (the attribution
+// date used by every filter/report), categoryId/branchId are validated
+// server-side against the caller's tenant and authorized branches, and
+// createdByUserId is taken from the session — never from client input.
+model Expense {
+  id              String        @id @default(cuid())
+  restaurantId    String
+  branchId        String
+  categoryId      String
+  amount          Decimal       @db.Decimal(12, 2)
+  spentAt         DateTime
+  method          ExpenseMethod @default(CASH)
+  note            String?       @db.Text
+  createdByUserId String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  restaurant Restaurant      @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  branch     Branch          @relation(fields: [branchId], references: [id])
+  category   ExpenseCategory @relation(fields: [categoryId], references: [id])
+  createdBy  User            @relation("ExpenseCreator", fields: [createdByUserId], references: [id])
+
+  @@index([restaurantId, spentAt])
+  @@index([restaurantId, branchId, spentAt])
+  @@index([restaurantId, categoryId, spentAt])
+
+  @@map("expense")
 }

@@ -268,8 +268,8 @@ export default function CashierSalesPage() {
         </h1>
         <p className="text-muted-foreground">
           {isAdmin
-            ? "Lihat semua transaksi kasir berdasarkan periode dan filter"
-            : "Buku transaksi yang Anda proses"}
+            ? "Buku kas shift — uang yang dikumpulkan & direkonsiliasi per shift (bukan laporan akuntansi)"
+            : "Buku kas shift Anda — uang yang dikumpulkan & direkonsiliasi (bukan laporan akuntansi)"}
         </p>
       </div>
 
@@ -281,7 +281,9 @@ export default function CashierSalesPage() {
             <p className="text-2xl font-bold">{summary.totalTransactions}</p>
           </div>
           <div className="rounded-xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">Total Penjualan</p>
+            {/* PHASE 8B (B1) — drawer/shift ledger wording; the accounting
+                `netSales` lives in the Sales Report. */}
+            <p className="text-xs text-muted-foreground">Total Dikumpulkan</p>
             <p className="text-2xl font-bold">{rupiah(summary.totalSales)}</p>
           </div>
           <div className="rounded-xl border bg-card p-4">
@@ -301,14 +303,14 @@ export default function CashierSalesPage() {
             </p>
           </div>
           <div className="rounded-xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">Refund</p>
+            <p className="text-xs text-muted-foreground">Refund Kasir</p>
             <p className="text-xl font-bold text-red-600">
               {rupiah(summary.totalRefund)}
             </p>
           </div>
           <div className="rounded-xl border bg-card p-4">
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
-              <TrendingUp className="h-3 w-3" /> Net Sales
+              <TrendingUp className="h-3 w-3" /> Bersih Kasir
             </div>
             <p className="text-xl font-bold">{rupiah(summary.netSales)}</p>
           </div>

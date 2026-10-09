@@ -60,4 +60,17 @@ export const auditLogService = {
     const response = await api.get("/admin/audit-logs", { params });
     return response.data.data as AuditLogListResult;
   },
+
+  /**
+   * Distinct action values for the Action picker. Same endpoint, `facets`
+   * mode; the server applies the same tenant + branch scope as `list()`, so
+   * the picker can never offer an action outside the caller's scope.
+   */
+  async listActions(params: { branchId?: string } = {}): Promise<string[]> {
+    const response = await api.get("/admin/audit-logs", {
+      params: { ...params, facets: "actions" },
+    });
+    const actions = response.data?.data?.actions;
+    return Array.isArray(actions) ? (actions as string[]) : [];
+  },
 };

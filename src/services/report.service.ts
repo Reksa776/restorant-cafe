@@ -383,6 +383,127 @@ export interface MultiOutletReport {
   }>;
 }
 
+// ============================================================
+// PHASE 9B — customer & reservation report contracts
+// ============================================================
+
+export interface CustomerReportSummary {
+  totalCustomers: number;
+  newCustomers: number;
+  returningCustomers: number;
+  activeCustomers: number;
+  inactiveCustomers: number;
+  totalOrders: number;
+  totalItemsSold: number;
+  grossSales: number;
+  totalSales: number;
+  totalRefund: number;
+  netSales: number;
+  totalReservations: number;
+  reservationRevenue: number;
+  averageOrderValue: number;
+}
+
+export interface CustomerReportRow {
+  customerId: string;
+  name: string | null;
+  phone: string | null;
+  email: string | null;
+  isActive: boolean;
+  customerCreatedAt: string;
+  orders: number;
+  activityOrders: number;
+  items: number;
+  grossSales: number;
+  totalSales: number;
+  refund: number;
+  netSales: number;
+  aov: number;
+  firstOrderAt: string | null;
+  lastOrderAt: string | null;
+  isNewCustomer: boolean;
+  isReturning: boolean;
+  reservations: {
+    total: number;
+    confirmed: number;
+    seated: number;
+    completed: number;
+    cancelled: number;
+    noShow: number;
+    lastReservationDate: string | null;
+    revenue: number;
+    refund: number;
+    netSales: number;
+  };
+}
+
+export interface CustomerReport {
+  period: ReportPeriod;
+  range: { start: string; end: string };
+  summary: CustomerReportSummary;
+  customers: CustomerReportRow[];
+}
+
+export interface ReservationReport {
+  period: ReportPeriod;
+  range: { start: string; end: string };
+  summary: {
+    totalReservations: number;
+    pending: number;
+    confirmed: number;
+    seated: number;
+    completed: number;
+    cancelled: number;
+    noShow: number;
+    cancellationRate: number;
+    noShowRate: number;
+    averagePartySize: number;
+    totalGuests: number;
+    withOrder: number;
+    withoutOrder: number;
+    reservationRevenue: number;
+    reservationRefund: number;
+    reservationNetRevenue: number;
+  };
+  funnel: {
+    created: number;
+    confirmed: number;
+    paid: number;
+    seated: number;
+    completed: number;
+    cancelled: number;
+    noShow: number;
+  };
+  byStatus: Array<{ status: string; count: number; guests: number }>;
+  byBranch: Array<{
+    branchId: string | null;
+    code: string | null;
+    name: string | null;
+    count: number;
+    guests: number;
+  }>;
+  bySource: Array<{ source: string; count: number; guests: number }>;
+  byPartySize: Array<{ partySize: number; count: number; guests: number }>;
+  byTable: Array<{
+    tableId: string | null;
+    number: number | null;
+    name: string | null;
+    count: number;
+    guests: number;
+  }>;
+  byDate: Array<{
+    date: string;
+    total: number;
+    confirmed: number;
+    seated: number;
+    completed: number;
+    cancelled: number;
+    noShow: number;
+    guests: number;
+  }>;
+  paymentStatus: Record<string, number>;
+}
+
 export const reportService = {
   async getSalesReport(params?: {
     period?: ReportPeriod;
@@ -477,6 +598,27 @@ export const reportService = {
     limit?: number;
   }): Promise<InventoryReport> {
     const response = await api.get("/reports/inventory", { params });
+    return response.data.data;
+  },
+
+  async getCustomerReport(params?: {
+    period?: ReportPeriod;
+    startDate?: string;
+    endDate?: string;
+    branchId?: string;
+    search?: string;
+  }): Promise<CustomerReport> {
+    const response = await api.get("/reports/customers", { params });
+    return response.data.data;
+  },
+
+  async getReservationReport(params?: {
+    period?: ReportPeriod;
+    startDate?: string;
+    endDate?: string;
+    branchId?: string;
+  }): Promise<ReservationReport> {
+    const response = await api.get("/reports/reservations", { params });
     return response.data.data;
   },
 };

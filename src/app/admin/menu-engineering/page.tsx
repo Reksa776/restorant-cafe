@@ -326,6 +326,23 @@ export default function MenuEngineeringPage() {
         </div>
       ) : (
         <div className="space-y-6">
+          {(coverage?.totalOrderItems ?? 0) === 0 &&
+            (summary.totalNetSales > 0 ||
+              summary.revenueWithoutItems.orders > 0) && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>
+                COGS belum dapat diverifikasi: tidak ada item dalam scope untuk
+                periode ini, sehingga Gross Profit ditampilkan sebagai tidak
+                diketahui.{" "}
+                {summary.revenueWithoutItems.orders > 0 &&
+                  `${summary.revenueWithoutItems.orders} order ber-revenue (${rupiah(
+                    summary.revenueWithoutItems.headerValue
+                  )}) tidak memiliki baris item.`}
+              </span>
+            </div>
+          )}
+
           {(hasUncosted || hasLegacy) && (
             <div className="space-y-2">
               {hasUncosted && (
@@ -354,7 +371,7 @@ export default function MenuEngineeringPage() {
           {/* Summary */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {[
-              { label: "Total Net Sales", value: rupiah(summary.totalNetSales), icon: TrendingUp },
+              { label: "Total Net Sales (Produk)", value: rupiah(summary.totalNetSales), icon: TrendingUp },
               { label: "Historical COGS", value: rupiah(summary.historicalCogs), icon: Wallet },
               { label: "Gross Profit", value: rupiah(summary.grossProfit), icon: TrendingUp },
               { label: "Gross Margin", value: pct(summary.grossMarginPct), icon: Percent },
@@ -369,6 +386,33 @@ export default function MenuEngineeringPage() {
                 </CardContent>
               </Card>
             ))}
+          </div>
+
+          {/* M1 — header/order-basis reference, kept separate from the
+              product-attributed total so the two bases can be reconciled. */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="text-gray-500">
+                Net Sales (Basis Order) — referensi
+              </span>
+              <span className="font-semibold tabular-nums">
+                {rupiah(summary.netSalesHeaderBasis)}
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Basis order = grandTotal − pajak − service charge − refund pada
+              level order (sama dengan laporan Profitabilitas &amp; Laba Rugi).
+              Total Net Sales (Produk) di atas hanya mencakup revenue yang dapat
+              diatribusikan ke produk yang memiliki baris item.
+            </p>
+            {summary.revenueWithoutItems.orders > 0 && (
+              <p className="text-xs text-amber-700 mt-1">
+                {summary.revenueWithoutItems.orders} order ber-revenue (
+                {rupiah(summary.revenueWithoutItems.headerValue)}) tidak memiliki
+                baris item; nilainya tidak dapat diatribusikan ke produk dan
+                profit tidak dapat diverifikasi.
+              </p>
+            )}
           </div>
 
           {/* Quadrant matrix */}

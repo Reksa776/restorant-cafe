@@ -7,6 +7,21 @@ import { prisma } from "@/lib/prisma";
 // Queries Payment + Order + CashierShift to build a cashier's
 // transaction ledger. Cashier identity is derived from
 // Payment.shiftId → CashierShift.userId (server-side only).
+//
+// PHASE 8B — SEMANTIC PURPOSE (locked): this is a SHIFT / DRAWER LEDGER, not
+// an accounting revenue report. It answers "what money did the drawer/shift
+// collect and reconcile", keyed off `Payment.shiftId` and `CashierShift`.
+// It deliberately does NOT use the canonical revenue engine
+// (`revenueWhere` / `computeRefundRevenue`) — the authoritative accounting
+// `netSales` lives in the Sales Report.
+//
+// Consequence (documented, not a bug):
+// - date scoping is by `shift.openedAt` (drawer semantics), NOT the payment
+//   or order date; a cross-midnight shift attributes to when it was opened;
+// - an order that never touched a drawer (e.g. a purely-QRIS order whose
+//   payment has `shiftId = null`) is not part of the drawer ledger.
+// The UI must therefore label its totals as collected/refunded drawer amounts
+// (see `src/app/admin/cashier/sales/page.tsx`), never as "accounting sales".
 // ============================================================
 
 export interface SalesFilter {
@@ -161,6 +176,12 @@ export async function getCashierSales(
   const contextWhere: Prisma.PaymentWhereInput = {
     restaurantId,
     shiftId: { in: shiftIds },
+    // PHASE 8B (B3) — a ledger that represents money collected must never
+    // book a collected payment on a CANCELLED order. Same canonical semantics
+    // as `revenueWhere` (`order.status != CANCELLED`). Applied at the context
+    // level so the ledger rows, the transaction count, the summary, the
+    // CASH/QRIS breakdown AND the refund order-scope below all share it.
+    order: { status: { not: "CANCELLED" } },
   };
 
   // Payment method filter
@@ -168,9 +189,13 @@ export async function getCashierSales(
     contextWhere.method = filters.paymentMethod;
   }
 
-  // Order type filter
+  // Order type filter (merge with the cancelled-status predicate so the two
+  // can never clobber each other).
   if (filters.orderType) {
-    contextWhere.order = { orderType: filters.orderType as OrderType };
+    contextWhere.order = {
+      status: { not: "CANCELLED" },
+      orderType: filters.orderType as OrderType,
+    };
   }
 
   // Payment status filter — defaults to the sales book (PAID).
@@ -223,6 +248,9 @@ const conds: Prisma.Sql[] = [
   Prisma.sql`p.restaurantId = ${restaurantId}`,
   Prisma.sql`p.shiftId IN (${Prisma.join(shiftIds)})`,
   Prisma.sql`p.status = ${paymentWhere.status ?? "PAID"}`,
+  // PHASE 8B (B3) — same cancelled-order exclusion as `contextWhere` (this is
+  // the raw-SQL keyset path, which must stay aligned with the Prisma path).
+  Prisma.sql`o.\`status\` <> 'CANCELLED'`,
 ];
 if (paymentWhere.method) conds.push(Prisma.sql`p.method = ${paymentWhere.method}`);
 if (filters.orderType) conds.push(Prisma.sql`o.orderType = ${filters.orderType}`);
@@ -298,9 +326,25 @@ const items: SalesTransaction[] = kept.map((p) => ({
     };
   }
 
+  // PHASE 8B (B2) — refunds are attributed to the ORDERS in the current
+  // drawer scope, NOT to `refund.shiftId`. A refund's shift id is derived from
+  // the collected KASIR payment's drawer and is NULL for QRIS/legacy refunds,
+  // so keying on it silently dropped those refunds and overstated the drawer's
+  // net. The order scope is the SAME `contextWhere` the ledger uses (tenant +
+  // authorized branches/shifts + cancelled-order exclusion + method/orderType),
+  // so tenant/branch isolation is preserved and a foreign order's refund can
+  // never leak in.
+  const contextOrderIds = (
+    await prisma.payment.findMany({
+      where: contextWhere,
+      select: { orderId: true },
+      distinct: ["orderId"],
+    })
+  ).map((row) => row.orderId);
+
   const refundWhere: Prisma.RefundWhereInput = {
     restaurantId,
-    shiftId: { in: shiftIds },
+    orderId: { in: contextOrderIds },
     status: "APPROVED",
     ...(filters.paymentMethod
       ? { payment: { method: filters.paymentMethod } }
@@ -308,9 +352,13 @@ const items: SalesTransaction[] = kept.map((p) => ({
     ...(filters.orderType
       ? { order: { orderType: filters.orderType as OrderType } }
       : {}),
+    // PHASE 8B (B6) — a refund is a financial event attributed to its
+    // APPROVAL date, matching the canonical report (`computeRefundRevenue`
+    // uses `refund.approvedAt`). `status: "APPROVED"` guarantees PENDING /
+    // REJECTED refunds are never counted.
     ...(filters.startDate || filters.endDate
       ? {
-          requestedAt: {
+          approvedAt: {
             ...(filters.startDate
               ? { gte: new Date(`${filters.startDate}T00:00:00`) }
               : {}),

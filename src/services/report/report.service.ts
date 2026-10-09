@@ -189,8 +189,14 @@ function reportActivityWhere(
  * it must STAY in the revenue set so its revenue is reversed (not dropped) and
  * its incurred COGS remains representable. Partially refunded orders are still
  * PAID and were always included.
+ *
+ * PHASE 5B — EXPORTED as THE single revenue predicate. The dashboard
+ * (`orderService.getDashboardStats`) reuses this exact function plus
+ * `resolveReportRange`, so `dashboard.todayRevenue` and
+ * `getSalesReport().summary.totalSales` can never diverge again and no second
+ * revenue predicate exists. Do NOT duplicate this logic elsewhere.
  */
-function revenueWhere(
+export function revenueWhere(
   restaurantId: string,
   range: ReportRange,
   branchFilters?: string[] | null,
@@ -211,7 +217,7 @@ function revenueWhere(
  * date, so the refundable/refunded order may have been created in an earlier
  * period. Original SALES still use `revenueWhere` (order date bounded).
  */
-function revenueScopeWhere(
+export function revenueScopeWhere(
   restaurantId: string,
   branchFilters?: string[] | null,
   filters?: ReportFilters
@@ -282,9 +288,7 @@ export async function computeRefundRevenue(scope: {
   // refund, while August sales stay attributed to August (and the refund is
   // never double-counted: August's product revenue and September's refund
   // revenue are disjoint).
-  const branchFragment = scope.branchFilters?.length
-    ? Prisma.sql`AND o.\`branchId\` IN (${Prisma.join([...scope.branchFilters])})`
-    : Prisma.empty;
+  const branchFragment = aliasBranchSql("o", scope.branchFilters);
   const rows = await prisma.$queryRaw<
     Array<{
       branchId: string | null;
@@ -297,41 +301,23 @@ export async function computeRefundRevenue(scope: {
            COALESCE(SUM(t.\`refundRevenue\`), 0) AS refundRevenue
     FROM (
       SELECT o.\`branchId\` AS branchId,
-             (o.\`grandTotal\` - o.\`tax\` - o.\`serviceCharge\`) AS productRevenue,
+             ${productRevenueSql("o")} AS productRevenue,
              0 AS refundRevenue
       FROM \`order\` o
       WHERE o.\`restaurantId\` = ${scope.restaurantId}
         AND o.\`createdAt\` >= ${scope.start}
         AND o.\`createdAt\` <= ${scope.end}
-        AND o.\`status\` <> 'CANCELLED'
-        AND (
-          o.\`paymentStatus\` = 'PAID'
-          OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = o.\`id\` AND pm.\`status\` = 'REFUNDED')
-        )
+        AND ${revenueSetSql("o")}
         ${branchFragment}
         ${scope.extraOrderFilter ?? Prisma.empty}
       UNION ALL
       SELECT o.\`branchId\` AS branchId,
              0 AS productRevenue,
-             CASE WHEN o.\`grandTotal\` > 0
-               THEN LEAST(rf.\`refunded\` / o.\`grandTotal\`, 1)
-                    * (o.\`grandTotal\` - o.\`tax\` - o.\`serviceCharge\`)
-               ELSE 0 END AS refundRevenue
-      FROM (
-        SELECT r.\`orderId\` AS orderId, SUM(r.\`amount\`) AS refunded
-        FROM \`refund\` r
-        WHERE r.\`status\` = 'APPROVED'
-          AND r.\`approvedAt\` >= ${scope.start}
-          AND r.\`approvedAt\` <= ${scope.end}
-        GROUP BY r.\`orderId\`
-      ) rf
+             ${refundRevenueSql("o", "rf")} AS refundRevenue
+      FROM (${approvedRefundsSql(scope.restaurantId, { start: scope.start, end: scope.end })}) rf
       JOIN \`order\` o ON o.\`id\` = rf.\`orderId\`
       WHERE o.\`restaurantId\` = ${scope.restaurantId}
-        AND o.\`status\` <> 'CANCELLED'
-        AND (
-          o.\`paymentStatus\` = 'PAID'
-          OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = o.\`id\` AND pm.\`status\` = 'REFUNDED')
-        )
+        AND ${revenueSetSql("o")}
         ${branchFragment}
         ${scope.extraOrderFilter ?? Prisma.empty}
     ) t
@@ -359,12 +345,260 @@ export async function computeRefundRevenue(scope: {
 }
 
 // ============================================================
+// PHASE 9B — CUSTOMER-SCOPED CANONICAL REVENUE
+//
+// DERIVED FROM the canonical engine above (revenueWhere /
+// computeRefundRevenue): the SAME predicate (non-cancelled AND PAID-or-
+// collected-then-refunded) and the SAME refund math (APPROVED refunds
+// attributed by approval date, capped product-basis refund). It exists only
+// because the canonical helpers aggregate by BRANCH; a customer report needs
+// identical math grouped by CUSTOMER (or restricted to a set of order ids).
+// No new revenue formula is introduced — PHASE 9B verification #22 asserts the
+// per-customer totals equal computeRefundRevenue for the same scope.
+// ============================================================
+
+export interface CustomerRevenueBucket {
+  orderCount: number;
+  productRevenue: number;
+  refundRevenue: number;
+  netSales: number;
+}
+
+/**
+ * Canonical revenue grouped by customer (optionally restricted to an order set).
+ *
+ *   productRevenue → orders on the revenue set, optionally CREATED in `range`.
+ *   refundRevenue  → APPROVED refunds on the revenue set, optionally APPROVED
+ *                    in `range`, on the underlying order's product-revenue
+ *                    basis (same LEAST cap). PHASE 9B-F5 aligned this half to
+ *                    the canonical `revenueSetSql` predicate used by
+ *                    computeRefundRevenue.
+ *
+ * `range = null` makes both halves date-free (the operational customer list
+ * asks for an all-time canonical spend). `extraOrderFilter` narrows the order
+ * set (e.g. reservation-linked order ids) and is applied to BOTH halves, the
+ * same way computeRefundRevenue applies it.
+ */
+export async function computeCustomerRevenue(scope: {
+  restaurantId: string;
+  range?: ReportRange | null;
+  branchFilters?: string[] | null;
+  customerIds?: string[] | null;
+  extraOrderFilter?: Prisma.Sql;
+}): Promise<{
+  byCustomer: Map<string, CustomerRevenueBucket>;
+  total: CustomerRevenueBucket;
+}> {
+  const branchFragmentSql = aliasBranchSql("o", scope.branchFilters);
+  const customerFragmentSql = scope.customerIds?.length
+    ? Prisma.sql`AND o.\`customerId\` IN (${Prisma.join([...scope.customerIds])})`
+    : Prisma.empty;
+  const productDateFragment = scope.range
+    ? Prisma.sql`AND o.\`createdAt\` >= ${scope.range.start} AND o.\`createdAt\` <= ${scope.range.end}`
+    : Prisma.empty;
+  const extraOrderFilter = scope.extraOrderFilter ?? Prisma.empty;
+
+  const rows = await prisma.$queryRaw<
+    Array<{
+      customerId: string | null;
+      orderCount: number | bigint | string;
+      productRevenue: number | bigint | string;
+      refundRevenue: number | bigint | string;
+    }>
+  >`
+    SELECT t.\`customerId\` AS customerId,
+           COALESCE(SUM(t.\`orderCount\`), 0) AS orderCount,
+           COALESCE(SUM(t.\`productRevenue\`), 0) AS productRevenue,
+           COALESCE(SUM(t.\`refundRevenue\`), 0) AS refundRevenue
+    FROM (
+      SELECT o.\`customerId\` AS customerId,
+             1 AS orderCount,
+             ${productRevenueSql("o")} AS productRevenue,
+             0 AS refundRevenue
+      FROM \`order\` o
+      WHERE o.\`restaurantId\` = ${scope.restaurantId}
+        AND ${revenueSetSql("o")}
+        ${productDateFragment}
+        ${branchFragmentSql}
+        ${customerFragmentSql}
+        ${extraOrderFilter}
+      UNION ALL
+      SELECT o.\`customerId\` AS customerId,
+             0 AS orderCount,
+             0 AS productRevenue,
+             ${refundRevenueSql("o", "rf")} AS refundRevenue
+      -- PHASE 9B-F5 — the refund half now applies the SAME canonical
+      -- revenue-set predicate as computeRefundRevenue (non-cancelled AND
+      -- paid-or-collected-then-refunded), so an APPROVED refund on an order
+      -- outside the revenue set no longer reduces customer net revenue.
+      FROM (${approvedRefundsSql(scope.restaurantId, scope.range ?? null)}) rf
+      JOIN \`order\` o ON o.\`id\` = rf.\`orderId\`
+      WHERE o.\`restaurantId\` = ${scope.restaurantId}
+        AND ${revenueSetSql("o")}
+        ${branchFragmentSql}
+        ${customerFragmentSql}
+        ${extraOrderFilter}
+    ) t
+    WHERE t.\`customerId\` IS NOT NULL
+    GROUP BY t.\`customerId\`
+  `;
+
+  const byCustomer = new Map<string, CustomerRevenueBucket>();
+  const total: CustomerRevenueBucket = {
+    orderCount: 0,
+    productRevenue: 0,
+    refundRevenue: 0,
+    netSales: 0,
+  };
+  for (const r of rows) {
+    if (!r.customerId) continue;
+    const productRevenue = num(r.productRevenue);
+    const refundRevenue = num(r.refundRevenue);
+    const netSales = Math.round((productRevenue - refundRevenue) * 100) / 100;
+    byCustomer.set(r.customerId, {
+      orderCount: Number(r.orderCount),
+      productRevenue,
+      refundRevenue,
+      netSales,
+    });
+    total.orderCount += Number(r.orderCount);
+    total.productRevenue = num(total.productRevenue + productRevenue);
+    total.refundRevenue = num(total.refundRevenue + refundRevenue);
+    total.netSales = num(total.netSales + netSales);
+  }
+  return { byCustomer, total };
+}
+
+/**
+ * Resolve a report period into a DATE-ONLY [start, end] range for comparing
+ * the `reservation`.`reservationDate` (@db.Date) column. Calendar days are
+ * taken from the LOCAL parts of resolveReportRange (the day boundaries the UI
+ * shows) and re-anchored at UTC midnight, matching the reservation write path
+ * (`dbDateFromDateOnly` stores `${date}T00:00:00.000Z`).
+ */
+function resolveReservationDateRange(
+  period: ReportPeriod,
+  startDate?: string,
+  endDate?: string
+): ReportRange {
+  const range = resolveReportRange(period, startDate, endDate);
+  const localDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate()
+    ).padStart(2, "0")}`;
+  return {
+    start: new Date(`${localDate(range.start)}T00:00:00.000Z`),
+    end: new Date(`${localDate(range.end)}T23:59:59.999Z`),
+  };
+}
+
+/** Hard ceiling on customers returned by getCustomerReport (server-side only). */
+const CUSTOMER_REPORT_MAX_ROWS = 5000;
+
+// ============================================================
 // Raw-SQL helpers (conditional WHERE fragments)
 // ============================================================
 
 function branchFragment(branchFilters?: string[] | null) {
   return branchFilters?.length
     ? Prisma.sql`AND \`branchId\` IN (${Prisma.join([...branchFilters])})`
+    : Prisma.empty;
+}
+
+// ============================================================
+// PHASE 9B-F4 — CANONICAL REVENUE SQL (single source of truth)
+//
+// The revenue-set predicate and the refund math below were previously copied
+// into several PHASE 8/9B report queries. They are now defined ONCE here as
+// reusable Prisma.Sql fragments and composed by computeRefundRevenue,
+// computeCustomerRevenue, the customer-report activity aggregation, the
+// reservation funnel, and the reservation CSV export — so a future change to
+// the canonical revenue rule cannot silently diverge between them. This module
+// is the existing canonical engine: no second engine is introduced.
+// ============================================================
+
+/** Identifier-safe alias token. Only code-controlled literals are passed in. */
+function sqlAlias(name: string): Prisma.Sql {
+  return Prisma.raw(name);
+}
+
+/**
+ * Canonical "collected" half of the revenue set for an `order` alias:
+ * `(paymentStatus = 'PAID' OR an existing REFUNDED payment)`. Callers whose
+ * WHERE already enforces `status <> 'CANCELLED'` (e.g. per-order CASE
+ * aggregations) compose this directly; every other caller composes
+ * `revenueSetSql` for the complete predicate.
+ */
+function paidRevenueSql(orderAlias: string): Prisma.Sql {
+  const o = sqlAlias(orderAlias);
+  return Prisma.sql`(
+    ${o}.\`paymentStatus\` = 'PAID'
+    OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = ${o}.\`id\` AND pm.\`status\` = 'REFUNDED')
+  )`;
+}
+
+/**
+ * Canonical revenue-set predicate: a non-cancelled order that is PAID, or was
+ * collected and later refunded (so a fully refunded order stays
+ * representable). This is the source of truth for every `netSales` figure.
+ */
+function revenueSetSql(orderAlias: string): Prisma.Sql {
+  const o = sqlAlias(orderAlias);
+  return Prisma.sql`${o}.\`status\` <> 'CANCELLED' AND ${paidRevenueSql(orderAlias)}`;
+}
+
+/** Canonical product revenue for an order alias: grandTotal − tax − serviceCharge. */
+function productRevenueSql(orderAlias: string): Prisma.Sql {
+  const o = sqlAlias(orderAlias);
+  return Prisma.sql`(${o}.\`grandTotal\` - ${o}.\`tax\` - ${o}.\`serviceCharge\`)`;
+}
+
+/**
+ * Canonical refund revenue for an order alias against a pre-aggregated refund
+ * alias: the refunded share (capped at 1) applied to the order's product basis.
+ */
+function refundRevenueSql(
+  orderAlias: string,
+  refundedAlias: string
+): Prisma.Sql {
+  const o = sqlAlias(orderAlias);
+  const rf = sqlAlias(refundedAlias);
+  return Prisma.sql`CASE WHEN ${o}.\`grandTotal\` > 0
+    THEN LEAST(${rf}.\`refunded\` / ${o}.\`grandTotal\`, 1) * ${productRevenueSql(orderAlias)}
+    ELSE 0 END`;
+}
+
+/**
+ * APPROVED refunds aggregated by order, tenant-scoped, optionally bounded to
+ * the report range by `approvedAt` (range = null ⇒ all-time refunds, as the
+ * operational customer list asks). Canonical H4.5-B1 attribution base. The
+ * explicit `restaurantId` predicate is defense-in-depth and lets the optimizer
+ * prune before the JOIN; the joining query is also tenant-scoped.
+ */
+function approvedRefundsSql(
+  restaurantId: string,
+  range?: ReportRange | null
+): Prisma.Sql {
+  const dateFragment = range
+    ? Prisma.sql`AND r.\`approvedAt\` >= ${range.start} AND r.\`approvedAt\` <= ${range.end}`
+    : Prisma.empty;
+  return Prisma.sql`
+    SELECT r.\`orderId\` AS orderId, SUM(r.\`amount\`) AS refunded
+    FROM \`refund\` r
+    WHERE r.\`status\` = 'APPROVED'
+      AND r.\`restaurantId\` = ${restaurantId}
+      ${dateFragment}
+    GROUP BY r.\`orderId\`
+  `;
+}
+
+/** Branch fragment for an arbitrary order/refund alias (code-controlled). */
+function aliasBranchSql(
+  alias: string,
+  branchFilters?: string[] | null
+): Prisma.Sql {
+  return branchFilters?.length
+    ? Prisma.sql`AND ${sqlAlias(alias)}.\`branchId\` IN (${Prisma.join([...branchFilters])})`
     : Prisma.empty;
 }
 
@@ -378,11 +612,7 @@ function orderFragment(
     AND \`restaurantId\` = ${restaurantId}
     AND \`createdAt\` >= ${range.start}
     AND \`createdAt\` <= ${range.end}
-    AND \`status\` <> 'CANCELLED'
-    AND (
-      \`paymentStatus\` = 'PAID'
-      OR EXISTS (SELECT 1 FROM \`payment\` pm WHERE pm.\`orderId\` = \`order\`.\`id\` AND pm.\`status\` = 'REFUNDED')
-    )
+    AND ${revenueSetSql("\`order\`")}
     ${branchFragment(branchFilters)}
     ${filters?.orderType ? Prisma.sql`AND \`orderType\` = ${filters.orderType}` : Prisma.empty}
     ${filters?.paymentMethod ? Prisma.sql`AND \`id\` IN (SELECT \`orderId\` FROM \`payment\` WHERE \`method\` = ${filters.paymentMethod} AND \`status\` = 'PAID')` : Prisma.empty}
@@ -1751,7 +1981,13 @@ export class ReportService {
     const shiftIds = shifts.map((s) => s.id);
     const [paymentRows, refundRows] = await Promise.all([
       prisma.payment.findMany({
-        where: { shiftId: { in: shiftIds }, status: "PAID" },
+        // PHASE 8B (B3) — a shift-sales book must never count a collected
+        // payment on a CANCELLED order (same as `revenueWhere`).
+        where: {
+          shiftId: { in: shiftIds },
+          status: "PAID",
+          order: { status: { not: "CANCELLED" } },
+        },
         select: { shiftId: true, method: true, provider: true, amount: true, orderId: true },
       }),
       prisma.refund.findMany({
@@ -1883,6 +2119,10 @@ export class ReportService {
 
     const where: Prisma.PaymentWhereInput = {
       restaurantId,
+      // PHASE 8B (B3) — a payment book that carries a revenue figure must never
+      // book a collected payment on a CANCELLED order. Same canonical semantics
+      // as `revenueWhere` (`order.status != CANCELLED`).
+      order: { status: { not: "CANCELLED" } },
       ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
       ...(branchId ? { branchId } : {}),
       ...(cashierId ? { shift: { userId: cashierId } } : {}),
@@ -2022,6 +2262,10 @@ export class ReportService {
 
     const where: Prisma.PaymentWhereInput = {
       restaurantId,
+      // PHASE 8B (B3) — a payment book that carries a revenue figure must never
+      // book a collected payment on a CANCELLED order. Same canonical semantics
+      // as `revenueWhere` (`order.status != CANCELLED`).
+      order: { status: { not: "CANCELLED" } },
       ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
       ...(branchId ? { branchId } : {}),
       ...(cashierId ? { shift: { userId: cashierId } } : {}),
@@ -2445,6 +2689,844 @@ export class ReportService {
       summary,
       outlets: rankedOutlets,
     };
+  }
+
+  // ============================================================
+  // PHASE 9B — C4/C5 LAPORAN CUSTOMER
+  //
+  // All aggregation is server-side (SQL GROUP BY + the canonical
+  // computeCustomerRevenue helper). The customer master is NEVER streamed
+  // whole: only customers with activity in the period (or created in the
+  // period) are loaded, capped at CUSTOMER_REPORT_MAX_ROWS. Spending follows
+  // the Sales Report semantics (revenue set, refund-aware net).
+  //
+  // Date semantics: activity/acquisition = Order.createdAt within the period;
+  // customer acquisition = Customer.createdAt within the period; reservation
+  // metrics = Reservation.reservationDate within the period.
+  // ============================================================
+  async getCustomerReport(
+    restaurantId: string,
+    period: ReportPeriod,
+    opts?: {
+      startDate?: string;
+      endDate?: string;
+      branchFilters?: string[] | null;
+      search?: string | null;
+    }
+  ) {
+    const range = resolveReportRange(period, opts?.startDate, opts?.endDate);
+    const branchFilters = opts?.branchFilters ?? null;
+    const search = opts?.search?.trim() || null;
+
+    const orderBranchSql = branchFilters?.length
+      ? Prisma.sql`AND o.\`branchId\` IN (${Prisma.join([...branchFilters])})`
+      : Prisma.empty;
+    const resvBranchSql = branchFilters?.length
+      ? Prisma.sql`AND r.\`branchId\` IN (${Prisma.join([...branchFilters])})`
+      : Prisma.empty;
+    const branchWhere = branchFilters?.length
+      ? { branchId: { in: branchFilters } }
+      : {};
+
+    // Scoped customers. Customers are restaurant-global (no Customer.branchId),
+    // so branch scope is expressed through their orders.
+    //   - No branch filter → restaurant-wide (unchanged): created in the period
+    //     OR with a non-cancelled order in the period.
+    //   - PHASE 9B-F3 branch-scoped → a listed customer MUST have at least one
+    //     order in the selected branch. A period-created customer qualifies
+    //     only with such an in-branch order (allowed even outside the period);
+    //     in-period activity must likewise be in the selected branch.
+    const activityOrNew: Prisma.CustomerWhereInput = branchFilters?.length
+      ? {
+          OR: [
+            {
+              AND: [
+                { createdAt: { gte: range.start, lte: range.end } },
+                { orders: { some: { ...branchWhere } } },
+              ],
+            },
+            {
+              orders: {
+                some: {
+                  status: { not: "CANCELLED" },
+                  createdAt: { gte: range.start, lte: range.end },
+                  ...branchWhere,
+                },
+              },
+            },
+          ],
+        }
+      : {
+          OR: [
+            { createdAt: { gte: range.start, lte: range.end } },
+            {
+              orders: {
+                some: {
+                  status: { not: "CANCELLED" },
+                  createdAt: { gte: range.start, lte: range.end },
+                },
+              },
+            },
+          ],
+        };
+    const searchClause: Prisma.CustomerWhereInput | null = search
+      ? {
+          OR: [
+            { name: { contains: search } },
+            { phone: { contains: search } },
+          ],
+        }
+      : null;
+
+    // C1 — explicit allow-list select (never password / whatsappId secrets).
+    const customers = await prisma.customer.findMany({
+      where: {
+        restaurantId,
+        AND: searchClause ? [activityOrNew, searchClause] : [activityOrNew],
+      },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        email: true,
+        isActive: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: CUSTOMER_REPORT_MAX_ROWS,
+    });
+    const ids = customers.map((c) => c.id);
+
+    const [activityRows, allTimeRows, reservationRows, resvOrderRows] =
+      await Promise.all([
+        ids.length
+          ? prisma.$queryRaw<
+              Array<{
+                customerId: string;
+                activityOrders: number | bigint | string;
+                revenueOrders: number | bigint | string;
+                grossSales: number | bigint | string;
+                totalSales: number | bigint | string;
+                items: number | bigint | string;
+                lastOrderAt: Date | null;
+              }>
+            >`
+              SELECT o.\`customerId\` AS customerId,
+                     COUNT(*) AS activityOrders,
+                     SUM(CASE WHEN ${paidRevenueSql("o")}
+                              THEN 1 ELSE 0 END) AS revenueOrders,
+                     COALESCE(SUM(CASE WHEN ${paidRevenueSql("o")}
+                              THEN o.\`subtotal\` ELSE 0 END), 0) AS grossSales,
+                     COALESCE(SUM(CASE WHEN ${paidRevenueSql("o")}
+                              THEN o.\`grandTotal\` ELSE 0 END), 0) AS totalSales,
+                     COALESCE(SUM(CASE WHEN ${paidRevenueSql("o")}
+                              THEN COALESCE(oi.\`qty\`, 0) ELSE 0 END), 0) AS items,
+                     MAX(o.\`createdAt\`) AS lastOrderAt
+              FROM \`order\` o
+              LEFT JOIN (
+                SELECT \`orderId\` AS orderId, SUM(\`quantity\`) AS qty
+                FROM \`orderitem\` GROUP BY \`orderId\`
+              ) oi ON oi.\`orderId\` = o.\`id\`
+              WHERE o.\`restaurantId\` = ${restaurantId}
+                AND o.\`status\` <> 'CANCELLED'
+                AND o.\`createdAt\` >= ${range.start}
+                AND o.\`createdAt\` <= ${range.end}
+                AND o.\`customerId\` IN (${Prisma.join(ids)})
+                ${orderBranchSql}
+              GROUP BY o.\`customerId\`
+            `
+          : Promise.resolve([]),
+        ids.length
+          ? prisma.$queryRaw<Array<{ customerId: string; firstOrderAt: Date }>>`
+              SELECT o.\`customerId\` AS customerId,
+                     MIN(o.\`createdAt\`) AS firstOrderAt
+              FROM \`order\` o
+              WHERE o.\`restaurantId\` = ${restaurantId}
+                AND o.\`status\` <> 'CANCELLED'
+                AND o.\`customerId\` IN (${Prisma.join(ids)})
+                ${orderBranchSql}
+              GROUP BY o.\`customerId\`
+            `
+          : Promise.resolve([]),
+        ids.length
+          ? prisma.$queryRaw<
+              Array<{
+                customerId: string;
+                total: number | bigint | string;
+                confirmed: number | bigint | string;
+                seated: number | bigint | string;
+                completed: number | bigint | string;
+                cancelled: number | bigint | string;
+                noShow: number | bigint | string;
+                lastReservationDate: Date | null;
+              }>
+            >`
+              SELECT r.\`customerId\` AS customerId,
+                     COUNT(*) AS total,
+                     SUM(r.\`status\` = 'CONFIRMED') AS confirmed,
+                     SUM(r.\`status\` = 'SEATED') AS seated,
+                     SUM(r.\`status\` = 'COMPLETED') AS completed,
+                     SUM(r.\`status\` = 'CANCELLED') AS cancelled,
+                     SUM(r.\`status\` = 'NO_SHOW') AS noShow,
+                     MAX(r.\`reservationDate\`) AS lastReservationDate
+              FROM \`reservation\` r
+              WHERE r.\`restaurantId\` = ${restaurantId}
+                AND r.\`customerId\` IS NOT NULL
+                AND r.\`customerId\` IN (${Prisma.join(ids)})
+                AND r.\`reservationDate\` >= ${range.start}
+                AND r.\`reservationDate\` <= ${range.end}
+                ${resvBranchSql}
+              GROUP BY r.\`customerId\`
+            `
+          : Promise.resolve([]),
+        ids.length
+          ? prisma.reservation.findMany({
+              where: {
+                restaurantId,
+                customerId: { in: ids },
+                orderId: { not: null },
+                reservationDate: { gte: range.start, lte: range.end },
+                ...branchWhere,
+              },
+              select: { customerId: true, orderId: true },
+            })
+          : Promise.resolve([]),
+      ]);
+
+    // Canonical customer spending (revenue set, refund-aware) for the period.
+    const [revenue, reservationRevenue] = await Promise.all([
+      computeCustomerRevenue({
+        restaurantId,
+        range,
+        branchFilters,
+        customerIds: ids,
+      }),
+      (() => {
+        const orderIds = [
+          ...new Set(
+            resvOrderRows
+              .map((r) => r.orderId)
+              .filter((v): v is string => !!v)
+          ),
+        ];
+        return orderIds.length
+          ? computeCustomerRevenue({
+              restaurantId,
+              range,
+              branchFilters,
+              customerIds: ids,
+              extraOrderFilter: Prisma.sql`AND o.\`id\` IN (${Prisma.join(orderIds)})`,
+            })
+          : Promise.resolve({
+              byCustomer: new Map<string, CustomerRevenueBucket>(),
+              total: {
+                orderCount: 0,
+                productRevenue: 0,
+                refundRevenue: 0,
+                netSales: 0,
+              },
+            });
+      })(),
+    ]);
+
+    const activityByCustomer = new Map(activityRows.map((r) => [r.customerId, r]));
+    const firstOrderByCustomer = new Map(
+      allTimeRows.map((r) => [r.customerId, r.firstOrderAt])
+    );
+    const reservationByCustomer = new Map(
+      reservationRows.map((r) => [r.customerId, r])
+    );
+
+    const rows = customers.map((c) => {
+      const activity = activityByCustomer.get(c.id);
+      const rev = revenue.byCustomer.get(c.id);
+      const resv = reservationByCustomer.get(c.id);
+      const resvRev = reservationRevenue.byCustomer.get(c.id);
+      const firstOrderAt = firstOrderByCustomer.get(c.id) ?? null;
+      const orders = rev?.orderCount ?? 0;
+      const totalSales = num(activity?.totalSales);
+      const isNewCustomer = c.createdAt >= range.start && c.createdAt <= range.end;
+      const hasActivityInPeriod = Number(activity?.activityOrders ?? 0) > 0;
+      const isReturning =
+        hasActivityInPeriod && !!firstOrderAt && firstOrderAt < range.start;
+
+      return {
+        customerId: c.id,
+        name: c.name,
+        phone: c.phone,
+        email: c.email,
+        isActive: c.isActive,
+        customerCreatedAt: c.createdAt,
+        orders,
+        activityOrders: Number(activity?.activityOrders ?? 0),
+        items: num(activity?.items),
+        grossSales: num(activity?.grossSales),
+        totalSales,
+        refund: rev?.refundRevenue ?? 0,
+        netSales: rev?.netSales ?? 0,
+        aov: orders > 0 ? Math.round((totalSales / orders) * 100) / 100 : 0,
+        firstOrderAt,
+        lastOrderAt: activity?.lastOrderAt ?? null,
+        isNewCustomer,
+        isReturning,
+        reservations: {
+          total: Number(resv?.total ?? 0),
+          confirmed: Number(resv?.confirmed ?? 0),
+          seated: Number(resv?.seated ?? 0),
+          completed: Number(resv?.completed ?? 0),
+          cancelled: Number(resv?.cancelled ?? 0),
+          noShow: Number(resv?.noShow ?? 0),
+          lastReservationDate: resv?.lastReservationDate ?? null,
+          revenue: resvRev?.productRevenue ?? 0,
+          refund: resvRev?.refundRevenue ?? 0,
+          netSales: resvRev?.netSales ?? 0,
+        },
+      };
+    });
+
+    const summary = {
+      totalCustomers: rows.length,
+      newCustomers: rows.filter((r) => r.isNewCustomer).length,
+      returningCustomers: rows.filter((r) => r.isReturning).length,
+      activeCustomers: rows.filter((r) => r.activityOrders > 0).length,
+      inactiveCustomers: rows.filter(
+        (r) =>
+          r.activityOrders === 0 &&
+          !!r.firstOrderAt &&
+          r.firstOrderAt < range.start
+      ).length,
+      totalOrders: rows.reduce((s, r) => s + r.orders, 0),
+      totalItemsSold: rows.reduce((s, r) => s + r.items, 0),
+      grossSales: num(rows.reduce((s, r) => s + r.grossSales, 0)),
+      totalSales: num(rows.reduce((s, r) => s + r.totalSales, 0)),
+      totalRefund: num(rows.reduce((s, r) => s + r.refund, 0)),
+      netSales: num(rows.reduce((s, r) => s + r.netSales, 0)),
+      totalReservations: rows.reduce((s, r) => s + r.reservations.total, 0),
+      reservationRevenue: num(
+        rows.reduce((s, r) => s + r.reservations.revenue, 0)
+      ),
+    };
+    const averageOrderValue =
+      summary.totalOrders > 0
+        ? Math.round((summary.totalSales / summary.totalOrders) * 100) / 100
+        : 0;
+
+    return {
+      period,
+      range: {
+        start: range.start.toISOString(),
+        end: range.end.toISOString(),
+      },
+      summary: { ...summary, averageOrderValue },
+      customers: rows,
+    };
+  }
+
+  // ============================================================
+  // PHASE 9B — C8/C9/C10/C11 LAPORAN RESERVASI
+  //
+  // Aggregation is server-side (Prisma groupBy/aggregate + raw SQL for the
+  // date series and the funnel). Reservation revenue reuses the canonical
+  // engine restricted to reservation-linked order ids (C9). The funnel is
+  // STATIC (no ReservationStatusHistory): stages are derived from the existing
+  // status column and confirmedAt/seatedAt/completedAt timestamps.
+  //
+  // Date semantics: scoped by Reservation.reservationDate (business date).
+  // Reservation revenue is attributed by Order.createdAt / refund approvedAt
+  // (canonical basis). createdAt is exposed separately as the booking date.
+  // ============================================================
+  async getReservationReport(
+    restaurantId: string,
+    period: ReportPeriod,
+    opts?: {
+      startDate?: string;
+      endDate?: string;
+      branchFilters?: string[] | null;
+    }
+  ) {
+    const range = resolveReservationDateRange(
+      period,
+      opts?.startDate,
+      opts?.endDate
+    );
+    const branchFilters = opts?.branchFilters ?? null;
+
+    const baseWhere: Prisma.ReservationWhereInput = {
+      restaurantId,
+      ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
+      reservationDate: { gte: range.start, lte: range.end },
+    };
+
+    const branchSql = branchFilters?.length
+      ? Prisma.sql`AND r.\`branchId\` IN (${Prisma.join([...branchFilters])})`
+      : Prisma.empty;
+
+    // C9 — reservation-linked order ids collected ONCE, then fed to the
+    // canonical revenue engine. Reservations without an orderId have no revenue.
+    const linked = await prisma.reservation.findMany({
+      where: { ...baseWhere, orderId: { not: null } },
+      select: { orderId: true },
+    });
+    const orderIds = [
+      ...new Set(linked.map((r) => r.orderId).filter((v): v is string => !!v)),
+    ];
+
+    const [
+      statusRows,
+      sourceRows,
+      partyRows,
+      branchRows,
+      tableRows,
+      overall,
+      dateRows,
+      funnelRows,
+      orderPaymentRows,
+      reservationRevenue,
+    ] = await Promise.all([
+      prisma.reservation.groupBy({
+        by: ["status"],
+        where: baseWhere,
+        _count: { _all: true },
+        _sum: { partySize: true },
+      }),
+      prisma.reservation.groupBy({
+        by: ["source"],
+        where: baseWhere,
+        _count: { _all: true },
+        _sum: { partySize: true },
+      }),
+      prisma.reservation.groupBy({
+        by: ["partySize"],
+        where: baseWhere,
+        _count: { _all: true },
+        _sum: { partySize: true },
+      }),
+      prisma.reservation.groupBy({
+        by: ["branchId"],
+        where: baseWhere,
+        _count: { _all: true },
+        _sum: { partySize: true },
+      }),
+      prisma.reservation.groupBy({
+        by: ["tableId"],
+        where: baseWhere,
+        _count: { _all: true },
+        _sum: { partySize: true },
+      }),
+      prisma.reservation.aggregate({
+        where: baseWhere,
+        _count: { _all: true },
+        _sum: { partySize: true },
+        _avg: { partySize: true },
+      }),
+      prisma.$queryRaw<
+        Array<{
+          date: string;
+          total: number | bigint | string;
+          confirmed: number | bigint | string;
+          seated: number | bigint | string;
+          completed: number | bigint | string;
+          cancelled: number | bigint | string;
+          noShow: number | bigint | string;
+          guests: number | bigint | string;
+        }>
+      >`
+        SELECT DATE_FORMAT(r.\`reservationDate\`, '%Y-%m-%d') AS date,
+               COUNT(*) AS total,
+               SUM(r.\`status\` = 'CONFIRMED') AS confirmed,
+               SUM(r.\`status\` = 'SEATED') AS seated,
+               SUM(r.\`status\` = 'COMPLETED') AS completed,
+               SUM(r.\`status\` = 'CANCELLED') AS cancelled,
+               SUM(r.\`status\` = 'NO_SHOW') AS noShow,
+               COALESCE(SUM(r.\`partySize\`), 0) AS guests
+        FROM \`reservation\` r
+        WHERE r.\`restaurantId\` = ${restaurantId}
+          AND r.\`reservationDate\` >= ${range.start}
+          AND r.\`reservationDate\` <= ${range.end}
+          ${branchSql}
+        GROUP BY DATE_FORMAT(r.\`reservationDate\`, '%Y-%m-%d')
+        ORDER BY date ASC
+      `,
+      // C10 — STATIC funnel derived from status + existing timestamps. "paid"
+      // counts reservations whose linked order is on the canonical revenue set
+      // (paid, or collected-then-refunded) — never a raw grandTotal sum.
+      prisma.$queryRaw<
+        Array<{
+          created: number | bigint | string;
+          confirmed: number | bigint | string;
+          paid: number | bigint | string;
+          seated: number | bigint | string;
+          completed: number | bigint | string;
+          cancelled: number | bigint | string;
+          noShow: number | bigint | string;
+        }>
+      >`
+        SELECT COUNT(*) AS created,
+               SUM(r.\`confirmedAt\` IS NOT NULL) AS confirmed,
+               SUM(r.\`seatedAt\` IS NOT NULL) AS seated,
+               SUM(r.\`completedAt\` IS NOT NULL) AS completed,
+               SUM(r.\`status\` = 'CANCELLED') AS cancelled,
+               SUM(r.\`status\` = 'NO_SHOW') AS noShow,
+               SUM(r.\`orderId\` IS NOT NULL AND EXISTS (
+                 SELECT 1 FROM \`order\` o
+                 WHERE o.\`id\` = r.\`orderId\`
+                   AND ${revenueSetSql("o")}
+               )) AS paid
+        FROM \`reservation\` r
+        WHERE r.\`restaurantId\` = ${restaurantId}
+          AND r.\`reservationDate\` >= ${range.start}
+          AND r.\`reservationDate\` <= ${range.end}
+          ${branchSql}
+      `,
+      // C11 — payment classification via the existing Order.paymentStatus.
+      orderIds.length
+        ? prisma.order.groupBy({
+            by: ["paymentStatus"],
+            where: { id: { in: orderIds }, restaurantId },
+            _count: { _all: true },
+          })
+        : Promise.resolve([]),
+      orderIds.length
+        ? computeRefundRevenue({
+            restaurantId,
+            start: range.start,
+            end: range.end,
+            branchFilters,
+            extraOrderFilter: Prisma.sql`AND o.\`id\` IN (${Prisma.join(orderIds)})`,
+          })
+        : Promise.resolve({
+            total: { productRevenue: 0, refundRevenue: 0, netSales: 0 },
+            byBranch: new Map<string, RefundRevenueBucket>(),
+          }),
+    ]);
+
+    const branchIds = branchRows
+      .map((r) => r.branchId)
+      .filter((v): v is string => !!v);
+    const tableIds = tableRows
+      .map((r) => r.tableId)
+      .filter((v): v is string => !!v);
+    const [branches, tables] = await Promise.all([
+      branchIds.length
+        ? prisma.branch.findMany({
+            where: { id: { in: branchIds } },
+            select: { id: true, code: true, name: true },
+          })
+        : Promise.resolve([]),
+      tableIds.length
+        ? prisma.table.findMany({
+            where: { id: { in: tableIds } },
+            select: { id: true, number: true, name: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const branchMap = new Map(branches.map((b) => [b.id, b]));
+    const tableMap = new Map(tables.map((t) => [t.id, t]));
+
+    const statusCount = (s: string) =>
+      statusRows.find((r) => r.status === s)?._count._all ?? 0;
+    const totalReservations = overall._count._all;
+    const totalGuests = num(overall._sum.partySize);
+    const cancelled = statusCount("CANCELLED");
+    const noShow = statusCount("NO_SHOW");
+    const funnelRow = funnelRows[0];
+
+    const paymentBreakdown: Record<string, number> = {
+      NO_ORDER: totalReservations - linked.length,
+    };
+    for (const r of orderPaymentRows) {
+      paymentBreakdown[r.paymentStatus] = r._count._all;
+    }
+
+    return {
+      period,
+      range: {
+        start: range.start.toISOString(),
+        end: range.end.toISOString(),
+      },
+      summary: {
+        totalReservations,
+        pending: statusCount("PENDING"),
+        confirmed: statusCount("CONFIRMED"),
+        seated: statusCount("SEATED"),
+        completed: statusCount("COMPLETED"),
+        cancelled,
+        noShow,
+        cancellationRate:
+          totalReservations > 0
+            ? Math.round((cancelled / totalReservations) * 10000) / 100
+            : 0,
+        noShowRate:
+          totalReservations > 0
+            ? Math.round((noShow / totalReservations) * 10000) / 100
+            : 0,
+        averagePartySize:
+          totalReservations > 0
+            ? Math.round((totalGuests / totalReservations) * 100) / 100
+            : 0,
+        totalGuests,
+        withOrder: linked.length,
+        withoutOrder: totalReservations - linked.length,
+        reservationRevenue: reservationRevenue.total.productRevenue,
+        reservationRefund: reservationRevenue.total.refundRevenue,
+        reservationNetRevenue: reservationRevenue.total.netSales,
+      },
+      funnel: {
+        created: totalReservations,
+        confirmed: Number(funnelRow?.confirmed ?? 0),
+        paid: Number(funnelRow?.paid ?? 0),
+        seated: Number(funnelRow?.seated ?? 0),
+        completed: Number(funnelRow?.completed ?? 0),
+        cancelled: Number(funnelRow?.cancelled ?? 0),
+        noShow: Number(funnelRow?.noShow ?? 0),
+      },
+      byStatus: statusRows.map((r) => ({
+        status: r.status,
+        count: r._count._all,
+        guests: num(r._sum.partySize),
+      })),
+      byBranch: branchRows.map((r) => ({
+        branchId: r.branchId,
+        code: r.branchId ? branchMap.get(r.branchId)?.code ?? null : null,
+        name: r.branchId ? branchMap.get(r.branchId)?.name ?? null : null,
+        count: r._count._all,
+        guests: num(r._sum.partySize),
+      })),
+      bySource: sourceRows.map((r) => ({
+        source: r.source,
+        count: r._count._all,
+        guests: num(r._sum.partySize),
+      })),
+      byPartySize: partyRows
+        .map((r) => ({
+          partySize: r.partySize,
+          count: r._count._all,
+          guests: r.partySize * r._count._all,
+        }))
+        .sort((a, b) => a.partySize - b.partySize),
+      byTable: tableRows.map((r) => ({
+        tableId: r.tableId,
+        number: r.tableId ? tableMap.get(r.tableId)?.number ?? null : null,
+        name: r.tableId ? tableMap.get(r.tableId)?.name ?? null : null,
+        count: r._count._all,
+        guests: num(r._sum.partySize),
+      })),
+      byDate: dateRows.map((r) => ({
+        date: String(r.date).slice(0, 10),
+        total: Number(r.total),
+        confirmed: Number(r.confirmed),
+        seated: Number(r.seated),
+        completed: Number(r.completed),
+        cancelled: Number(r.cancelled),
+        noShow: Number(r.noShow),
+        guests: Number(r.guests),
+      })),
+      paymentStatus: paymentBreakdown,
+    };
+  }
+
+  /**
+   * PHASE 9B (C12) — per-reservation rows for the CSV export. Revenue is the
+   * canonical per-order net (product revenue less the refunded share, capped),
+   * computed from BATCHED refund rows — never a raw grandTotal sum. Revenue is
+   * 0 for a reservation without a linked order or whose order is not on the
+   * revenue set (unpaid/failed/expired/cancelled).
+   *
+   * PHASE 9B-F2 — the export MUST reproduce the report's scope exactly, so it
+   * applies the SAME conditions as `getReservationReport` →
+   * `computeRefundRevenue({ start, end, branchFilters, extraOrderFilter })`:
+   *   - tenant scope: `order.restaurantId` (and `reservation.restaurantId`);
+   *   - branch scope: `order.branchId IN branchFilters` when a branch filter is set;
+   *   - product attribution: `order.createdAt` within the report range;
+   *   - refund attribution: `refund.approvedAt` within the report range.
+   * A shared `orderId` (one order linked to several reservations) is counted
+   * ONCE — attributed to the FIRST reservation in the deterministic row order —
+   * so the CSV `revenue` column sums to the report's `reservationRevenue`
+   * without dropping any reservation row or altering the order's value.
+   *
+   * PHASE 9B-F4 — the per-order revenue is computed in ONE raw query built from
+   * the shared canonical fragments (`revenueSetSql` / `productRevenueSql` /
+   * `refundRevenueSql` / `approvedRefundsSql` / `aliasBranchSql`), not from a
+   * JavaScript re-implementation, so it cannot drift from the report again.
+   */
+  async getReservationsForExport(
+    restaurantId: string,
+    period: ReportPeriod,
+    opts?: {
+      startDate?: string;
+      endDate?: string;
+      branchFilters?: string[] | null;
+      limit?: number;
+    }
+  ) {
+    const range = resolveReservationDateRange(
+      period,
+      opts?.startDate,
+      opts?.endDate
+    );
+    const branchFilters = opts?.branchFilters ?? null;
+    const limit = Math.min(10000, Math.max(1, opts?.limit ?? 5000));
+
+    const baseWhere: Prisma.ReservationWhereInput = {
+      restaurantId,
+      ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
+      reservationDate: { gte: range.start, lte: range.end },
+    };
+
+    const reservations = await prisma.reservation.findMany({
+      where: baseWhere,
+      select: {
+        code: true,
+        reservationDate: true,
+        startMinutes: true,
+        guestName: true,
+        guestPhone: true,
+        customerId: true,
+        partySize: true,
+        branchId: true,
+        tableId: true,
+        source: true,
+        status: true,
+        orderId: true,
+        createdAt: true,
+      },
+      orderBy: [{ reservationDate: "asc" }, { startMinutes: "asc" }],
+      take: limit,
+    });
+
+    const orderIds = [
+      ...new Set(reservations.map((r) => r.orderId).filter((v): v is string => !!v)),
+    ];
+    const customerIds = [
+      ...new Set(reservations.map((r) => r.customerId).filter((v): v is string => !!v)),
+    ];
+    const branchIds = [
+      ...new Set(reservations.map((r) => r.branchId).filter((v): v is string => !!v)),
+    ];
+    const tableIds = [
+      ...new Set(reservations.map((r) => r.tableId).filter((v): v is string => !!v)),
+    ];
+
+    const [orders, netRevenueRows, customers, branches, tables] = await Promise.all([
+      orderIds.length
+        ? prisma.order.findMany({
+            where: {
+              id: { in: orderIds },
+              restaurantId,
+              // F2 — mirror the report's branch scope on the order itself. A
+              // reservation that links to an order in another branch contributes
+              // no revenue, exactly as in `getReservationReport`.
+              ...(branchFilters?.length
+                ? { branchId: { in: branchFilters } }
+                : {}),
+            },
+            // Only the CSV payment-status column and order existence are read
+            // here; revenue now comes from the shared canonical SQL (F4).
+            select: { id: true, paymentStatus: true },
+          })
+        : Promise.resolve([]),
+      // F4 — per-order canonical net revenue from the SAME shared fragments the
+      // report uses, so the export can no longer drift from the canonical rules:
+      // branch scope + product attributed by createdAt in range + APPROVED
+      // refunds attributed by approvedAt in range.
+      orderIds.length
+        ? prisma.$queryRaw<
+            Array<{ orderId: string; netRevenue: number | bigint | string }>
+          >`
+            SELECT t.\`orderId\` AS orderId,
+                   COALESCE(SUM(t.\`productRevenue\` - t.\`refundRevenue\`), 0) AS netRevenue
+            FROM (
+              SELECT o.\`id\` AS orderId,
+                     ${productRevenueSql("o")} AS productRevenue,
+                     0 AS refundRevenue
+              FROM \`order\` o
+              WHERE o.\`restaurantId\` = ${restaurantId}
+                AND ${revenueSetSql("o")}
+                AND o.\`createdAt\` >= ${range.start}
+                AND o.\`createdAt\` <= ${range.end}
+                AND o.\`id\` IN (${Prisma.join(orderIds)})
+                ${aliasBranchSql("o", branchFilters)}
+              UNION ALL
+              SELECT o.\`id\` AS orderId,
+                     0 AS productRevenue,
+                     ${refundRevenueSql("o", "rf")} AS refundRevenue
+              FROM (${approvedRefundsSql(restaurantId, range)}) rf
+              JOIN \`order\` o ON o.\`id\` = rf.\`orderId\`
+              WHERE o.\`restaurantId\` = ${restaurantId}
+                AND ${revenueSetSql("o")}
+                AND o.\`id\` IN (${Prisma.join(orderIds)})
+                ${aliasBranchSql("o", branchFilters)}
+            ) t
+            GROUP BY t.\`orderId\`
+          `
+        : Promise.resolve([]),
+      customerIds.length
+        ? prisma.customer.findMany({
+            where: { id: { in: customerIds } },
+            select: { id: true, name: true, phone: true },
+          })
+        : Promise.resolve([]),
+      branchIds.length
+        ? prisma.branch.findMany({
+            where: { id: { in: branchIds } },
+            select: { id: true, code: true, name: true },
+          })
+        : Promise.resolve([]),
+      tableIds.length
+        ? prisma.table.findMany({
+            where: { id: { in: tableIds } },
+            select: { id: true, number: true, name: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const orderMap = new Map(orders.map((o) => [o.id, o]));
+    const netRevenueMap = new Map(
+      netRevenueRows.map((r) => [
+        r.orderId,
+        Math.round(num(r.netRevenue) * 100) / 100,
+      ])
+    );
+    const customerMap = new Map(customers.map((c) => [c.id, c]));
+    const branchMap = new Map(branches.map((b) => [b.id, b]));
+    const tableMap = new Map(tables.map((t) => [t.id, t]));
+
+    // F2/F4 — one order may be linked to several reservations. The report counts
+    // each linked order ONCE (SQL `id IN (orderIds)` set), so attribute an
+    // order's canonical net revenue to the FIRST reservation that references it
+    // and report 0 on the remaining rows. The order's value is emitted in full
+    // once; no reservation row is dropped. `netRevenueMap` is built from the
+    // shared canonical SQL fragments, so this column matches the report.
+    const revenueAttributed = new Set<string>();
+    return reservations.map((r) => {
+      const order = r.orderId ? orderMap.get(r.orderId) : undefined;
+      let revenue = 0;
+      if (order && !revenueAttributed.has(order.id)) {
+        revenue = netRevenueMap.get(order.id) ?? 0;
+        revenueAttributed.add(order.id);
+      }
+      const startMinutes = r.startMinutes;
+      return {
+        code: r.code,
+        date: r.reservationDate.toISOString().slice(0, 10),
+        time: `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}:${String(
+          startMinutes % 60
+        ).padStart(2, "0")}`,
+        customer: r.customerId ? customerMap.get(r.customerId)?.name ?? null : null,
+        guestName: r.guestName,
+        phone: r.customerId
+          ? customerMap.get(r.customerId)?.phone ?? r.guestPhone
+          : r.guestPhone,
+        partySize: r.partySize,
+        branch: r.branchId ? branchMap.get(r.branchId)?.name ?? null : null,
+        table: r.tableId ? tableMap.get(r.tableId)?.name ?? null : null,
+        source: r.source,
+        status: r.status,
+        paymentStatus: order?.paymentStatus ?? null,
+        revenue,
+        createdAt: r.createdAt,
+      };
+    });
   }
 }
 

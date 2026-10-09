@@ -46,6 +46,8 @@ const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(2)}%`);
 
 // H2.3 — coverage state → Badge. Unknown COGS is never rendered as Rp 0.
 const COGS_STATE_BADGE: Record<string, { label: string; className: string }> = {
+  // D1 — empty scope: COGS cannot be verified (never rendered as covered).
+  NO_ITEMS: { label: "NO ITEMS", className: "bg-red-100 text-red-800" },
   COVERED: { label: "COVERED", className: "bg-green-100 text-green-800" },
   PARTIAL: { label: "PARTIAL", className: "bg-amber-100 text-amber-800" },
   PENDING_COGS: { label: "PENDING", className: "bg-blue-100 text-blue-800" },
@@ -304,6 +306,21 @@ export default function ProfitabilityPage() {
         </div>
       ) : !report || !summary ? null : (
         <div className="space-y-6">
+          {summary.coverage.totalOrderItems === 0 && summary.netSales > 0 && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>
+                COGS belum dapat diverifikasi: tidak ada item dalam scope untuk
+                periode ini, sehingga Gross Profit ditampilkan sebagai tidak
+                diketahui.{" "}
+                {summary.revenueWithoutItems.orders > 0 &&
+                  `${summary.revenueWithoutItems.orders} order ber-revenue (${rupiah(
+                    summary.revenueWithoutItems.headerValue
+                  )}) tidak memiliki baris item.`}
+              </span>
+            </div>
+          )}
+
           {(hasUncosted || hasLegacy || hasPending) && (
             <div className="space-y-2">
               {hasPending && (

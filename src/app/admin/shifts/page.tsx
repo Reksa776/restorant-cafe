@@ -14,6 +14,8 @@ import {
   userService,
   type CashierShift,
   type ShiftOverride,
+  type RefundRequest,
+  type CancellationRequest,
 } from "@/services/shift.service";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
@@ -75,6 +77,26 @@ function fmtDuration(openedAt: string, closedAt?: string | null) {
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+/**
+ * PHASE 7B — one-line-per-field summary shown in the admin password dialog
+ * when approving/rejecting a refund or cancellation. Data comes only from the
+ * server-provided pending request (never client-computed amounts).
+ */
+function approvalDetails(input: {
+  orderLabel: string;
+  requesterName?: string | null;
+  reason: string;
+  requestedAt: string;
+  amount?: string | number | null;
+}) {
+  const lines = [`Order: ${input.orderLabel}`];
+  if (input.amount != null) lines.push(`Jumlah: ${rupiah(input.amount)}`);
+  lines.push(`Pemohon: ${input.requesterName || "kasir"}`);
+  lines.push(`Alasan: ${input.reason}`);
+  lines.push(`Diajukan: ${fmtTime(input.requestedAt)}`);
+  return lines.join("\n");
+}
+
 export default function ShiftsPage() {
   const { role, isLoading: roleLoading } = useUserRole();
   const { isLoading: branchCtxLoading, branches } = useBranchContext();
@@ -88,6 +110,13 @@ export default function ShiftsPage() {
   // Admin lists
   const [allShifts, setAllShifts] = useState<ShiftWithBreakdown[]>([]);
   const [pendingOverrides, setPendingOverrides] = useState<ShiftOverride[]>([]);
+  // PHASE 7B — the SAME pending-approval payload also carries the refund and
+  // cancellation queues (already fetched by `listPendingApprovals`); they were
+  // previously discarded so the admin had no way to action them.
+  const [pendingRefunds, setPendingRefunds] = useState<RefundRequest[]>([]);
+  const [pendingCancellations, setPendingCancellations] = useState<
+    CancellationRequest[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<NormalizedApiError | null>(null);
 
@@ -117,10 +146,12 @@ export default function ShiftsPage() {
 
   // Admin approval dialog (password confirmation)
   const [approveTarget, setApproveTarget] = useState<{
-    kind: "override";
+    kind: "override" | "refund" | "cancellation";
     id: string;
     approve: boolean;
     title: string;
+    /** Optional multi-line summary of the item being decided. */
+    details?: string;
   } | null>(null);
   const [adminPassword, setAdminPassword] = useState("");
   const [decisionNote, setDecisionNote] = useState("");
@@ -147,6 +178,8 @@ export default function ShiftsPage() {
         ]);
         setAllShifts(shiftsRes.items);
         setPendingOverrides(pendingRes.overrides);
+        setPendingRefunds(pendingRes.refunds ?? []);
+        setPendingCancellations(pendingRes.cancellations ?? []);
       } else {
         const [activeRes, listRes] = await Promise.all([
           shiftService.getActiveShift(),
@@ -313,14 +346,39 @@ export default function ShiftsPage() {
     if (!approveTarget) return;
     setDeciding(true);
     try {
-      const { id, approve } = approveTarget;
-      await shiftService.decideOverride(
-        id,
-        approve,
-        adminPassword,
-        decisionNote || undefined
-      );
-      toast.success(approve ? "Override disetujui" : "Override ditolak");
+      const { id, approve, kind } = approveTarget;
+      // PHASE 7B — the dialog is shared, but every kind still goes through its
+      // EXISTING decide endpoint (and therefore the existing ApprovalService
+      // guards: FOR UPDATE lock, guarded updateMany, over-refund protection,
+      // paid-order guard, tenant/branch scope, admin password). No business
+      // logic moves into React.
+      let label: string;
+      if (kind === "refund") {
+        await shiftService.decideRefund(
+          id,
+          approve,
+          adminPassword,
+          decisionNote || undefined
+        );
+        label = "Refund";
+      } else if (kind === "cancellation") {
+        await shiftService.decideCancellation(
+          id,
+          approve,
+          adminPassword,
+          decisionNote || undefined
+        );
+        label = "Pembatalan";
+      } else {
+        await shiftService.decideOverride(
+          id,
+          approve,
+          adminPassword,
+          decisionNote || undefined
+        );
+        label = "Override";
+      }
+      toast.success(approve ? `${label} disetujui` : `${label} ditolak`);
       setApproveTarget(null);
       setAdminPassword("");
       setDecisionNote("");
@@ -328,7 +386,7 @@ export default function ShiftsPage() {
     } catch (err) {
       toast.error(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (err as any)?.response?.data?.message || "Gagal memproses override"
+        (err as any)?.response?.data?.message || "Gagal memproses permintaan"
       );
     } finally {
       setDeciding(false);
@@ -648,6 +706,150 @@ export default function ShiftsPage() {
         </div>
       )}
 
+      {/* Admin: pending refund approvals (PHASE 7B) */}
+      {isAdmin && pendingRefunds.length > 0 && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
+          <h2 className="flex items-center gap-2 font-semibold text-red-900">
+            <AlertTriangle className="h-4 w-4" />
+            Permintaan Refund Menunggu ({pendingRefunds.length})
+          </h2>
+          {pendingRefunds.map((rf) => {
+            const orderLabel = rf.order?.orderNumber || rf.orderId;
+            const details = approvalDetails({
+              orderLabel,
+              requesterName: rf.requester?.name,
+              reason: rf.reason,
+              requestedAt: rf.requestedAt,
+              amount: rf.amount,
+            });
+            return (
+              <div
+                key={rf.id}
+                className="rounded-lg border border-red-200 bg-white p-3 text-sm"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium">
+                    <span className="font-mono">{orderLabel}</span>{" "}
+                    <span className="text-muted-foreground">
+                      oleh {rf.requester?.name || "kasir"}
+                    </span>
+                  </p>
+                  <span className="font-semibold tabular-nums text-red-700">
+                    {rupiah(rf.amount)}
+                  </span>
+                </div>
+                <p className="text-muted-foreground mt-0.5">{rf.reason}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Diajukan {fmtTime(rf.requestedAt)}
+                </p>
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    size="sm"
+                    className="bg-green-600 hover:bg-green-700"
+                    onClick={() =>
+                      setApproveTarget({
+                        kind: "refund",
+                        id: rf.id,
+                        approve: true,
+                        title: `Setujui refund ${orderLabel}`,
+                        details,
+                      })
+                    }
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Setujui
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-red-600"
+                    onClick={() =>
+                      setApproveTarget({
+                        kind: "refund",
+                        id: rf.id,
+                        approve: false,
+                        title: `Tolak refund ${orderLabel}`,
+                        details,
+                      })
+                    }
+                  >
+                    <XCircle className="h-3.5 w-3.5 mr-1" /> Tolak
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Admin: pending cancellation approvals (PHASE 7B) */}
+      {isAdmin && pendingCancellations.length > 0 && (
+        <div className="rounded-xl border border-orange-200 bg-orange-50 p-4 space-y-3">
+          <h2 className="flex items-center gap-2 font-semibold text-orange-900">
+            <AlertTriangle className="h-4 w-4" />
+            Permintaan Pembatalan Menunggu ({pendingCancellations.length})
+          </h2>
+          {pendingCancellations.map((cr) => {
+            const orderLabel = cr.order?.orderNumber || cr.orderId;
+            const details = approvalDetails({
+              orderLabel,
+              requesterName: cr.requester?.name,
+              reason: cr.reason,
+              requestedAt: cr.requestedAt,
+            });
+            return (
+              <div
+                key={cr.id}
+                className="rounded-lg border border-orange-200 bg-white p-3 text-sm"
+              >
+                <p className="font-medium">
+                  <span className="font-mono">{orderLabel}</span>{" "}
+                  <span className="text-muted-foreground">
+                    oleh {cr.requester?.name || "kasir"}
+                  </span>
+                </p>
+                <p className="text-muted-foreground mt-0.5">{cr.reason}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Diajukan {fmtTime(cr.requestedAt)}
+                </p>
+                <div className="flex gap-2 mt-2">
+                  <Button
+                    size="sm"
+                    className="bg-green-600 hover:bg-green-700"
+                    onClick={() =>
+                      setApproveTarget({
+                        kind: "cancellation",
+                        id: cr.id,
+                        approve: true,
+                        title: `Setujui pembatalan ${orderLabel}`,
+                        details,
+                      })
+                    }
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Setujui
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="text-red-600"
+                    onClick={() =>
+                      setApproveTarget({
+                        kind: "cancellation",
+                        id: cr.id,
+                        approve: false,
+                        title: `Tolak pembatalan ${orderLabel}`,
+                        details,
+                      })
+                    }
+                  >
+                    <XCircle className="h-3.5 w-3.5 mr-1" /> Tolak
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Shift history table */}
       <div className="rounded-xl border bg-card overflow-x-auto">
         <div className="p-4 border-b">
@@ -945,6 +1147,11 @@ export default function ShiftsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
+            {approveTarget?.details && (
+              <div className="rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground whitespace-pre-line">
+                {approveTarget.details}
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="admin-pw">Password Admin</Label>
               <Input

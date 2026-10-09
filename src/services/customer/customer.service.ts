@@ -2,6 +2,24 @@ import { prisma } from "@/lib/prisma";
 import { NotFoundError } from "@/lib/errors";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
+import { computeCustomerRevenue } from "@/services/report/report.service";
+
+// ============================================================
+// PHASE 9B (C1) — the ONLY Customer scalars an admin/mobile endpoint may
+// return. `password` (bcrypt hash) is deliberately absent and must never be
+// added back. `whatsappId` is internal provider data and is also withheld.
+// Every read/update path below uses this allow-list (or the equivalent nested
+// select) so a raw Prisma `include` can never resurrect the hash.
+// ============================================================
+const CUSTOMER_PUBLIC_SELECT = {
+  id: true,
+  name: true,
+  phone: true,
+  email: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 export class CustomerService {
   async getCustomers(
@@ -34,15 +52,19 @@ export class CustomerService {
       ];
     }
 
+    // PHASE 9B (C3) — orderCount is scoped to the SAME branches as the spend
+    // below. The unfiltered `_count` used to mix all-branch counts with a
+    // branch-filtered total; both must now agree.
+    const countSelect = branchFilters?.length
+      ? { orders: { where: { branchId: { in: branchFilters } } } }
+      : { orders: true };
+
     const [customers, total] = await Promise.all([
       prisma.customer.findMany({
         where,
-        include: {
-          // Bounded (LOW-8): orderCount via _count and only the LATEST order
-          // for lastOrderAt — never the customer's whole order history.
-          _count: {
-            select: { orders: true },
-          },
+        select: {
+          ...CUSTOMER_PUBLIC_SELECT,
+          _count: { select: countSelect },
           orders: {
             where: branchFilters?.length ? { branchId: { in: branchFilters } } : undefined,
             select: { id: true, createdAt: true },
@@ -57,28 +79,29 @@ export class CustomerService {
       prisma.customer.count({ where }),
     ]);
 
-    // Total spent per customer via a single grouped aggregation (indexed by
-    // Order.customerId) instead of loading every order row.
+    // PHASE 9B (C2) — canonical customer spend. Replaces the previous raw
+    // Σ order.grandTotal (which counted CANCELLED orders and never subtracted
+    // refunds). `computeCustomerRevenue` reuses the canonical revenue set and
+    // refund math (productRevenue − refundRevenue). No date bound here: the
+    // operational list shows all-time spending. One grouped query — never the
+    // customer's order history.
     const ids = customers.map((c) => c.id);
-    const spentRows = ids.length
-      ? await prisma.order.groupBy({
-          by: ["customerId"],
-          where: {
-            restaurantId,
-            customerId: { in: ids },
-            ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
-          },
-          _sum: { grandTotal: true },
-        })
-      : [];
-    const spentByCustomer = new Map(
-      spentRows.map((r) => [r.customerId, r._sum.grandTotal])
-    );
+    const revenue = await computeCustomerRevenue({
+      restaurantId,
+      branchFilters,
+      customerIds: ids,
+    });
 
     const customersWithStats = customers.map((customer) => ({
-      ...customer,
+      id: customer.id,
+      name: customer.name,
+      phone: customer.phone,
+      email: customer.email,
+      isActive: customer.isActive,
+      createdAt: customer.createdAt,
+      updatedAt: customer.updatedAt,
       orderCount: customer._count.orders,
-      totalSpent: spentByCustomer.get(customer.id)?.toString() || "0",
+      totalSpent: (revenue.byCustomer.get(customer.id)?.netSales ?? 0).toString(),
       lastOrderAt: customer.orders[0]?.createdAt || null,
     }));
 
@@ -91,11 +114,25 @@ export class CustomerService {
     };
   }
 
-  async getCustomer(id: string, restaurantId: string) {
+  /**
+   * PHASE 9B (C3) — `branchFilters` is server-derived (authorizedBranches).
+   * When a branch-scoped admin opens a customer, only orders from the
+   * authorized branches are returned; a client-supplied branch id is never
+   * trusted. Returns only public customer scalars (C1 — never the hash).
+   */
+  async getCustomer(
+    id: string,
+    restaurantId: string,
+    branchFilters?: string[] | null
+  ) {
     const customer = await prisma.customer.findFirst({
       where: { id, restaurantId },
-      include: {
+      select: {
+        ...CUSTOMER_PUBLIC_SELECT,
         orders: {
+          where: branchFilters?.length
+            ? { branchId: { in: branchFilters } }
+            : undefined,
           orderBy: { createdAt: "desc" },
           take: 10,
           include: {
@@ -128,6 +165,7 @@ export class CustomerService {
     const updated = await prisma.customer.update({
       where: { id },
       data,
+      select: CUSTOMER_PUBLIC_SELECT,
     });
 
     emitRealtime(
@@ -146,6 +184,7 @@ export class CustomerService {
         restaurantId,
         phone,
       },
+      select: CUSTOMER_PUBLIC_SELECT,
     });
 
     if (!customer) {
@@ -155,11 +194,13 @@ export class CustomerService {
           phone,
           name: name || undefined,
         },
+        select: CUSTOMER_PUBLIC_SELECT,
       });
     } else if (name && !customer.name) {
       customer = await prisma.customer.update({
         where: { id: customer.id },
         data: { name },
+        select: CUSTOMER_PUBLIC_SELECT,
       });
     }
 

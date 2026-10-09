@@ -29,7 +29,45 @@ async function openShiftOf(restaurantId: string, userId: string) {
  * SAME basis as revenue reporting. PENDING / FAILED / EXPIRED / CANCELLED /
  * UNPAID payments are never refundable.
  */
-const COLLECTED_PAYMENT_STATUSES = ["PAID", "REFUNDED"] as const;
+export const COLLECTED_PAYMENT_STATUSES = ["PAID", "REFUNDED"] as const;
+
+/**
+ * H3.7-b — the SINGLE "money still held" basis, shared by every cancellation
+ * path: `ApprovalService.decideCancellation` and
+ * `OrderService.updateOrderStatus`. One formula, no second predicate:
+ *
+ *   netCollected = Σ collected payments (PAID | REFUNDED) − Σ APPROVED refunds
+ *
+ * So a FULLY refunded order has `netCollected <= MONEY_EPSILON` and may be
+ * cancelled, while anything still holding collected money may not. Amounts are
+ * always read from the database — never from a client payload.
+ */
+export async function computeNetCollected(
+  client: Pick<Prisma.TransactionClient, "payment" | "refund">,
+  orderId: string
+): Promise<number> {
+  const [payments, approvedAgg] = await Promise.all([
+    client.payment.findMany({
+      where: { orderId, status: { in: [...COLLECTED_PAYMENT_STATUSES] } },
+      select: { amount: true },
+    }),
+    client.refund.aggregate({
+      where: { orderId, status: "APPROVED" },
+      _sum: { amount: true },
+    }),
+  ]);
+  const totalPaid = round2(
+    payments.reduce((sum, p) => sum + Number(p.amount), 0)
+  );
+  return round2(totalPaid - Number(approvedAgg._sum.amount ?? 0));
+}
+
+/**
+ * H3.7 — a PAID (or partially refunded) order must never be cancelled: the
+ * collected money has to be returned through the refund workflow first.
+ */
+export const ORDER_STILL_HOLDS_MONEY_MESSAGE =
+  "Order sudah dibayar — selesaikan refund terlebih dahulu sebelum membatalkan";
 
 /** H5.1 — clamp a refund ratio to the 0..1 interval (Decimal-safe). */
 function clampUnitInterval(value: Prisma.Decimal): Prisma.Decimal {
@@ -716,27 +754,9 @@ export class ApprovalService {
         // collected money. The payment must be resolved/refunded first; we
         // never silently turn PAID → CANCELLED (which would drop the revenue
         // with no financial event) and never auto-create a refund here.
-        const orderPayments = await tx.payment.findMany({
-          where: {
-            orderId: order.id,
-            status: { in: [...COLLECTED_PAYMENT_STATUSES] },
-          },
-          select: { amount: true },
-        });
-        const totalPaid = round2(
-          orderPayments.reduce((sum, p) => sum + Number(p.amount), 0)
-        );
-        const approvedAgg = await tx.refund.aggregate({
-          where: { orderId: order.id, status: "APPROVED" },
-          _sum: { amount: true },
-        });
-        const netPaid = round2(
-          totalPaid - Number(approvedAgg._sum.amount ?? 0)
-        );
+        const netPaid = await computeNetCollected(tx, order.id);
         if (netPaid > MONEY_EPSILON) {
-          throw new ConflictError(
-            "Order sudah dibayar — selesaikan refund terlebih dahulu sebelum membatalkan"
-          );
+          throw new ConflictError(ORDER_STILL_HOLDS_MONEY_MESSAGE);
         }
 
         // GUARDED order transition: never overwrite a concurrent COMPLETED /

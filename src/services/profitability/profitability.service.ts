@@ -7,13 +7,14 @@ import {
   computeRefundRevenue,
   type ReportPeriod,
 } from "@/services/report/report.service";
+// D1 — pure coverage rules shared with Menu Engineering (single source of truth).
+import { deriveCogsState, isCoverageComplete } from "./coverage";
 import type {
   ProfitabilityReport,
   ProfitabilityProductRow,
   ProfitabilityBranchRow,
   ProfitabilityFilters,
   ProfitabilityCoverage,
-  ProfitabilityCogsState,
   ProfitabilityRefundState,
 } from "./profitability.types";
 
@@ -36,25 +37,10 @@ import type {
 
 const ROUND = Prisma.Decimal.ROUND_HALF_UP;
 
-/**
- * H2.1 — derive the coverage state from the DISJOINT buckets.
- * Status (not money) is the ONLY thing that decides coverage, so a valid
- * SNAPSHOTTED COGS of 0 still counts as COVERED (never treated as missing).
- */
-function deriveCogsState(counts: {
-  totalItems: number;
-  costed: number;
-  uncosted: number;
-  legacy: number;
-  pending: number;
-}): ProfitabilityCogsState {
-  const { totalItems, costed, uncosted, legacy, pending } = counts;
-  if (totalItems === 0 || costed === totalItems) return "COVERED";
-  if (costed > 0) return "PARTIAL";
-  if (pending > 0) return "PENDING_COGS";
-  if (uncosted > 0) return "UNCOVERED";
-  return "LEGACY";
-}
+// H2.1 / D1 — the coverage state is derived by the shared pure rules in
+// `./coverage` (used by Profitabilitas AND Menu Engineering). Status (not
+// money) decides coverage, so a valid SNAPSHOTTED COGS of 0 stays COVERED;
+// an EMPTY scope is NO_ITEMS (never COVERED).
 
 type ReportFilters = ProfitabilityFilters;
 
@@ -141,6 +127,7 @@ export class ProfitabilityService {
       allProductsMeta,
       allCategoriesMeta,
       refundRevenue,
+      revenueWithoutItemsRow,
     ] = await Promise.all([
       prisma.order.aggregate({
         where: soldWhere,
@@ -356,6 +343,16 @@ export class ProfitabilityService {
           ${filters?.paymentMethod ? Prisma.sql`AND o.\`id\` IN (SELECT \`orderId\` FROM \`payment\` WHERE \`method\` = ${filters.paymentMethod} AND \`status\` = 'PAID')` : Prisma.empty}
         `,
       }),
+
+      // D1 — revenue-bearing orders with NO OrderItem rows in scope (revenue
+      // on the order header but nothing to cost). Aggregate only; surfaced as
+      // an integrity disclosure so an empty/headless revenue set is visible and
+      // never silently looks like a "fully covered, zero COGS" period.
+      prisma.order.aggregate({
+        where: { ...soldWhere, items: { none: {} } },
+        _count: { _all: true },
+        _sum: { grandTotal: true },
+      }),
     ]);
 
     // H3.4 — refund-aware COGS reversal, computed from the frozen snapshots
@@ -471,8 +468,9 @@ export class ProfitabilityService {
       legacyOrderItems: Number(coverageRowData?.legacyOrderItems ?? 0),
       pendingOrderItems: Number(coverageRowData?.pendingOrderItems ?? 0),
     };
-    const coverageComplete =
-      cov.uncostedOrderItems + cov.legacyOrderItems + cov.pendingOrderItems === 0;
+    // D1 — complete ONLY when at least one in-scope item exists AND every one
+    // is SNAPSHOTTED. An empty scope is NEVER complete (see ./coverage).
+    const coverageComplete = isCoverageComplete(cov);
     const summaryCogsState = deriveCogsState({
       totalItems: cov.totalOrderItems,
       costed: cov.costedOrderItems,
@@ -637,6 +635,11 @@ export class ProfitabilityService {
           orders: Number(unpaidRowData?.orders ?? 0),
           orderItems: Number(unpaidRowData?.orderItems ?? 0),
           cogs: num(unpaidRowData?.cogs),
+        },
+        // D1 — integrity disclosure: revenue orders that have no item rows.
+        revenueWithoutItems: {
+          orders: Number(revenueWithoutItemsRow?._count?._all ?? 0),
+          headerValue: num(revenueWithoutItemsRow?._sum?.grandTotal),
         },
       },
       branches: branchRows,

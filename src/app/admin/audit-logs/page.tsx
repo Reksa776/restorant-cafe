@@ -33,6 +33,7 @@ import {
   auditLogService,
   type AuditLogView,
 } from "@/services/audit.service";
+import { userService } from "@/services/shift.service";
 import { normalizeApiError } from "@/lib/api-error-handler";
 import {
   AlertCircle,
@@ -100,6 +101,13 @@ export default function AuditLogsPage() {
   const [entityId, setEntityId] = useState("");
   const [userId, setUserId] = useState("");
   const [branchFilter, setBranchFilter] = useState("all");
+
+  // Picker options — loaded from existing tenant-scoped sources, never
+  // hardcoded (a stale literal list would silently hide new audit actions).
+  const [actions, setActions] = useState<string[]>([]);
+  const [actors, setActors] = useState<
+    Array<{ id: string; name: string; role: string }>
+  >([]);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
@@ -151,6 +159,49 @@ export default function AuditLogsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- established admin fetch pattern
     load();
   }, [branchCtxLoading, load]);
+
+  // Action options — the distinct actions that actually exist in this admin's
+  // tenant/branch scope (server-derived from the same scoped predicate as the
+  // list, so the picker can never surface an out-of-scope action).
+  useEffect(() => {
+    if (branchCtxLoading) return;
+    let alive = true;
+    auditLogService
+      .listActions({ branchId: branchFilter !== "all" ? branchFilter : undefined })
+      .then((list) => {
+        if (alive) setActions(list);
+      })
+      .catch(() => {
+        // Convenience only — the viewer still works without the dropdown.
+      });
+    return () => {
+      alive = false;
+    };
+  }, [branchCtxLoading, branchFilter]);
+
+  // Actor options — the restaurant's own staff via the existing ADMIN-only
+  // /api/users endpoint (restaurant-scoped server-side from the session).
+  useEffect(() => {
+    let alive = true;
+    userService
+      .listUsers()
+      .then((res) => {
+        if (!alive) return;
+        setActors(
+          (res.items || []).map((u) => ({
+            id: u.id,
+            name: u.name,
+            role: u.role,
+          }))
+        );
+      })
+      .catch(() => {
+        // Convenience only — the viewer still works without the dropdown.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const resetFilters = () => {
     setSearchInput("");
@@ -218,16 +269,26 @@ export default function AuditLogsPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="audit-action">Action</Label>
-              <Input
-                id="audit-action"
-                placeholder="mis. PAYMENT_RECEIVED"
-                value={action}
-                onChange={(e) => {
-                  setAction(e.target.value);
+              <Label>Action</Label>
+              <Select
+                value={action || "all"}
+                onValueChange={(v) => {
+                  setAction(v === "all" ? "" : (v ?? ""));
                   setPage(1);
                 }}
-              />
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Semua Action" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Semua Action</SelectItem>
+                  {actions.map((a) => (
+                    <SelectItem key={a} value={a}>
+                      {a}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-1.5">
@@ -257,16 +318,26 @@ export default function AuditLogsPage() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="audit-user-id">Actor (User ID)</Label>
-              <Input
-                id="audit-user-id"
-                placeholder="ID pengguna"
-                value={userId}
-                onChange={(e) => {
-                  setUserId(e.target.value);
+              <Label>Aktor</Label>
+              <Select
+                value={userId || "all"}
+                onValueChange={(v) => {
+                  setUserId(v === "all" ? "" : (v ?? ""));
                   setPage(1);
                 }}
-              />
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Semua Aktor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Semua Aktor</SelectItem>
+                  {actors.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.name || u.id} ({u.role})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-1.5">
@@ -351,7 +422,7 @@ export default function AuditLogsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    {["Waktu", "Aktor", "Action", "Entity", "Cabang", ""].map(
+                    {["Waktu", "Aktor", "Action", "Entity", "Cabang", "IP", ""].map(
                       (h) => (
                         <TableHead key={h}>{h}</TableHead>
                       )
@@ -375,6 +446,9 @@ export default function AuditLogsPage() {
                       </TableCell>
                       <TableCell>
                         <Skeleton className="h-4 w-20" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-4 w-24" />
                       </TableCell>
                       <TableCell>
                         <Skeleton className="h-6 w-8" />
@@ -408,6 +482,7 @@ export default function AuditLogsPage() {
                       <TableHead>Action</TableHead>
                       <TableHead className="hidden md:table-cell">Entity</TableHead>
                       <TableHead className="hidden lg:table-cell">Cabang</TableHead>
+                      <TableHead className="hidden xl:table-cell">IP</TableHead>
                       <TableHead className="text-right">Detail</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -450,6 +525,11 @@ export default function AuditLogsPage() {
                           {log.branch ? (
                             log.branch.name
                           ) : (
+                            <span className="text-gray-400">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden xl:table-cell whitespace-nowrap text-gray-600">
+                          {log.ipAddress || (
                             <span className="text-gray-400">-</span>
                           )}
                         </TableCell>

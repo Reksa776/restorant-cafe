@@ -30,6 +30,7 @@ import {
  * Unknown/uncovered COGS is exported as an empty gross profit, never as 0.
  */
 const COGS_STATE_LABEL: Record<string, string> = {
+  NO_ITEMS: "NO_ITEMS",
   COVERED: "FULL",
   PARTIAL: "PARTIAL",
   PENDING_COGS: "PENDING",

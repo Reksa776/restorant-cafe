@@ -52,7 +52,9 @@ export class PaymentService {
         branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
-        customer: true,
+        // F1 (security) — project the customer relation to PUBLIC fields only
+// (never `password` / `whatsappId`).
+customer: { select: { id: true, name: true, phone: true } },
         restaurant: {
           select: { phone: true, email: true },
         },
@@ -1272,7 +1274,9 @@ export class PaymentService {
         branchId: branchFilters?.length ? { in: branchFilters } : undefined,
       },
       include: {
-        customer: true,
+        // F1 (security) — project the customer relation to PUBLIC fields only
+// (never `password` / `whatsappId`).
+customer: { select: { id: true, name: true, phone: true } },
         restaurant: {
           select: { phone: true, email: true },
         },
