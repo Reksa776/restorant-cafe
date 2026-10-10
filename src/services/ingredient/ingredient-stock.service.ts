@@ -18,8 +18,9 @@ import { extractSelection } from "@/services/costing/customization-selection";
 export const IngredientStockRefType = {
   STOCK_ADJUSTMENT: "STOCK_ADJUSTMENT",
   PURCHASE_RECEIVE: "PURCHASE_RECEIVE",
-  // H1 — an Order reaching COMPLETED consumes the recipe/BOM of its products
-  // (INGREDIENT costing mode only). refId = orderId.
+  // H1 — written by the RETAINED consumeOrderIngredients() engine when it is
+  // invoked directly (dedicated inventory workflow). Order completion no longer
+  // calls it, so no new row is produced on READY → COMPLETED. refId = orderId.
   ORDER_COMPLETED: "ORDER_COMPLETED",
 } as const;
 
@@ -200,14 +201,14 @@ function formatQty(value: Prisma.Decimal): string {
 }
 
 /**
- * H1 — consume the recipe/BOM of every ordered product when an order reaches
- * COMPLETED.
+ * H1 — consume the recipe/BOM of every ordered product.
  *
- * MUST be called inside the SAME interactive transaction as the guarded
- * READY → COMPLETED transition (order.service updateOrderStatus). Every check
- * and every ledger write below is part of that transaction, so a failure
- * throws and rolls back the WHOLE completion — the order stays READY, no HPP
- * snapshot, no product stock movement, no ingredient stock movement.
+ * RETAINED but DECOUPLED: order completion (READY → COMPLETED) no longer calls
+ * this function — recipe/HPP/ingredient stock can never block an order. It is
+ * kept for dedicated inventory workflows and MUST run inside the caller's own
+ * interactive transaction: every check and every ledger write below is part of
+ * that transaction, so a failure throws and rolls the caller's transaction
+ * back atomically (no partial stock, no partial ledger).
  *
  * Rules (Phase H1 + H4.4 spec, amended — resep/HPP are OPTIONAL for completion):
  * - costingMode INGREDIENT → the base recipe is consumed ONLY when a usable

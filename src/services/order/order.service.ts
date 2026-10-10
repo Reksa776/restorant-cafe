@@ -22,7 +22,6 @@ import {
   applyStockMovement,
   StockRefType,
 } from "@/services/stock/stock.service";
-import { consumeOrderIngredients } from "@/services/ingredient/ingredient-stock.service";
 import {
   resolveReportRange,
   revenueWhere,
@@ -1638,6 +1637,23 @@ export class OrderService {
 
     let whatsappTriggered = false;
 
+    // Historical COGS snapshot (F.5) — the item set is captured INSIDE the
+    // completion transaction but the snapshot itself is written BEST-EFFORT
+    // after that transaction commits (see below). Order completion is not
+    // conditioned on costing data: recipe / WAC / ingredient / addon-option
+    // BOM availability never blocks the status flip.
+    let cogsSnapshotInput: {
+      restaurantId: string;
+      orderId: string;
+      branchId: string | null;
+      items: Array<{
+        orderItemId: string;
+        productId: string;
+        quantity: number;
+        customizations?: unknown;
+      }>;
+    } | null = null;
+
     // Update order status. The transition itself is a CONDITIONAL update
     // (only from the status we validated above), so two concurrent or
     // double-clicked requests cannot both write the same transition — the
@@ -1706,20 +1722,13 @@ export class OrderService {
         throw new NotFoundError("Order not found");
       }
 
-      // Historical COGS snapshot (F.5) — PER ORDER ITEM, computed server-side
-      // in a batched single query (recipe + current WAC at completion time)
-      // and written in the SAME guarded transaction, exactly once. Only on a
-      // real COMPLETED transition (from a non-COMPLETED status) — a repeated
-      // COMPLETED request never re-snapshots (idempotency layer: the unique
-      // orderItemId would also reject a second write). Order items carrying
-      // an incomplete cost (NO_RECIPE / MISSING_WAC / INACTIVE_INGREDIENT) or
-      // no branch (NO_BRANCH) store NULL HPP — never 0. A database failure
-      // here rolls back the whole completion (order stays pre-COMPLETED).
-      if (
-        order.status !== "COMPLETED" &&
-        input.status === "COMPLETED"
-      ) {
-        await createOrderItemCostSnapshots(tx, {
+      // F.5 — capture the snapshot input for THIS order's items. Written once,
+      // only on a real COMPLETED transition (from a non-COMPLETED status).
+      // The write itself happens after commit and is never a prerequisite of
+      // completion; a repeated COMPLETED request never re-snapshots (the
+      // unique orderItemId also rejects a second write).
+      if (order.status !== "COMPLETED" && input.status === "COMPLETED") {
+        cogsSnapshotInput = {
           restaurantId,
           orderId: id,
           branchId: order.branchId,
@@ -1730,7 +1739,7 @@ export class OrderService {
             // H4.3 — freeze the actual HPP of the selected addon/option BOM.
             customizations: item.customizations,
           })),
-        });
+        };
       }
 
       // Create status history
@@ -1797,27 +1806,6 @@ export class OrderService {
             throw error;
           }
         }
-
-        // H1 + H4.4 — ingredient (BOM) consumption, in the SAME guarded
-        // transaction as the status flip above. INGREDIENT-costed products
-        // consume RecipeItem × OrderItem quantity from BranchIngredient.stock
-        // (with an IngredientStockMovement ledger row); MANUAL-costed products
-        // skip the BASE recipe but still consume their selected addon/option
-        // mini-BOMs. A missing/inactive recipe, ingredient or component, or
-        // insufficient branch stock, THROWS here and rolls back the entire
-        // completion (order stays READY, no snapshot, no partial stock).
-        await consumeOrderIngredients(tx, {
-          restaurantId,
-          branchId: order.branchId,
-          items: freshItems.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            customizations: item.customizations,
-          })),
-          refId: order.id,
-          reason: input.notes ?? null,
-          userId: changedBy ?? undefined,
-        });
       }
 
       // Free table when order is completed or cancelled
@@ -1835,6 +1823,31 @@ export class OrderService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted }
     );
+
+    // ============================================================
+    // Historical COGS snapshot (F.5) — BEST-EFFORT, AFTER commit
+    // ============================================================
+    // The order is already COMPLETED at this point. Recipe / WAC / ingredient
+    // / addon-option BOM availability — and even a snapshot write failure —
+    // can no longer affect the order outcome. `createOrderItemCostSnapshots`
+    // already records an explicit NULL status (NO_RECIPE / MISSING_WAC /
+    // INACTIVE_INGREDIENT / NO_BRANCH) when cost data is unavailable, so a
+    // missing recipe never throws here and never becomes 0. Only a genuine
+    // infrastructure/DB failure is isolated below: the order stays COMPLETED
+    // and the absent snapshot is surfaced by Integrity Monitoring (existing
+    // disclosure) instead of blocking the restaurant's workflow. Written
+    // exactly once — `orderItemId` is unique and this runs only on a real
+    // pre-COMPLETED → COMPLETED transition.
+    if (cogsSnapshotInput) {
+      try {
+        await createOrderItemCostSnapshots(prisma, cogsSnapshotInput);
+      } catch (error) {
+        console.error(
+          `[Order] COGS snapshot failed for order ${order.orderNumber} (status stays COMPLETED; items flagged by Integrity Monitoring):`,
+          error
+        );
+      }
+    }
 
     // ============================================================
     // WhatsApp notification trigger on READY status
