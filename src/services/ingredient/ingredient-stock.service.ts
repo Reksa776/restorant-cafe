@@ -209,11 +209,13 @@ function formatQty(value: Prisma.Decimal): string {
  * throws and rolls back the WHOLE completion — the order stays READY, no HPP
  * snapshot, no product stock movement, no ingredient stock movement.
  *
- * Rules (Phase H1 + H4.4 spec):
- * - costingMode INGREDIENT → an ACTIVE recipe with at least one item is
- *   REQUIRED, and every referenced ingredient must exist and be ACTIVE.
- *   Missing/inactive configuration BLOCKS completion (never silently skipped,
- *   never treated as an empty BOM).
+ * Rules (Phase H1 + H4.4 spec, amended — resep/HPP are OPTIONAL for completion):
+ * - costingMode INGREDIENT → the base recipe is consumed ONLY when a usable
+ *   recipe exists (active AND with at least one item). A product whose recipe
+ *   is missing, inactive or empty simply consumes NO base ingredient stock —
+ *   this mirrors the historical HPP snapshot (NO_RECIPE / NULL, never 0) and
+ *   must NOT block completion. Every referenced ingredient of a recipe that
+ *   IS consumed must exist and be ACTIVE; that still BLOCKS completion.
  * - costingMode MANUAL → the BASE recipe is NOT consumed (manualHpp is
  *   financial costing only, a manualHpp of 0 stays valid), but ADDON and
  *   OPTION mini-BOMs ARE still consumed.
@@ -378,35 +380,24 @@ export async function consumeOrderIngredients(
     }
 
     // ---- BASE recipe — skipped entirely in MANUAL mode. ------------------
+    // Recipe/HPP are OPTIONAL: a product with NO recipe (or an inactive / empty
+    // one) consumes NO base ingredient stock instead of blocking completion.
+    // This matches the historical HPP snapshot, which records NO_RECIPE / NULL
+    // for exactly these states (never 0, so COGS coverage stays incomplete).
+    // Only a usable recipe (active + at least one item) is consumed; its
+    // missing/inactive ingredient rows still BLOCK completion.
     const costingMode = product.branchProducts[0]?.costingMode ?? "INGREDIENT";
     if (costingMode !== "MANUAL") {
       const recipe = product.recipe;
-      if (!recipe) {
-        throw new IngredientCompletionError(
-          "INGREDIENT_RECIPE_REQUIRED",
-          `Resep untuk ${product.name} belum dibuat — produk ini memakai HPP dari bahan baku, jadi resep wajib diisi sebelum pesanan bisa diselesaikan.`
-        );
-      }
-      if (!recipe.isActive) {
-        throw new IngredientCompletionError(
-          "INGREDIENT_RECIPE_INACTIVE",
-          `Resep untuk ${product.name} tidak aktif — aktifkan resep atau ubah metode HPP menjadi Manual sebelum pesanan bisa diselesaikan.`
-        );
-      }
-      if (recipe.items.length === 0) {
-        throw new IngredientCompletionError(
-          "INGREDIENT_RECIPE_REQUIRED",
-          `Resep untuk ${product.name} belum memiliki bahan — lengkapi resep sebelum pesanan bisa diselesaikan.`
-        );
-      }
-
-      const orderQty = new Prisma.Decimal(item.quantity);
-      for (const recipeItem of recipe.items) {
-        const ingredient = requireIngredientActive(
-          recipeItem.ingredient,
-          `resep ${product.name}`
-        );
-        addRequirement(ingredient, recipeItem.quantity.mul(orderQty));
+      if (recipe && recipe.isActive && recipe.items.length > 0) {
+        const orderQty = new Prisma.Decimal(item.quantity);
+        for (const recipeItem of recipe.items) {
+          const ingredient = requireIngredientActive(
+            recipeItem.ingredient,
+            `resep ${product.name}`
+          );
+          addRequirement(ingredient, recipeItem.quantity.mul(orderQty));
+        }
       }
     }
 

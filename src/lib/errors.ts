@@ -76,9 +76,10 @@ export class ShiftNotOpenError extends AppError {
  * H1 — ingredient (BOM) consumption failure at order completion.
  *
  * Distinct `code`s so the UI can explain the exact blocker instead of a
- * generic failure:
- *   INGREDIENT_RECIPE_REQUIRED    — INGREDIENT-costed product has no active recipe
- *   INGREDIENT_RECIPE_INACTIVE    — recipe exists but is deactivated
+ * generic failure. NOTE: a missing/inactive/empty base recipe is NO LONGER a
+ * completion blocker (resep/HPP are optional), so INGREDIENT_RECIPE_REQUIRED /
+ * INGREDIENT_RECIPE_INACTIVE are retained for compatibility only and are not
+ * thrown by `consumeOrderIngredients`:
  *   INGREDIENT_NOT_FOUND          — recipe references an ingredient that is gone
  *   INGREDIENT_INACTIVE           — recipe references a deactivated ingredient
  *   INSUFFICIENT_INGREDIENT_STOCK — branch stock < required consumption
