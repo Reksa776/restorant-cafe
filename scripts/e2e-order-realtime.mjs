@@ -116,6 +116,9 @@ const newPage = async (tagName) => {
   return p;
 };
 async function waitOn(page, fn, timeout = 20000, label = "", ...args) {
+  // `label` stays part of the call-site API for diagnostics; a timed-out wait
+  // returns false instead of throwing, so it is intentionally never read.
+  void label;
   const start = Date.now();
   while (Date.now() - start < timeout) {
     try {
@@ -129,6 +132,8 @@ async function waitOn(page, fn, timeout = 20000, label = "", ...args) {
 const waitText = (page, text, timeout = 20000) =>
   waitOn(page, (t) => (document.body.innerText || "").includes(t), timeout, `text ${text}`, text);
 const waitDb = async (fn, timeout = 15000, label = "") => {
+  // See waitOn: `label` is diagnostic metadata only.
+  void label;
   const start = Date.now();
   while (Date.now() - start < timeout) {
     try {
@@ -347,7 +352,6 @@ const C2 = await anonCtx.newPage();
 C2.on("pageerror", (e) => console.log("[C2 pageerror]", String(e).slice(0, 160)));
 await C2.goto(`${BASE}/order/${ordA.number}`, { waitUntil: "networkidle2" });
 await waitText(C2, ordA.number, 25000);
-const c2Initial = await completedSteps(C2);
 await armNoReload(C2);
 // PROCESSING → READY
 check("TEST4 admin card has Siap action", await clickCardAction(A, ordA.number, "Siap"), "");

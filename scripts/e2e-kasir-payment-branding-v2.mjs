@@ -23,7 +23,6 @@ import crypto from "node:crypto";
 import mysql from "mysql2/promise";
 
 const BASE = "http://127.0.0.1:3001";
-const PORT = 3001;
 const TAG = `smoke-${Date.now()}`;
 // Webhook signing secret = the server's real IPAYMU_VA (validateWebhook uses
 // VA as the HMAC secret). Read from env; never printed/logged.
@@ -157,14 +156,14 @@ async function ensureTestUsers(restaurantId, branchId) {
   return { adminId, kasirId };
 }
 
-async function openShift(kasirApi, kasirId, branchId) {
+async function openShift(kasirApi, kasirId) {
   await q(`DELETE FROM cashiershift WHERE userId = ?`, [kasirId]);
   const res = await kasirApi.post("/api/shifts", { openingCash: 500000 });
   if (res.status !== 201) throw new Error(`openShift failed: ${res.status} ${JSON.stringify(res.json)}`);
   return res.json.data.id;
 }
 
-async function createOrder(api, { orderType, customerId, tableId, restaurantId, branchId, productId, price }) {
+async function createOrder(api, { orderType, customerId, tableId, productId, price }) {
   // Price is asserted against the DB row the order service recomputes from.
   const qty = 1;
   const isDineIn = orderType === "DINE_IN";
@@ -226,7 +225,7 @@ async function runPaymentMatrix(api, kasirApi, label, { orderType, customerId, t
       `payment=${q1rowAfter?.status} order=${orderAfter?.paymentStatus} http=${wh.status}`);
 
     // Cashier opens shift + collects cash (amountReceived ≥ total)
-    await openShift(kasirApi, created.kasirId, branchId);
+    await openShift(kasirApi, created.kasirId);
     const mark = await kasirApi.post(`/api/payments/${cash.json.data.id}/mark-paid`, { amountReceived: order.grandTotal + 50000 });
     const txRows = await q(`SELECT status, amount FROM paymenttransaction WHERE paymentId = ?`, [cash.json.data.id]);
     check(`${label} markCashierPaymentPaid → PAID (amountReceived validated, audit row written)`,
@@ -304,7 +303,7 @@ async function runPaymentMatrix(api, kasirApi, label, { orderType, customerId, t
     const cash2 = await api.post("/api/payments", { orderId: order.id, method: "KASIR" });
     check(`${label} QRIS → CASH re-switch works (UNPAID KASIR row)`,
       cash2.status === 201 && cash2.json?.data?.status === "UNPAID", `status=${cash2.status}`);
-    await openShift(kasirApi, created.kasirId, branchId);
+    await openShift(kasirApi, created.kasirId);
     const underpay = await kasirApi.post(`/api/payments/${cash2.json.data.id}/mark-paid`, { amountReceived: 1 });
     const stillUnpaid = (await q(`SELECT status FROM payment WHERE id = ?`, [cash2.json.data.id]))[0];
     const q2After = (await q(`SELECT status FROM payment WHERE id = ?`, [q2.json.data.payment.id]))[0];

@@ -25,27 +25,6 @@ async function shot(page, name) {
   console.log(`📸 ${name}`);
 }
 
-// Find the group container div for a group by its header name.
-async function groupContainerHandle(page, groupName) {
-  const found = await page.evaluate((name) => {
-    const els = [...document.querySelectorAll("div, span, button")];
-    const header = els.find((el) => (el.textContent || "").trim() === name);
-    if (!header) return false;
-    let el = header.parentElement;
-    while (el && el !== document.body) {
-      if (
-        el.tagName === "DIV" &&
-        /border rounded-lg overflow-hidden/.test(el.className || "")
-      ) {
-        return true;
-      }
-      el = el.parentElement;
-    }
-    return false;
-  }, groupName);
-  return found;
-}
-
 // Expand a group (click chevron = first button in its header row).
 async function expandGroup(page, groupName) {
   return page.evaluate((name) => {

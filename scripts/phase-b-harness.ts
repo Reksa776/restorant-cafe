@@ -10,6 +10,7 @@
  */
 
 import "dotenv/config";
+import * as fs from "node:fs";
 import { prisma } from "@/lib/prisma";
 import * as supplierSvc from "@/services/supplier/supplier.service";
 import * as purchaseSvc from "@/services/purchase/purchase.service";
@@ -39,7 +40,7 @@ function check(name: string, ok: boolean, detail = ""): void {
   }
 }
 
-async function expectReject(name: string, fn: () => Promise<unknown>, Err: new (...a: any[]) => Error) {
+async function expectReject(name: string, fn: () => Promise<unknown>, Err: new (...a: never[]) => Error) {
   try {
     await fn();
     check(name, false, "expected error was not thrown");
@@ -118,7 +119,6 @@ async function cleanupTenant(label: string) {
 // ---------------------------------------------------------------
 
 function netscapeToCookieHeader(filePath: string): string | null {
-  const fs = require("node:fs");
   if (!fs.existsSync(filePath)) return null;
   const lines = fs.readFileSync(filePath, "utf8").split("\n");
   const parts: string[] = [];
@@ -134,7 +134,7 @@ function netscapeToCookieHeader(filePath: string): string | null {
 const ADMIN_COOKIE = netscapeToCookieHeader("/tmp/admin_cookie.txt");
 const KASIR_COOKIE = netscapeToCookieHeader("/tmp/cashier_cookie.txt");
 
-async function api<T = any>(
+async function api<T = unknown>(
   path: string,
   method: string,
   cookie: string | null,
@@ -152,13 +152,13 @@ async function api<T = any>(
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
-  let data: any = null;
+  let data: unknown = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
     data = null;
   }
-  return { status: res.status, data };
+  return { status: res.status, data: data as T };
 }
 
 // ---------------------------------------------------------------
@@ -199,8 +199,9 @@ async function main() {
       data: { restaurantId: "supplier-fk-does-not-exist", name: "FK test" },
     });
     check("supplier FK restaurant enforced", false, "should have thrown FK error");
-  } catch (e: any) {
-    check("supplier FK restaurant enforced", String(e?.code) === "P2003", e?.code);
+  } catch (e) {
+    const err = e as { code?: string };
+    check("supplier FK restaurant enforced", String(err?.code) === "P2003", err?.code);
   }
 
   console.log("== Tenant A fixtures ==");
@@ -321,9 +322,6 @@ async function main() {
   }, ConflictError);
 
   console.log("== Receive -> StockMovement IN (atomic) ==");
-  const beforeReceive = await prisma.branchProduct.findFirst({
-    where: { branchId: a.branch.id, productId: a.product.id },
-  });
   const beforeMt = await prisma.stockMovement.count({ where: { restaurantId: a.restaurant.id } });
 
   const received = await purchaseSvc.receivePurchase(a.restaurant.id, draft2.id, UID, undefined);
@@ -369,14 +367,14 @@ async function main() {
       });
       throw new Error("boom-rollback");
     });
-  } catch (e) {
+  } catch {
     /* expected */
   }
   const bpAfterR = await prisma.branchProduct.findFirst({
     where: { branchId: a.branch.id, productId: a.product.id },
   });
   const mtAfterR = await prisma.stockMovement.count({
-    where: { restaurantId: a.restaurant.id, refType: "TEST_ATOMIC" as any },
+    where: { restaurantId: a.restaurant.id, refType: "TEST_ATOMIC" },
   });
   check("rolled-back movement left no stock change (still 20)", bpAfterR?.stock === 20, `stock=${bpAfterR?.stock}`);
   check("rolled-back movement wrote no ledger row", mtAfterR === 0, `count=${mtAfterR}`);
@@ -436,7 +434,7 @@ async function main() {
   });
   check("concurrent IN added 10 exactly (lost-update free)", bpConcur?.stock === startStock + 10, `stock=${bpConcur?.stock}`);
   const concurRows = await prisma.stockMovement.findMany({
-    where: { restaurantId: a.restaurant.id, refType: "TEST_CONC" as any },
+    where: { restaurantId: a.restaurant.id, refType: "TEST_CONC" },
     orderBy: { createdAt: "asc" },
   });
   check("concurrent IN created 2 ledger rows with correct balanceAfter",
@@ -465,10 +463,6 @@ async function main() {
 
   const stockBeforeComplete = (await prisma.branchProduct.findFirst({ where: { branchId: a.branch.id, productId: a.product.id } }))!.stock;
   check("stock still full after creation (no deduction at creation)", stockBeforeComplete === 17, `stock=${stockBeforeComplete}`);
-  const outBefore = await prisma.stockMovement.count({
-    where: { restaurantId: a.restaurant.id, refType: StockRefType.ORDER_COMPLETED as any },
-  });
-
   // Complete order1: CONFIRMED -> PROCESSING -> READY -> COMPLETED
   await orderService.updateOrderStatus(o1.id, { status: "CONFIRMED" }, a.restaurant.id, UID, [a.branch.id]);
   await orderService.updateOrderStatus(o1.id, { status: "PROCESSING" }, a.restaurant.id, UID, [a.branch.id]);
@@ -479,7 +473,7 @@ async function main() {
   const bpAfterO1 = await prisma.branchProduct.findFirst({ where: { branchId: a.branch.id, productId: a.product.id } });
   check("order1 completion deducted 5 (17 -> 12)", bpAfterO1?.stock === 12, `stock=${bpAfterO1?.stock}`);
   const out1 = await prisma.stockMovement.findMany({
-    where: { restaurantId: a.restaurant.id, refType: StockRefType.ORDER_COMPLETED as any, refId: o1.id },
+    where: { restaurantId: a.restaurant.id, refType: StockRefType.ORDER_COMPLETED, refId: o1.id },
   });
   check("order1 wrote exactly 1 OUT movement", out1.length === 1 && out1[0].type === "OUT", JSON.stringify(out1.map((m) => m.quantity)));
   check("OUT movement signed negative + balanceAfter correct", out1[0].quantity === -5 && out1[0].balanceAfter === 12, `qty=${out1[0].quantity} bal=${out1[0].balanceAfter}`);
@@ -534,7 +528,7 @@ async function main() {
   check("listStockMovements returns rows", ledger.length > 0);
   const ledgerB = await listStockMovements(b.restaurant.id, undefined, {});
   check("listStockMovements isolated per tenant (B empty)", ledgerB.length === 0, `count=${ledgerB.length}`);
-  const ledgerByBranch = await listStockMovements(a.restaurant.id, [a.branch.id], { type: "IN" as any });
+  const ledgerByBranch = await listStockMovements(a.restaurant.id, [a.branch.id], { type: "IN" });
   check("branch+type filter works", ledgerByBranch.every((m) => m.branchId === a.branch.id && m.type === "IN"));
 
   console.log("== Cancel purchase ==");
@@ -608,7 +602,7 @@ async function main() {
       where: { branchId: branchMain!.id, productId: prodInfo!.id },
     }))?.stock ?? 0;
 
-    const adminPur = await api<{ data: { id: string; total: number; items: any[] } }>("/api/admin/purchases", "POST", ADMIN_COOKIE, {
+    const adminPur = await api<{ data: { id: string; total: number; items: unknown[] } }>("/api/admin/purchases", "POST", ADMIN_COOKIE, {
       branchId: branchMain!.id,
       supplierId,
       notes: "phaseb-http",
@@ -618,7 +612,7 @@ async function main() {
     const purId = adminPur.data?.data?.id;
     check("http purchase items 1", adminPur.data?.data?.items?.length === 1);
 
-    const recv = await api(`/api/admin/purchases/${purId}/receive`, "POST", ADMIN_COOKIE);
+    const recv = await api<{ data: { status: string } }>(`/api/admin/purchases/${purId}/receive`, "POST", ADMIN_COOKIE);
     check("http ADMIN receive purchase", recv.status === 201 && recv.data?.data?.status === "RECEIVED", `status=${recv.status}`);
     const bpNew = await prisma.branchProduct.findFirst({
       where: { branchId: branchMain!.id, productId: prodInfo!.id },
@@ -629,7 +623,7 @@ async function main() {
     check("http duplicate receive -> conflict, no extra stock", recv2.status === 409, `status=${recv2.status}`);
 
     const ledgerHttp = await api<{ data: { items: Array<{ refId: string }> } }>("/api/admin/stock-movements", "GET", ADMIN_COOKIE);
-    check("http ledger lists receive movements", ledgerHttp.status === 200 && ledgerHttp.data?.data?.items?.some((m: any) => m.refId === purId), `status=${ledgerHttp.status}`);
+    check("http ledger lists receive movements", ledgerHttp.status === 200 && ledgerHttp.data?.data?.items?.some((m) => m.refId === purId), `status=${ledgerHttp.status}`);
 
     const kRecv = await api(`/api/admin/purchases/${purId}/receive`, "POST", KASIR_COOKIE);
     check("http KASIR receive -> 403", kRecv.status === 403, `status=${kRecv.status}`);
@@ -651,7 +645,7 @@ async function main() {
 
     // cleanup http data
     if (supplierId) {
-      await prisma.stockMovement.deleteMany({ where: { refType: StockRefType.PURCHASE_RECEIVE as any, refId: purId ?? "none" } });
+      await prisma.stockMovement.deleteMany({ where: { refType: StockRefType.PURCHASE_RECEIVE, refId: purId ?? "none" } });
       const httpPurchases = await prisma.purchase.findMany({ where: { supplierId }, select: { id: true } });
       await prisma.purchaseItem.deleteMany({ where: { purchaseId: { in: httpPurchases.map((p) => p.id) } } });
       await prisma.purchase.deleteMany({ where: { id: { in: httpPurchases.map((p) => p.id) } } });
@@ -681,7 +675,7 @@ async function main() {
   process.exit(fail > 0 ? 1 : 0);
 }
 
-async function props(name: string, fn: () => Promise<any>, pred: (v: any) => boolean) {
+async function props<T>(name: string, fn: () => Promise<T>, pred: (v: T) => boolean) {
   const v = await fn();
   check(name, pred(v));
 }

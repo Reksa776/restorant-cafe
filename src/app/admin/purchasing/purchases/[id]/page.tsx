@@ -6,9 +6,6 @@ import { useParams, useRouter } from "next/navigation";
 import {
   purchaseService,
   type PurchaseDetail,
-  type PurchaseItem,
-  type PurchaseIngredientLine,
-  type PurchaseIngredientMovement,
 } from "@/services/purchase.service";
 import { supplierService, type Supplier } from "@/services/supplier.service";
 import { useUserRole } from "@/hooks/use-user-role";

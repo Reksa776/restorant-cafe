@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
     // The receiving branch is validated server-side — a client can never
     // push an unauthorized branch. Header/single-assignment wins when the
     // body omits it.
-    let branchId: string | null =
+    const branchId: string | null =
       typeof body.branchId === "string" && body.branchId
         ? body.branchId
         : effectiveWriteBranchId(ctx);

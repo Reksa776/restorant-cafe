@@ -27,28 +27,6 @@ async function shot(page, name) {
 }
 
 // Scoped helpers -----------------------------------------------------------
-// Find the group container (div with border + rounded) that contains the
-// group header with the given name.
-async function getGroupContainer(page, groupName) {
-  return page.evaluate((name) => {
-    const els = [...document.querySelectorAll("div, span, button")];
-    const header = els.find((el) => (el.textContent || "").trim() === name);
-    if (!header) return null;
-    let el = header.parentElement;
-    while (el && el !== document.body) {
-      if (
-        el.tagName === "DIV" &&
-        /border rounded-lg overflow-hidden/.test(el.className || "") &&
-        (el.textContent || "").includes("Tambah Option")
-      ) {
-        return { found: true, text: (el.textContent || "").slice(0, 200) };
-      }
-      el = el.parentElement;
-    }
-    return null;
-  }, groupName);
-}
-
 // Expand a group by clicking its chevron button in the header row.
 async function expandGroup(page, groupName) {
   const done = await page.evaluate((name) => {

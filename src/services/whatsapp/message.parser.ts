@@ -22,6 +22,9 @@ export class MessageParser {
     message: string,
     restaurantId: string
   ): Promise<ParsedOrder> {
+    // Accepted for signature parity with the tenant-scoped callers; this parser
+    // is tenant-agnostic (it only extracts fields from the message text).
+    void restaurantId;
     const lines = message
       .split("\n")
       .map((line) => line.trim())

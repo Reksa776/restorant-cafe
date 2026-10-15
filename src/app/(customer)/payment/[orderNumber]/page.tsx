@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import {
   Banknote,
@@ -119,6 +120,11 @@ export default function PaymentPage({
     }
   }, [orderNumber]);
 
+  // Derived once per render so the polling effect below depends on the
+  // effective values instead of on the whole (re-fetched) payload object.
+  const paymentMethod = data?.payment?.method;
+  const effectiveStatus = effectivePaymentStatus(data);
+
   // Initial load + poll every 4s. Polling stops on terminal states
   // (PAID/EXPIRED/FAILED) and for cashier (KASIR) intents — a cashier row
   // flips only when the admin marks it paid, which the order page tracks.
@@ -129,14 +135,12 @@ export default function PaymentPage({
     loadPayment();
     const interval = setInterval(() => {
       if (!mountedRef.current) return;
-      const method = data?.payment?.method;
       // Effective status — stops on ALL terminal states, including the
       // locally-computed EXPIRED for a PENDING payment past its expiry
       // (H5). The interval tears itself down so polling never runs forever.
-      const status = effectivePaymentStatus(data);
       if (
-        TERMINAL_PAYMENT_STATUSES.includes(status) ||
-        (method === "KASIR" && status === "UNPAID")
+        TERMINAL_PAYMENT_STATUSES.includes(effectiveStatus) ||
+        (paymentMethod === "KASIR" && effectiveStatus === "UNPAID")
       ) {
         clearInterval(interval);
         return;
@@ -147,7 +151,7 @@ export default function PaymentPage({
       mountedRef.current = false;
       clearInterval(interval);
     };
-  }, [orderNumber, loadPayment, data?.payment?.status, data?.payment?.method]);
+  }, [orderNumber, loadPayment, effectiveStatus, paymentMethod]);
 
   // QR source: prefer the gateway's QrImage; fall back to rendering QrString
   // with the project's existing qrcode library (never a fake/custom QR when
@@ -204,8 +208,6 @@ export default function PaymentPage({
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [data?.payment?.expiresAt]);
-
-  const effectiveStatus = effectivePaymentStatus(data);
 
   const isTerminal = TERMINAL_PAYMENT_STATUSES.includes(effectiveStatus);
 
@@ -611,9 +613,12 @@ export default function PaymentPage({
       <div className="bg-white rounded-2xl border border-gray-200 p-6">
         {hasQr ? (
           <div className="flex flex-col items-center gap-3">
-            <img
+            <Image
               src={qrSrc!}
               alt="QRIS"
+              width={280}
+              height={280}
+              unoptimized
               className="w-full max-w-[280px] h-auto mx-auto object-contain rounded-lg"
               onError={() => setQrFailed(true)}
             />

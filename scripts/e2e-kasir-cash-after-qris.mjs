@@ -104,7 +104,7 @@ async function main() {
     if (r.status !== 200) throw new Error(`qrisIntent failed: ${JSON.stringify(r.json)}`);
     return r.json.data.payment;
   };
-  const cashIntentThenMark = async (api, order, amountReceived, actorUserId = null) => {
+  const cashIntentThenMark = async (api, order, amountReceived) => {
     const c = await api.post("/api/payments", { orderId: order.id, method: "KASIR" });
     if (c.status !== 201 && c.status !== 200) return { create: c, markPaid: null };
     const mark = await api.post(`/api/payments/${c.json.data.id}/mark-paid`, { amountReceived });
@@ -142,7 +142,7 @@ async function main() {
     check("E late-webhook: wait ignored-callback audit row recorded", Number(ignoredRows[0].c) >= 1, `ignored=${ignoredRows[0].c}`);
 
     // G. duplicate mark-paid → ALREADY_PAID + exactly ONE paid cash payment
-    const dup = await cashIntentThenMark(admin, o, o.grandTotal + 50000);
+    await cashIntentThenMark(admin, o, o.grandTotal + 50000);
     const dupSecond = await admin.post(`/api/payments/${res.paymentId}/mark-paid`, { amountReceived: o.grandTotal });
     check("G duplicate: second mark-paid rejected with ALREADY_PAID (409)",
       dupSecond.status === 409 && dupSecond.json?.error === "ALREADY_PAID",

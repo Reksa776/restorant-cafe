@@ -196,7 +196,7 @@ async function main() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ orderNumber: o0.json.data.orderNumber, method: "QRIS" }),
     });
-    const pubPayJson = await pubPay.json().catch(() => null);
+    await pubPay.json().catch(() => null);
     const pubRow = (await q(`SELECT status,method FROM payment WHERE orderId=? AND method='QRIS' ORDER BY createdAt DESC LIMIT 1`, [o0.json.data.id]))[0];
     created.payments.push(...(await q(`SELECT id FROM payment WHERE orderId=?`, [o0.json.data.id])).map((r) => r.id));
     check("SEC /api/public/payments (customer QRIS): intent created w/o shift",
@@ -273,7 +273,6 @@ async function main() {
   // ============================================================
   // SHIFT-OPEN MATRIX — kasir is the actor for create + pay
   // ============================================================
-  let paidCasherPaymentId = null;
   for (const orderType of ["DINE_IN", "TAKEAWAY", "DELIVERY"]) {
     // ---------- CASH ----------
     {
@@ -296,7 +295,6 @@ async function main() {
           cash.restaurantId === st.order.restaurantId && cash.branchId === st.order.branchId &&
           cash.shiftId === shiftId && shiftRow?.status === "OPEN" && (await countPaid(pid)) === 1,
         `mark=${mark.status} cash=${cash?.status} order=${st.order?.paymentStatus} shift=${cash?.shiftId?.slice(0, 8)}`);
-      if (!orderType || orderType === "DINE_IN") paidCasherPaymentId = c.json.data.id;
     }
 
     // ---------- QRIS (PENDING → webhook PAID) ----------

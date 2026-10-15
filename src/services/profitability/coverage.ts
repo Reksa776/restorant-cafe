@@ -39,7 +39,7 @@ export function deriveCogsState(counts: {
   legacy: number;
   pending: number;
 }): ProfitabilityCogsState {
-  const { totalItems, costed, uncosted, legacy, pending } = counts;
+  const { totalItems, costed, uncosted, pending } = counts;
   // D1 — empty scope is NOT coverage. Must be checked BEFORE `costed === total`.
   if (totalItems === 0) return "NO_ITEMS";
   if (costed === totalItems) return "COVERED";

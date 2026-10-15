@@ -632,7 +632,7 @@ const brokenUiName = `${PREFIX}Broken-${Date.now()}`;
 await createProductAs(page, { categoryId, name: brokenUiName, price: 5000, imageUrl: "https://invalid.invalid/x.png" });
 await page.goto(`${BASE}/menu`, { waitUntil: "networkidle2" });
 await sleep(2500);
-const brokenCard = await page.evaluate((name) => {
+await page.evaluate((name) => {
   const h3 = [...document.querySelectorAll("h3")].find((h) => (h.textContent || "").trim() === name);
   if (!h3) return null;
   let el = h3, card = null;

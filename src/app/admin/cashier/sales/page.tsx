@@ -11,7 +11,6 @@ import {
 } from "@/lib/api-error-handler";
 import {
   cashierSalesService,
-  type SalesTransaction,
   type SalesPageResult,
 } from "@/services/cashier-sales.service";
 import { userService } from "@/services/shift.service";
@@ -26,7 +25,6 @@ import {
   Smartphone,
   TrendingUp,
   FileText,
-  Receipt,
   ChevronLeft,
   ChevronRight,
   Eye,
@@ -658,7 +656,7 @@ export default function CashierSalesPage() {
                     <div>
                       <p className="text-xs text-muted-foreground mb-2">Items</p>
                       <div className="border rounded-lg divide-y">
-                        {detailOrder.items.map((item: any) => (
+                        {detailOrder.items.map((item) => (
                           <div key={item.id} className="flex justify-between p-2 text-sm">
                             <div>
                               <span>{item.product?.name || "Item"}</span>

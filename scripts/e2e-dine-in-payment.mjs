@@ -162,6 +162,9 @@ const newPage = async (tagName) => {
   return p;
 };
 async function waitOn(page, fn, timeout = 20000, label = "", ...args) {
+  // `label` stays part of the call-site API for diagnostics; a timed-out wait
+  // returns false instead of throwing, so it is intentionally never read.
+  void label;
   const start = Date.now();
   while (Date.now() - start < timeout) {
     try {
@@ -176,6 +179,8 @@ const waitText = (page, text, timeout = 20000) =>
   waitOn(page, (t) => (document.body.innerText || "").includes(t), timeout, `text ${text}`, text);
 // Poll a DB predicate until true (no page involved).
 const waitDb = async (fn, timeout = 15000, label = "") => {
+  // See waitOn: `label` is diagnostic metadata only.
+  void label;
   const start = Date.now();
   while (Date.now() - start < timeout) {
     try {
@@ -252,7 +257,6 @@ const anonK = await browser.createBrowserContext();
 const K = await anonK.newPage();
 K.on("pageerror", (e) => console.log("[K pageerror]", String(e).slice(0, 160)));
 let kasirOrderNumber = null;
-let kasirOrderId = null;
 
 K.on("response", async (res) => {
   try {
@@ -260,8 +264,6 @@ K.on("response", async (res) => {
       const j = await res.json();
       if (j?.data?.orderNumber) {
         kasirOrderNumber = j.data.orderNumber;
-        const rows = await q("SELECT id FROM `Order` WHERE orderNumber = ?", [j.data.orderNumber]);
-        if (rows[0]) kasirOrderId = rows[0].id;
       }
     }
   } catch {}
@@ -474,7 +476,6 @@ check("TEST12 card now Lunas, 'Tandai Sudah Dibayar' button gone (realtime)", !!
 const paymentRowPaid = await waitOn(
   G,
   (num) => {
-    const body = document.body.innerText || "";
     const blocks = [...document.querySelectorAll("div")].filter((d) => (d.textContent || "").includes(num) && (d.textContent || "").length < 900);
     return blocks.some((b) => (b.textContent || "").includes("PAID") || (b.textContent || "").includes("Lunas"));
   },
@@ -535,7 +536,6 @@ const anonQ = await browser.createBrowserContext();
 const Q = await anonQ.newPage();
 Q.on("pageerror", (e) => console.log("[Q pageerror]", String(e).slice(0, 160)));
 let qrisOrderNumber = null;
-let qrisOrderId = null;
 let qrisPayResponse = null; // { status, data } of the payment attempt
 
 Q.on("response", async (res) => {
@@ -545,8 +545,6 @@ Q.on("response", async (res) => {
       const j = await res.json();
       if (j?.data?.orderNumber) {
         qrisOrderNumber = j.data.orderNumber;
-        const rows = await q("SELECT id FROM `Order` WHERE orderNumber = ?", [qrisOrderNumber]);
-        if (rows[0]) qrisOrderId = rows[0].id;
       }
     }
     if (u.endsWith("/public/payments") && res.request().method() === "POST") {

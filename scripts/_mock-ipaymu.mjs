@@ -6,7 +6,6 @@
 import http from "node:http";
 
 const VA = process.env.MOCK_VA || "1179000899000000";
-let requests = 0;
 
 function fail(res, code, message) {
   res.writeHead(200, { "Content-Type": "application/json" });
@@ -17,7 +16,6 @@ const server = http.createServer((req, res) => {
   let raw = "";
   req.on("data", (c) => (raw += c));
   req.on("end", () => {
-    requests += 1;
     // The mock accepts whatever VA the test server presents (it is the
     // server's own configured value — never logged) and only requires a
     // signature header to be present.
@@ -29,7 +27,6 @@ const server = http.createServer((req, res) => {
     } catch {
       return fail(res, 400, "bad json");
     }
-    const amount = String(body.amount || "0");
     const ref = String(body.referenceId || "MOCK-REF");
     const channel = body.paymentMethod === "qris" ? "qris" : "va";
     const data =

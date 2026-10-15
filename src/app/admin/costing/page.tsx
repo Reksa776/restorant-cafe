@@ -412,7 +412,7 @@ function CostingDetailDialog({
                 <p className="mt-2 text-xs text-gray-500">
                   HPP addon/option dihitung dari komposisi bahan × WAC bahan baku
                   cabang ini. Harga jual addon/option tidak pernah dipakai sebagai HPP.
-                  "Incomplete" berarti komposisi atau WAC belum lengkap — bukan Rp 0.
+                  &quot;Incomplete&quot; berarti komposisi atau WAC belum lengkap — bukan Rp 0.
                 </p>
               </>
             )}

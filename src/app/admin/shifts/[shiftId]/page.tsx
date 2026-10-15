@@ -9,7 +9,6 @@ import {
   type NormalizedApiError,
 } from "@/lib/api-error-handler";
 import { shiftService, type CashierShift } from "@/services/shift.service";
-import { toast } from "sonner";
 import {
   Loader2,
   ArrowLeft,

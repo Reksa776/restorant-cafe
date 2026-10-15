@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import {
   CheckCircle2,
   Clock,
@@ -668,9 +669,12 @@ export default function ReservationPaymentPage({
 
                       <div className="flex justify-center">
                         {data?.payment?.qrImage ? (
-                          <img
+                          <Image
                             src={data.payment.qrImage}
                             alt="QRIS"
+                            width={220}
+                            height={220}
+                            unoptimized
                             className="rounded-lg bg-white"
                             style={{
                               width: 220,

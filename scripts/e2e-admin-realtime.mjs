@@ -84,13 +84,6 @@ const waitText = (page, text, timeout = 20000) =>
   waitOn(page, (t) => (document.body.innerText || "").includes(t), timeout, `text ${text}`, text);
 const bodyHas = (text) => `(document.body.innerText || '').includes(${JSON.stringify(text)})`;
 const noOverflow = (pg) => pg.evaluate(() => document.documentElement.scrollWidth === window.innerWidth);
-const tryWait = async (fn, timeout = 20000) => {
-  try {
-    return await fn(timeout);
-  } catch {
-    return false;
-  }
-};
 const tryWaitOn = async (page, fn, timeout = 20000, label = "", ...args) => {
   try {
     return await waitOn(page, fn, timeout, label, ...args);
@@ -414,7 +407,6 @@ for (const [tag] of errorsByPage) errorsByPage.set(tag, []);
 const F2 = await newPage("customers2");
 await F2.goto(`${BASE}/admin/customers`, { waitUntil: "domcontentloaded", timeout: 60000 });
 await waitText(F2, "Pelanggan", 30000);
-const orderNumber2 = `${orderTag}-2`;
 // Second order: same tag + "-2" so the customer row is distinguishable; the
 // server assigns the real number and we re-read it from the response.
 const created2 = await createOrder(`${orderTag}-2`);

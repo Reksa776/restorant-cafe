@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { NotFoundError, ConflictError, ValidationError } from "@/lib/errors";
+import { NotFoundError, ConflictError } from "@/lib/errors";
 import type { CreateIngredientInput, UpdateIngredientInput, GetIngredientsInput } from "./ingredient.types";
 
 // ============================================================

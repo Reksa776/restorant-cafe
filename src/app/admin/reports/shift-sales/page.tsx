@@ -18,11 +18,9 @@ import {
   Download,
   Banknote,
   TrendingUp,
-  Users,
   Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useUserRole } from "@/hooks/use-user-role";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import {
   reportService,

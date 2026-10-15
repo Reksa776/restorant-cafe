@@ -871,7 +871,6 @@ function MenuContent() {
     isHydrated,
     updateQuantity,
     removeItem,
-    restaurantId,
     setRestaurantId,
     tableContext,
     clearTableContext,
@@ -1067,7 +1066,16 @@ function MenuContent() {
     } finally {
       setIsLoading(false);
     }
-  }, [clearTableContext, tableContext, customerBranch, clearCustomerBranch, router]);
+  }, [
+    clearTableContext,
+    tableContext,
+    customerBranch,
+    clearCustomerBranch,
+    router,
+    // Both are stable `useCallback`s from their providers (cart + branding).
+    applyBranding,
+    setRestaurantId,
+  ]);
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -1175,7 +1183,6 @@ function MenuContent() {
       // Clean up URL
       window.history.replaceState({}, '', '/menu');
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, isHydrated, items]);
 
   // Retry opening the edit modal once products have loaded (products fetch

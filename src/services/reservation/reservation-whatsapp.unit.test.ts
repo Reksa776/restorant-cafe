@@ -32,10 +32,6 @@ function mockReservationSendResult(): ReservationSendResult {
   return true;
 }
 
-interface ViewOverrides {
-  [key: string]: unknown;
-}
-
 function makeView(overrides: Partial<ReservationWhatsAppView> = {}): ReservationWhatsAppView {
   return {
     id: "res_1",

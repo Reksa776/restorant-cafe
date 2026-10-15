@@ -2,7 +2,6 @@ import crypto from "node:crypto";
 import mysql from "mysql2/promise";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 const BASE = "http://127.0.0.1:3001";
 const PROJECT = "/home/reksa1221/restorant-cafe";
 const envRaw = fs.readFileSync(path.join(PROJECT, ".env"), "utf8");
@@ -23,9 +22,6 @@ async function login(email,password){
 }
 async function g(p){ const r = await fetch(BASE+p,{headers:{cookie,...(branch?{"x-branch-id":branch}:{})}}); return {status:r.status, json: await r.json().catch(()=>null)}; }
 async function p(path,body){ const r = await fetch(BASE+path,{method:"POST",headers:{cookie,"Content-Type":"application/json",...(branch?{"x-branch-id":branch}:{})},body:JSON.stringify(body)}); return {status:r.status, json: await r.json().catch(()=>null)}; }
-const VA = ENV.IPAYMU_VA;
-const sign = (pl)=>{ const s={}; Object.keys(pl).sort().forEach(k=>s[k]=pl[k]); return crypto.createHmac("sha256",VA).update(JSON.stringify(s).replace(/\//g,"\\/"),"utf8").digest("hex"); };
-const wh = async (pl)=>{ const r = await fetch(`${BASE}/api/webhooks/ipaymu`,{method:"POST",headers:{"Content-Type":"application/json","x-signature":sign(pl)},body:JSON.stringify(pl)}); return {status:r.status, json: await r.json().catch(()=>null)}; };
 
 const asess = await login("admin@restobahagia.com","admin123");
 const rid = asess.json.data.restaurantId;

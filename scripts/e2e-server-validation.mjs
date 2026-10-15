@@ -12,7 +12,6 @@ const GROUP_ESPRESSO = "cmtkxdlol000qy49d24xvj46r";
 const OPT_SMALL = "cmtkxdajb000ly49djxexkals";
 const OPT_LARGE = "cmtkxdcgr000my49dnkiqwnqk";
 const OPT_LESS_SUGAR = "cmtkxfzqb000ty49dmzf4ziaf";
-const OPT_NORMAL_SUGAR = "cmtkxg1qp000uy49ddayxykxz";
 const OPT_NORMAL_ESP = "cmtkxhm50000wy49dpvfig8pk";
 const OPT_EXTRA_ESP = "cmtkxg4nf000vy49dw812xaqt";
 // Addon

@@ -288,7 +288,6 @@ async function main() {
 
     if (branchIds.length >= 2) {
       const branchA = branchIds[0];
-      const branchB = branchIds[1];
 
       // Create orders in each branch
       const custA = await mkCustomer("T5A");
@@ -301,7 +300,7 @@ async function main() {
       const shiftA = await shiftInsert(branchA, "T5A");
 
       // Create QRIS for branch A order
-      const qrA = await kasir.post("/api/payments", { orderNumber: orderA.orderNumber, method: "QRIS" });
+      await kasir.post("/api/payments", { orderNumber: orderA.orderNumber, method: "QRIS" });
       const stA = await stateOf(orderA.id);
       const qrisA = stA.payRows.find((p) => p.method === "QRIS");
 

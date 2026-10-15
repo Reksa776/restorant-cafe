@@ -52,11 +52,6 @@ export async function GET(request: NextRequest) {
       ctx
     );
 
-    const branchLabel =
-      report.branches.length === 1
-        ? report.branches[0].branchName
-        : "Semua Cabang";
-
     const header = [
       "Product",
       "Category",

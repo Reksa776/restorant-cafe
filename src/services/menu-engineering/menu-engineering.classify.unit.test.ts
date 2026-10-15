@@ -5,7 +5,6 @@ import {
   classifyProduct,
   resolveMedianScope,
   MIN_ORDER_COUNT,
-  MIN_QTY_SOLD,
   CATEGORY_MEDIAN_MIN_PRODUCTS,
   type ClassifyInput,
 } from "./menu-engineering.constants";

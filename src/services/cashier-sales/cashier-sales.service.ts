@@ -104,7 +104,7 @@ export async function getCashierSales(
   // ---- Build the cashier scope ----
   // For KASIR: find their shifts first, then payments linked to those shifts.
   // For ADMIN: optionally filter by specific cashier's shifts.
-  let shiftWhere: Prisma.CashierShiftWhereInput = {
+  const shiftWhere: Prisma.CashierShiftWhereInput = {
     restaurantId,
   };
 

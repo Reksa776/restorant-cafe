@@ -118,7 +118,6 @@ export default function PurchasesReportPage() {
         setSuppliers(res.items.map((s) => ({ id: s.id, name: s.name })))
       )
       .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branchCtxLoading]);
 
   useEffect(() => {

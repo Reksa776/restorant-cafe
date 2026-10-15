@@ -1386,7 +1386,6 @@ describe("STEP 2B.4 — P&L integration (real MariaDB, isolated test DB)", () =>
   // ------------------------------------------------------------------
   it("18. the expense window covers the whole local day of the period", async () => {
     const now = new Date();
-    const today = localDateOnly(now);
     const tomorrowDate = new Date(now);
     tomorrowDate.setDate(tomorrowDate.getDate() + 1);
     const tomorrow = localDateOnly(tomorrowDate);

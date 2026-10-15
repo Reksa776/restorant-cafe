@@ -10,7 +10,7 @@ import {
 import { supplierService } from "@/services/supplier.service";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import { useUserRole } from "@/hooks/use-user-role";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,7 +31,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Loader2, Plus, PackageOpen, Search } from "lucide-react";
+import { Loader2, Plus, PackageOpen } from "lucide-react";
 import { toast } from "sonner";
 
 const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;

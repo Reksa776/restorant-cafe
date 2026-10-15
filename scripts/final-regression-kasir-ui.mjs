@@ -176,7 +176,7 @@ async function gotoOrder(page, order) {
   };
   try {
     await once();
-  } catch (err) {
+  } catch {
     await new Promise((r) => setTimeout(r, 3000));
     try {
       await once();
@@ -289,7 +289,7 @@ async function main() {
 
   const flowCash = async (label, order) => {
     await gotoOrder(page, order);
-    const n0 = await navCount(page);
+    await navCount(page);
     await clickButton(page, "Proses Pembayaran");
     await waitText(page, "Cash / Tunai");
     await clickButton(page, "Cash / Tunai");
@@ -323,7 +323,7 @@ async function main() {
       created.payments.push(c.json.data.id);
     }
     await gotoOrder(page, order);
-    const n0 = await navCount(page);
+    await navCount(page);
     await clickButton(page, "Proses Pembayaran");
     await waitText(page, "Scan oleh customer");
     await clickButton(page, "Scan oleh customer");
@@ -358,7 +358,7 @@ async function main() {
 
   const flowQrisThenCash = async (label, order) => {
     await gotoOrder(page, order);
-    const n0 = await navCount(page);
+    await navCount(page);
     await clickButton(page, "Proses Pembayaran");
     await waitText(page, "Scan oleh customer");
     await clickButton(page, "Scan oleh customer");
@@ -427,7 +427,7 @@ async function main() {
       };
       try {
         await waitAnchor();
-      } catch (firstErr) {
+      } catch {
         await ppage.reload({ waitUntil: "domcontentloaded", timeout: 60000 });
         await waitAnchor(); // second attempt; throw bubbles if still empty
       }

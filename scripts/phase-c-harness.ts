@@ -17,6 +17,7 @@
  */
 
 import "dotenv/config";
+import * as fs from "node:fs";
 import { prisma } from "@/lib/prisma";
 import * as supplierSvc from "@/services/supplier/supplier.service";
 import * as purchaseSvc from "@/services/purchase/purchase.service";
@@ -142,20 +143,12 @@ async function makePurchase(restaurantId: string, branchId: string, supplierId: 
   return purchaseSvc.createPurchase(restaurantId, { branchId, supplierId, items });
 }
 
-async function completeOrder(orderId: string, restaurantId: string, userId: string, branchId: string) {
-  for (const st of ["CONFIRMED", "PROCESSING", "READY"] as const) {
-    await orderService.updateOrderStatus(orderId, { status: st }, restaurantId, userId, [branchId]);
-  }
-  return orderService.updateOrderStatus(orderId, { status: "COMPLETED" }, restaurantId, userId, [branchId]);
-}
-
 // ---------------------------------------------------------------
 // HTTP helpers (cookies from /tmp cookie jars; same localhost domain
 // across ports so jars captured against :3001 work on :3000 too)
 // ---------------------------------------------------------------
 
 function netscapeToCookieHeader(filePath: string): string | null {
-  const fs = require("node:fs");
   if (!fs.existsSync(filePath)) return null;
   const lines = fs.readFileSync(filePath, "utf8").split("\n");
   const parts: string[] = [];

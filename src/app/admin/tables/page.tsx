@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -108,7 +109,7 @@ export default function TablesPage() {
       : ""
   );
 
-  const loadTables = async (silent = false, isCurrent?: () => boolean) => {
+  const loadTables = useCallback(async (silent = false, isCurrent?: () => boolean) => {
     if (!silent) setIsLoading(true);
     try {
       // Pass the active branch so the top-right branch selector actually
@@ -126,7 +127,9 @@ export default function TablesPage() {
     } finally {
       if (!isCurrent || isCurrent()) setIsLoading(false);
     }
-  };
+    // Memoized on the active branch: the effect below already re-runs on
+    // `branchId`, so naming the callback does not add any extra fetch.
+  }, [branchId]);
 
   useEffect(() => {
     // Wait for branch context so a stale admin_branch_id is cleared before
@@ -140,7 +143,7 @@ export default function TablesPage() {
     return () => {
       alive = false;
     };
-  }, [branchCtxLoading, branchId]);
+  }, [branchCtxLoading, branchId, loadTables]);
 
   // Realtime: table status/CRUD changes (e.g. an order occupying/freeing a
   // table, or another admin) → refresh cards without a page reload.
@@ -314,9 +317,12 @@ export default function TablesPage() {
                       {/* QR + customer link */}
                       <div className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50/60 p-2.5">
                         {table.qrCode ? (
-                          <img
+                          <Image
                             src={table.qrCode}
                             alt={`QR Meja ${table.number}`}
+                            width={56}
+                            height={56}
+                            unoptimized
                             className="w-14 h-14 rounded-md border border-gray-200 bg-white flex-shrink-0"
                           />
                         ) : (
@@ -500,9 +506,12 @@ export default function TablesPage() {
             <div className="flex flex-col items-center gap-3">
               <div className="rounded-xl border border-gray-200 bg-white p-3">
                 {qrCode ? (
-                  <img
+                  <Image
                     src={qrCode}
                     alt={`QR Code Meja ${qrTable?.number ?? ""}`}
+                    width={208}
+                    height={208}
+                    unoptimized
                     className="w-52 h-52"
                   />
                 ) : (

@@ -148,6 +148,27 @@ export default function OrderTrackingPage({
   const loadOrderRef = useRef<() => Promise<void>>(async () => {});
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Declared before the effects that reference it and always reached through
+  // `loadOrderRef`, so the polling interval below can never close over a stale
+  // loader (the ref is refreshed on every render right here).
+  const loadOrder = async () => {
+    try {
+      const { orderNumber } = await params;
+      const res = await api.get(`/public/orders/${orderNumber}`);
+      setOrder(res.data.data);
+      setOrderReady(true);
+    } catch (error) {
+      console.error("Failed to load order:", error);
+      // Use the latest order (ref) — a transient error must not toast
+      // "not found" while a previously loaded order is on screen.
+      if (!orderRef.current) {
+        toast.error("Pesanan tidak ditemukan");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     orderRef.current = order;
   });
@@ -167,30 +188,13 @@ export default function OrderTrackingPage({
   }, [params]);
 
   useEffect(() => {
-    loadOrder();
+    loadOrderRef.current();
     // Poll for status updates every 10 seconds — stays as the offline
-    // fallback; live updates arrive over the SSE stream below.
-    const interval = setInterval(loadOrder, 10000);
+    // fallback; live updates arrive over the SSE stream below. Going through
+    // the ref keeps the interval on the latest loader without re-subscribing.
+    const interval = setInterval(() => loadOrderRef.current(), 10000);
     return () => clearInterval(interval);
   }, []);
-
-  const loadOrder = async () => {
-    try {
-      const { orderNumber } = await params;
-      const res = await api.get(`/public/orders/${orderNumber}`);
-      setOrder(res.data.data);
-      setOrderReady(true);
-    } catch (error) {
-      console.error("Failed to load order:", error);
-      // Use the latest order (ref) — a transient error must not toast
-      // "not found" while a previously loaded order is on screen.
-      if (!orderRef.current) {
-        toast.error("Pesanan tidak ditemukan");
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  };
 
   // ============================================================
   // Realtime (SSE) — admin status/payment changes reach this page

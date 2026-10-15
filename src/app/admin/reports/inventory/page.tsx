@@ -60,7 +60,6 @@ function typeBadge(type: string) {
   return <Badge variant="outline" className="text-blue-700 border-blue-300 bg-blue-50">Penyesuaian</Badge>;
 }
 
-const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function InventoryReportPage() {
@@ -122,7 +121,6 @@ export default function InventoryReportPage() {
         )
       )
       .catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branchCtxLoading]);
 
   useEffect(() => {

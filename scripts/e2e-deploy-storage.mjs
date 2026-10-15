@@ -21,7 +21,6 @@ import { createConnection } from "mysql2/promise";
 import { spawn } from "child_process";
 import "dotenv/config";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import zlib from "zlib";
 

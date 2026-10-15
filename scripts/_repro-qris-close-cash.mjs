@@ -68,8 +68,6 @@ async function main() {
   // step 1: kasir opens QRIS
   const qr1 = await kasir.post("/api/payments", { orderNumber: oA.orderNumber, method: "QRIS" });
   log(`1. createKasirQrisPayment → ${qr1.status} kind=${qr1.json?.data?.kind} method=${qr1.json?.data?.payment?.method} status=${qr1.json?.data?.payment?.status}`);
-  const qrisId = qr1.json?.data?.payment?.id;
-
   // (step 2: kasir CLOSES the dialog — pure client state, nothing hits the API)
 
   // step 3: reopens → chooses CASH → submit → frontend calls createPayment KASIR then mark-paid

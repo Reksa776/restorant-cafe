@@ -74,17 +74,6 @@ export function ProductImageField({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
-  const blobUrlRef = useRef<string | null>(null);
-
-  // Cleanup any object URL we created when unmounting.
-  useEffect(() => {
-    return () => {
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
-    };
-  }, []);
 
   const hasImage = value.kind !== "empty";
 
@@ -105,22 +94,22 @@ export function ProductImageField({
         return null;
       }
     }
-    if (value.kind === "file") {
-      if (!blobUrlRef.current) {
-        blobUrlRef.current = URL.createObjectURL(value.file);
-      }
-      return blobUrlRef.current;
-    }
+    if (value.kind === "file") return URL.createObjectURL(value.file);
     return null;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
-  // When the value stops referencing the current blob, free it.
+  // A locally-selected file owns its object URL for exactly as long as it is
+  // the preview source: revoke it when the source changes or on unmount. The
+  // effect (not render) is what owns the URL's lifetime.
   useEffect(() => {
-    if (value.kind !== "file" && blobUrlRef.current) {
-      URL.revokeObjectURL(blobUrlRef.current);
-      blobUrlRef.current = null;
-    }
+    const owned = value.kind === "file" ? previewUrl : null;
+    return () => {
+      if (owned) URL.revokeObjectURL(owned);
+    };
+  }, [previewUrl, value.kind]);
+
+  // A file that is no longer previewed can never be "broken".
+  useEffect(() => {
     if (value.kind !== "file") setBroken(false);
   }, [value]);
 
@@ -142,10 +131,8 @@ export function ProductImageField({
         );
         return;
       }
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
+      // The previous object URL is revoked by the preview effect as soon as
+      // this file becomes the value.
       setBroken(false);
       onChange({ kind: "file", file });
     },

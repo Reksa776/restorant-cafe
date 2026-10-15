@@ -192,7 +192,7 @@ export default function PnlPage() {
         <p>• Pembelian/purchase persediaan bukan Operating Expense (menjadi HPP saat terjual).</p>
         <p>
           • Bila COGS tidak lengkap, Gross Profit dan Net Profit ditampilkan
-          "Tidak diketahui", bukan dihitung dengan HPP nol.
+          &quot;Tidak diketahui&quot;, bukan dihitung dengan HPP nol.
         </p>
       </div>
 

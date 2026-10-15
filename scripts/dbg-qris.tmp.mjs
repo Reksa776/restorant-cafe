@@ -22,7 +22,7 @@ const makeApi = () => {
       const form=new URLSearchParams({csrfToken:cj.csrfToken,email,password,callbackURL:`${BASE}/login`,json:"true"});
       await fetch(`${BASE}/api/auth/callback/credentials`,{method:"POST",redirect:"manual",headers:{"Content-Type":"application/x-www-form-urlencoded",...(cookie?{cookie}:{})},body:form.toString()});
       const sc=c.headers.getSetCookie?c.headers.getSetCookie():[];
-      const r=await fetch(`${BASE}/api/auth/callback/credentials`,{method:"POST",redirect:"manual",headers:{"Content-Type":"application/x-www-form-urlencoded",...(cookie?{cookie}:{})},body:form.toString()});
+      await fetch(`${BASE}/api/auth/callback/credentials`,{method:"POST",redirect:"manual",headers:{"Content-Type":"application/x-www-form-urlencoded",...(cookie?{cookie}:{})},body:form.toString()});
       const s2=sc.map(x=>x.split(";")[0]); cookie=[...new Set([...cookie.split(";").filter(Boolean),...s2])].join("; ");
       const s=await this.get("/api/auth/session"); return s;
     },

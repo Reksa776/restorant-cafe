@@ -34,9 +34,6 @@ export function generateTestId(prefix: string): string {
   return `${prefix}-${timestamp}-${random}`;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyDecimal = any;
-
 /**
  * Create a test order with deterministic values
  */
@@ -66,12 +63,12 @@ export async function createTestOrder(
       branchId: override?.branchId ?? null,
       status: override?.status ?? 'COMPLETED',
       paymentStatus: override?.paymentStatus ?? 'PAID',
-      subtotal: (override?.subtotal ?? 100000) as any,
-      grandTotal: (override?.grandTotal ?? 100000) as any,
-      tax: 0 as any,
-      serviceCharge: 0 as any,
-      discount: 0 as any,
-    } as any,
+      subtotal: override?.subtotal ?? 100000,
+      grandTotal: override?.grandTotal ?? 100000,
+      tax: 0,
+      serviceCharge: 0,
+      discount: 0,
+    } as Prisma.OrderUncheckedCreateInput,
   });
 }
 
@@ -101,7 +98,7 @@ export async function createOrderWithItemAndSnapshot(
   const cogs = Math.round(itemPrice * cogsRatio);
 
   // Create order
-  const order = await prisma.order.create({
+  await prisma.order.create({
     data: {
       id,
       orderNumber: `ORD-${id.slice(-6)}`,
@@ -109,12 +106,12 @@ export async function createOrderWithItemAndSnapshot(
       branchId,
       status: 'COMPLETED',
       paymentStatus: 'PAID',
-      subtotal: itemPrice as any,
-      grandTotal: itemPrice as any,
-      tax: 0 as any,
-      serviceCharge: 0 as any,
-      discount: 0 as any,
-    } as any,
+      subtotal: itemPrice,
+      grandTotal: itemPrice,
+      tax: 0,
+      serviceCharge: 0,
+      discount: 0,
+    } as Prisma.OrderUncheckedCreateInput,
   });
 
   // Create item
@@ -124,8 +121,8 @@ export async function createOrderWithItemAndSnapshot(
       orderId: id,
       productId: generateTestId('prod'),
       quantity: 1,
-      totalPrice: itemPrice as any,
-    } as any,
+      totalPrice: itemPrice,
+    } as Prisma.OrderItemUncheckedCreateInput,
   });
 
   // Create COGS snapshot
@@ -135,8 +132,8 @@ export async function createOrderWithItemAndSnapshot(
       orderItemId: item.id,
       orderId: id,
       status: 'SNAPSHOTTED',
-      hppTotal: cogs as any,
-    } as any,
+      hppTotal: cogs,
+    } as Prisma.OrderItemCostSnapshotUncheckedCreateInput,
   });
 
   // Create payment
@@ -144,10 +141,10 @@ export async function createOrderWithItemAndSnapshot(
     data: {
       id: generateTestId('pay'),
       orderId: id,
-      amount: amount as any,
+      amount,
       method: 'KASIR',
       status: 'PAID',
-    } as any,
+    } as Prisma.PaymentUncheckedCreateInput,
   });
 
   return {
@@ -175,17 +172,17 @@ export async function createFullRefund(
   const refundId = generateTestId('ref');
 
   // Create refund
-  const refund = await prisma.refund.create({
+  await prisma.refund.create({
     data: {
       id: refundId,
       orderId: options.orderId,
       restaurantId: options.restaurantId,
       requestedByCashierId: options.cashierId,
-      amount: options.amount as any,
+      amount: options.amount,
       status: 'APPROVED',
       approvedAt: new Date(),
       reason: 'Test refund',
-    } as any,
+    },
   });
 
   return { refundId, paymentTransactionId: null };
@@ -212,11 +209,11 @@ export async function createLegacyRefund(
       orderId: options.orderId,
       restaurantId: options.restaurantId,
       requestedByCashierId: options.cashierId,
-      amount: options.amount as any,
+      amount: options.amount,
       status: 'APPROVED',
       approvedAt: new Date(),
       reason: options.reason ?? 'Test refund',
-    } as any,
+    },
   });
 
   return { refundId };
@@ -644,32 +641,31 @@ export async function createExpenseFixture(
   });
 }
 
-/** Whole-table row counts for the tables a cashbook run may touch. */
-const SCOPED_COUNT_TABLES = [
-  "restaurant",
-  "branch",
-  "user",
-  "customer",
-  "order",
-  "orderItem",
-  "orderItemCostSnapshot",
-  "orderStatusHistory",
-  "product",
-  "category",
-  "branchProduct",
-  "stockMovement",
-  "ingredientStockMovement",
-  "payment",
-  "paymentTransaction",
-  "refund",
-  "refundItem",
-  "expense",
-  "expenseCategory",
-  "cashierShift",
-  "auditLog",
-] as const;
+/** The tables a cashbook run may touch (whole-table row counts). */
+export type ScopedCountTable =
+  | "restaurant"
+  | "branch"
+  | "user"
+  | "customer"
+  | "order"
+  | "orderItem"
+  | "orderItemCostSnapshot"
+  | "orderStatusHistory"
+  | "product"
+  | "category"
+  | "branchProduct"
+  | "stockMovement"
+  | "ingredientStockMovement"
+  | "payment"
+  | "paymentTransaction"
+  | "refund"
+  | "refundItem"
+  | "expense"
+  | "expenseCategory"
+  | "cashierShift"
+  | "auditLog";
 
-export type ScopedCounts = Record<(typeof SCOPED_COUNT_TABLES)[number], number>;
+export type ScopedCounts = Record<ScopedCountTable, number>;
 
 export async function snapshotCounts(prisma: PrismaClient): Promise<ScopedCounts> {
   const [

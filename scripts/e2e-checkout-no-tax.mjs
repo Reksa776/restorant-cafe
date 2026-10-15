@@ -14,8 +14,8 @@ const check = (name, ok, detail = "") => {
 
 const conn = await createConnection({ host: "localhost", port: 3306, user: "root", password: "", database: "restaurant_app" });
 const [[table]] = await conn.query("SELECT id, restaurantId, number FROM `Table` WHERE number = 1");
-const [[caffe]] = await conn.query("SELECT id, price FROM Product WHERE name = 'Minuman Caffe 1' AND isActive = 1");
-const [[esteh]] = await conn.query("SELECT id, price FROM Product WHERE name = 'Es Teh' AND isActive = 1");
+await conn.query("SELECT id, price FROM Product WHERE name = 'Minuman Caffe 1' AND isActive = 1");
+await conn.query("SELECT id, price FROM Product WHERE name = 'Es Teh' AND isActive = 1");
 
 const browser = await puppeteer.launch({ executablePath: CHROME, headless: "new", defaultViewport: { width: 1280, height: 900 }, args: ["--no-sandbox"] });
 const page = await browser.newPage();

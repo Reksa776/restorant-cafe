@@ -324,7 +324,6 @@ async function main() {
     check("T9 shift CASH→QRIS: QRIS intent PENDING (cash superseded)", qr.status === 200 && qr.json?.data?.payment?.status === "PENDING", `create=${qr.status}`);
     const st = await stateOf(o.id);
     const cashT9 = st.payRows.find((p) => p.method === "KASIR");
-    const qrisPending = st.payRows.find((p) => p.method === "QRIS");
     check("T9 shift CASH→QRIS: UNPAID cash row superseded → CANCELLED",
       !cashT9 || cashT9.status === "CANCELLED", `cash=${cashT9?.status}`);
     const wh = await postWebhook({ reference_id: o.orderNumber, trx_id: `TRX9-${TAG}`, status: "berhasil", total: String(o.grandTotal), amount: String(o.grandTotal) });
@@ -354,13 +353,6 @@ async function main() {
     }
     check("T11 integrity: every payment branch/restaurant matches order", allOk, details.join(","));
 
-    const shiftRows = await q(`SELECT id,branchId FROM cashiershift WHERE id IN (?)`, [created.shifts]);
-    const cashPayments = await q(
-      `SELECT p.branchId paymentBranch, p.orderId, o.branchId orderBranch FROM payment p JOIN \`order\` o ON o.id=p.orderId WHERE p.orderId IN (?) AND p.method='KASIR' AND p.status='PAID'`,
-      [created.orders]);
-    const shiftOk = shiftRows.every((s) => cashPayments.every(
-      (cp) => cp.orderId && shiftRows.filter((x) => x.id === s.id).length
-    ));
     const linked = await q(
       `SELECT p.shiftId, p.branchId, s.branchId shiftBranch FROM payment p LEFT JOIN cashiershift s ON s.id=p.shiftId
        WHERE p.orderId IN (?) AND p.method='KASIR' AND p.status='PAID' AND p.shiftId IS NOT NULL`, [created.orders]);

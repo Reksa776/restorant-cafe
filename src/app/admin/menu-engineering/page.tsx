@@ -20,7 +20,6 @@ import {
   Wallet,
   Percent,
   AlertTriangle,
-  Info,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";

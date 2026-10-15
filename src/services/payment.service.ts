@@ -109,6 +109,9 @@ export const paymentService = {
     kind: string;
     message: string;
   }> {
+    // Signature parity with the server service; the route resolves the tenant
+    // from the session, so the value is intentionally not forwarded here.
+    void _restaurantId;
     const response = await api.post("/payments", {
       orderNumber,
       method: "QRIS",

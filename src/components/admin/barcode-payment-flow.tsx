@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import Image from "next/image";
 import {
   Dialog,
   DialogContent,
@@ -850,9 +851,12 @@ export function BarcodePaymentFlow({
                         <div className="flex flex-col items-center gap-3 py-2">
                           <div className="w-48 h-48 flex items-center justify-center">
                             {qrImgSrc && !qrBroken ? (
-                              <img
+                              <Image
                                 src={qrImgSrc}
                                 alt="QRIS"
+                                width={192}
+                                height={192}
+                                unoptimized
                                 className="w-full h-auto object-contain"
                                 onError={() => setQrBrokenSrc(qrImgSrc)}
                               />

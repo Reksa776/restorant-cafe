@@ -127,7 +127,6 @@ export function computeHistoricalHpp(
     }
 
     let incomplete = false;
-    const missingReason: "INACTIVE_INGREDIENT" | "MISSING_WAC" | null = null;
 
     let sum = new Prisma.Decimal(0);
     let covered = 0;

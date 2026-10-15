@@ -44,7 +44,7 @@ const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function ProductsReportPage() {
-  const { role } = useUserRole();
+  useUserRole();
   const { isLoading: branchCtxLoading, branchId: currentBranchId } =
     useBranchContext();
   const [period, setPeriod] = useState<ReportPeriod>("today");

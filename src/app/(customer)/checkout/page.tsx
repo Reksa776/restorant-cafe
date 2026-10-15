@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useCart } from "@/hooks/use-cart";
@@ -95,7 +95,6 @@ export default function CheckoutPage() {
     tax,
     serviceCharge,
     grandTotal,
-    totalItems,
     restaurantId,
     clearCart,
     tableContext,
@@ -173,7 +172,7 @@ export default function CheckoutPage() {
         setClaimedPromos([]);
       }
     })();
-  }, [isHydrated, customer, restaurantId, customerBranch]);
+  }, [isHydrated, customer, restaurantId, customerBranch, tableContext?.branchCode]);
 
   /**
    * Run the non-mutating server-side voucher preview (F2). Requires login;
@@ -252,13 +251,8 @@ export default function CheckoutPage() {
   // in-stock menu item fail checkout with "Produk sudah habis" (menu stock
   // source ≠ checkout stock source). Tables carry their branch so the label
   // is unambiguous.
-  useEffect(() => {
-    if (restaurantId && orderType === "DINE_IN" && !tableContext) {
-      loadTables();
-    }
-  }, [restaurantId, orderType, tableContext, checkoutBranchCode]);
-
-  const loadTables = async () => {
+  // Declared before the effects that use it and memoized on its only inputs.
+  const loadTables = useCallback(async () => {
     try {
       const res = await api.get("/public/tables", {
         params: { restaurantId, branchCode: checkoutBranchCode },
@@ -267,7 +261,20 @@ export default function CheckoutPage() {
     } catch (error) {
       console.error("Failed to load tables:", error);
     }
-  };
+  }, [restaurantId, checkoutBranchCode]);
+
+  // Reached through a latest-value ref so the load effect keeps its exact
+  // trigger set (the branch scope) and never re-subscribes to the callback.
+  const loadTablesRef = useRef(loadTables);
+  useEffect(() => {
+    loadTablesRef.current = loadTables;
+  }, [loadTables]);
+
+  useEffect(() => {
+    if (restaurantId && orderType === "DINE_IN" && !tableContext) {
+      loadTablesRef.current();
+    }
+  }, [restaurantId, orderType, tableContext, checkoutBranchCode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

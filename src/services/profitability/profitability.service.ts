@@ -1,6 +1,5 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ValidationError } from "@/lib/errors";
 import { round2, num, MONEY_EPSILON } from "@/lib/money";
 import {
   resolveReportRange,
@@ -34,8 +33,6 @@ import type {
 // to the client. Float division is avoided; null is returned when
 // the divisor is zero (percentage metrics).
 // ============================================================
-
-const ROUND = Prisma.Decimal.ROUND_HALF_UP;
 
 // H2.1 / D1 — the coverage state is derived by the shared pure rules in
 // `./coverage` (used by Profitabilitas AND Menu Engineering). Status (not
@@ -379,7 +376,7 @@ export class ProfitabilityService {
 
     // Product rows (in-memory sort + paginate — bounded by active product count).
     const allProductRows: ProfitabilityProductRow[] = productRows.map(
-      (r, idx) => {
+      (r) => {
         const qty = num(r.qty);
         const gross = num(r.gross);
         const discount = num(r.discount);

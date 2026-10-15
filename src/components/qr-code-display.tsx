@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { QrCode } from "lucide-react";
 
 /**
@@ -66,9 +67,14 @@ export function QrCodeDisplay({
   }
 
   return (
-    <img
+    // The QR is an inline `data:` image the optimizer cannot improve, so it is
+    // rendered verbatim (`unoptimized`) at its generated pixel size.
+    <Image
       src={src}
       alt={ariaLabel}
+      width={size * 2}
+      height={size * 2}
+      unoptimized
       className="rounded-lg bg-white"
       style={{ width: size, height: size, objectFit: "contain" }}
     />

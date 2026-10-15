@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,11 +20,18 @@ export default function CustomersPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
 
-  const loadCustomers = async (silent = false) => {
+  // Latest search text, readable from the (stable) loader without giving the
+  // loader a new identity on every keystroke.
+  const searchRef = useRef(search);
+  useEffect(() => {
+    searchRef.current = search;
+  }, [search]);
+
+  const loadCustomers = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
     try {
       const result = await customerService.getCustomers({
-        search: search || undefined,
+        search: searchRef.current || undefined,
       });
       setCustomers(result.items);
     } catch (error) {
@@ -33,7 +40,7 @@ export default function CustomersPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     // Wait for branch context so a stale admin_branch_id is cleared before
@@ -41,7 +48,7 @@ export default function CustomersPage() {
     // previous session would otherwise 403 a scoped user.
     if (branchCtxLoading) return;
     loadCustomers();
-  }, [branchCtxLoading]);
+  }, [branchCtxLoading, loadCustomers]);
 
   // Realtime: a new customer (e.g. from a QR-table order) appears without
   // refresh. Active search text is preserved (state in the closure).

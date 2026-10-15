@@ -208,7 +208,7 @@ export class MenuEngineeringService {
 
     // Page-level row set (category + search narrowing for display only).
     const search = input.search?.trim().toLowerCase();
-    let visibleRows = rows.filter(
+    const visibleRows = rows.filter(
       (r) =>
         (!input.categoryId || r.categoryId === input.categoryId) &&
         (!search ||

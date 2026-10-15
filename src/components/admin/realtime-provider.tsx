@@ -206,6 +206,9 @@ export function AdminRealtimeProvider({
 
   // Initial connect + full cleanup.
   useEffect(() => {
+    // Captured once so the cleanup clears the very same Set instance, even if
+    // the ref were ever reassigned in between.
+    const listeners = listenersRef.current;
     mountedRef.current = true;
     connectRef.current();
 
@@ -251,7 +254,6 @@ export function AdminRealtimeProvider({
       clearTimers();
       disconnect();
       // Drop all subscriptions when the shell unmounts.
-      const listeners = listenersRef.current;
       listeners.clear();
     };
   }, [clearTimers, disconnect, updateStatus]);

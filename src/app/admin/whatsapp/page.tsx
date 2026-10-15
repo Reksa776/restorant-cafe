@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Image from "next/image";
 import {
   Card,
   CardContent,
@@ -448,9 +449,12 @@ export default function WhatsAppPage() {
               <div className="space-y-4">
                 {/* QR Code Image */}
                 <div className="p-3 sm:p-4 bg-white rounded-lg border-2 border-dashed border-gray-200">
-                  <img
+                  <Image
                     src={qrCode}
                     alt="WhatsApp QR Code"
+                    width={208}
+                    height={208}
+                    unoptimized
                     className="w-52 h-52 sm:w-64 sm:h-64 max-w-full"
                   />
                 </div>

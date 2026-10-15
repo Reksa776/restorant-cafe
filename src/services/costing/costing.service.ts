@@ -122,12 +122,6 @@ interface BaseComputation {
   manualHpp: Prisma.Decimal | null;
 }
 
-interface SelectedComponentResult {
-  dto: CostingComponentDto;
-  /** unitHpp × selected quantity; null when the component is incomplete. */
-  contribution: Prisma.Decimal | null;
-}
-
 class CostingService {
   /** BOM line sub-select shared by addons + options (branch WAC, 1 row). */
   private bomSelect(branchId: string) {

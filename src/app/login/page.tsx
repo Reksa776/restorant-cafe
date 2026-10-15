@@ -32,7 +32,7 @@ export default function LoginPage() {
         toast.success("Login berhasil");
         router.push("/admin/dashboard");
       }
-    } catch (error) {
+    } catch {
       toast.error("Terjadi kesalahan");
     } finally {
       setIsLoading(false);

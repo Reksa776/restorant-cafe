@@ -20,7 +20,12 @@ export function notifyShiftNotOpen(serverMessage?: string): void {
     action: {
       label: "Buka Shift",
       onClick: () => {
-        window.location.href = "/admin/shifts";
+        // Absolute destination for the current origin: the CTA is a full
+        // navigation and a relative path resolves against the current URL.
+        window.location.href = new URL(
+          "/admin/shifts",
+          window.location.origin
+        ).href;
       },
     },
     duration: 6000,

@@ -134,7 +134,7 @@ export default function MenuPage() {
 
   // Customization state
   const [customizingProduct, setCustomizingProduct] = useState<ProductWithCustomization | null>(null);
-  const [activeTab, setActiveTab] = useState<"general" | "customization">("general");
+  const [, setActiveTab] = useState<"general" | "customization">("general");
 
   // Recipe / BOM state (Komposisi tab inside the product dialog, F.3)
   const [productTab, setProductTab] = useState<"info" | "komposisi">("info");

@@ -32,7 +32,6 @@ import {
   Banknote,
   Smartphone,
   TrendingUp,
-  Eye,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -322,7 +321,7 @@ export default function ShiftsPage() {
     if (!overrideTarget) return;
     setSubmitting(true);
     try {
-      const ov = await shiftService.requestOverride(
+      await shiftService.requestOverride(
         overrideTarget.id,
         overrideReason,
         overrideProposed ? Number(overrideProposed) : undefined

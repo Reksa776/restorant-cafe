@@ -18,7 +18,6 @@ import {
   Download,
   Banknote,
   CreditCard,
-  ShoppingCart,
   ChevronLeft,
   ChevronRight,
 } from "lucide-react";
@@ -72,7 +71,7 @@ const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 export default function PaymentsReportPage() {
-  const { role } = useUserRole();
+  useUserRole();
   const { isLoading: branchCtxLoading, branchId: currentBranchId } =
     useBranchContext();
   const [period, setPeriod] = useState<ReportPeriod>("today");

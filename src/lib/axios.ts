@@ -26,6 +26,19 @@ delete api.defaults.headers.common["Content-Type"];
 
 const LOGIN_PATH = "/login";
 
+/**
+ * Absolute `/login` destination for the CURRENT origin.
+ *
+ * The recovery navigation must stay a full page load: a soft
+ * `router.push` would keep the just-purged React tree alive and can re-enter
+ * the 401 loop this guard exists to break. It is resolved to an absolute URL
+ * because a relative destination is resolved against the current URL, so the
+ * same path behaves differently on preview/mixed-host deployments.
+ */
+function loginDestination(): string {
+  return new URL(LOGIN_PATH, window.location.origin).href;
+}
+
 // True while a 401-driven session clear is in progress, so several
 // simultaneous 401s (e.g. the dashboard firing /auth/session, /orders and
 // /orders/dashboard/stats at once) trigger exactly ONE session clear and
@@ -73,7 +86,7 @@ function recoverFromUnauthorized(): void {
       // On success Auth.js clears the session cookie server-side.
       // Navigate to relative /login path - this works on any host.
       if (result?.url) {
-        window.location.href = "/login";
+        window.location.href = loginDestination();
         return;
       }
       // Sign-out responded but not with the expected target (e.g. a CSRF or
@@ -81,14 +94,14 @@ function recoverFromUnauthorized(): void {
       // client-side before navigating, or the middleware would bounce /login
       // back to /admin/dashboard again.
       clearSessionCookies();
-      window.location.href = LOGIN_PATH;
+      window.location.href = loginDestination();
     })
     .catch(() => {
       // Sign-out endpoint unreachable/failed: purge the cookie client-side
       // and still land on /login. Without the session cookie the middleware
       // lets /login through, so there is no redirect loop.
       clearSessionCookies();
-      window.location.href = LOGIN_PATH;
+      window.location.href = loginDestination();
     })
     .finally(() => {
       authRecoveryInFlight = false;

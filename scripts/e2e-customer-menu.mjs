@@ -65,13 +65,6 @@ try {
 
   // Find Minuman Caffe 1 card
   const productCard = await page.evaluate(() => {
-    const cards = [...document.querySelectorAll("div")].filter(
-      (d) =>
-        d.textContent &&
-        d.textContent.includes("Minuman Caffe 1") &&
-        d.textContent.includes("Rp23.000") &&
-        !d.querySelector("div")?.textContent?.includes("Minuman Caffe 1")
-    );
     // fallback: use h3 with product name, walk up to card container
     const h3 = [...document.querySelectorAll("h3")].find(
       (h) => (h.textContent || "").trim() === "Minuman Caffe 1"
@@ -314,7 +307,7 @@ try {
         displayPrice: 23000,
       };
       localStorage.setItem("restaurant_cart", JSON.stringify({ items: [configA, configB], updatedAt: Date.now() }));
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
   });
   await page.goto(`${BASE}/cart`, { waitUntil: "networkidle2" });
   await sleep(1200);
@@ -345,7 +338,7 @@ try {
   const editText = await page.evaluate(() => document.body.innerText);
   check("Edit modal opens", editText.includes("Tambah ke Keranjang"));
   // The edited item (index 0) is Large/Less Sugar/Extra Espresso/Extra Shot/notes
-  const modalBtns = await page.evaluate(() =>
+  await page.evaluate(() =>
     [...document.querySelectorAll("button")].map((b) =>
       (b.textContent || "").trim().replace(/\s+/g, " ")
     ).filter((t) => t && t.length < 40)

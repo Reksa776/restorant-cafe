@@ -481,7 +481,7 @@ async function main() {
     await page.$$eval("li", (rows, name) => {
       const row = rows.find((r) => (r.textContent || "").includes(name));
       const plus = row?.querySelector('button[aria-label^="Tambah stok"]');
-      plus && plus.click();
+      if (plus) plus.click();
     }, productName);
     await sleep(250);
   }
@@ -492,7 +492,7 @@ async function main() {
     await page.$$eval("li", (rows, name) => {
       const row = rows.find((r) => (r.textContent || "").includes(name));
       const save = row?.querySelector('button[aria-label^="Simpan stok"]');
-      save && save.click();
+      if (save) save.click();
     }, productName);
     await sleep(2500);
     const rowAdj1 = await getStock(page, productId);
@@ -503,7 +503,7 @@ async function main() {
       await page.$$eval("li", (rows, name) => {
         const row = rows.find((r) => (r.textContent || "").includes(name));
         const minus = row?.querySelector('button[aria-label^="Kurangi stok"]');
-        minus && minus.click();
+        if (minus) minus.click();
       }, productName);
       await sleep(250);
     }
@@ -512,7 +512,7 @@ async function main() {
     await page.$$eval("li", (rows, name) => {
       const row = rows.find((r) => (r.textContent || "").includes(name));
       const save = row?.querySelector('button[aria-label^="Simpan stok"]');
-      save && save.click();
+      if (save) save.click();
     }, productName);
     await sleep(2500);
     const rowAdj2 = await getStock(page, productId);

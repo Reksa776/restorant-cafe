@@ -114,7 +114,7 @@ const postWebhook = async (payload) => {
 };
 
 // ---------- test data ----------
-async function createOrder(api, { orderType, customerId, restaurantId, productId, price }) {
+async function createOrder(api, { orderType, customerId, productId, price }) {
   const qty = 1;
   const isDineIn = orderType === "DINE_IN";
   const expectedTotal = price + (isDineIn ? 0 : Math.round(price * 0.1) + Math.round(price * 0.05));
@@ -176,7 +176,7 @@ async function gotoOrderAndWaitUnpaid(page, order, label, retries = 2) {
       await waitText(page, "Belum Bayar", 25000);
       check(`${label}: order detail shows UNPAID before payment`, true, order.orderNumber);
       return;
-    } catch (e) {
+    } catch {
       if (i === retries) {
         const txt = await page.evaluate(() =>
           document.body ? document.body.innerText.replace(/\n+/g, " | ").slice(0, 700) : "no-body"
@@ -223,9 +223,7 @@ async function flowCash(page, api, { order, label }) {
   await clickButton(page, "Proses Pembayaran");
   await waitText(page, "Cash / Tunai");
   await clickButton(page, "Cash / Tunai");
-  await waitText(page, "Pembayaran Cash");
-
-  const n0 = await navCount(page);
+  await waitText(page, "Pembayaran Cash");    await navCount(page);
   await page.type("#cash-received", String(order.grandTotal));
   await clickButton(page, "Uang Pas");
   await clickButton(page, "Konfirmasi Pembayaran");
@@ -253,7 +251,7 @@ async function flowQris(page, api, { order, label, assertCancelled }) {
 
   await clickButton(page, "Proses Pembayaran");
   await waitText(page, "Scan oleh customer");
-  const n0 = await navCount(page);
+  await navCount(page);
   await clickButton(page, "Scan oleh customer");
   await waitQrisReady(page, 25000);
   check(`${label} QRIS: QR shown + waiting for payment`, true);
@@ -308,7 +306,7 @@ async function flowQrisThenCash(page, api, { order, label }) {
   await waitText(page, "Cash / Tunai");
   await clickButton(page, "Cash / Tunai");
   await waitText(page, "Pembayaran Cash");
-  const n0 = await navCount(page);
+  await navCount(page);
   await page.type("#cash-received", String(order.grandTotal + 100000));
   await clickButton(page, "Konfirmasi Pembayaran");
   await waitText(page, "Pembayaran Berhasil", 20000);
@@ -338,7 +336,7 @@ async function flowCashThenQris(page, api, { order, label }) {
   // Kembali BEFORE submitting cash.
   await clickButton(page, "Kembali");
   await waitText(page, "Scan oleh customer");
-  const n0 = await navCount(page);
+  await navCount(page);
   await clickButton(page, "Scan oleh customer");
   await waitQrisReady(page, 25000);
   check(`${label} CASH→QRIS: QRIS intent shown (cash never submitted)`, true);
@@ -427,7 +425,7 @@ async function main() {
   await page.waitForFunction(() => !location.pathname.includes("login"), { timeout: 15000 });
   check("auth guard: admin area loads without login redirect", true, "");
 
-  const mkCustomer = async (label) => {
+  const mkCustomer = async () => {
     const suffix = crypto.randomBytes(4).toString("hex");
     const custId = `uic${crypto.randomBytes(8).toString("hex")}`;
     await q(
@@ -440,7 +438,7 @@ async function main() {
 
   // ---------- DINE_IN: full matrix ----------
   {
-    const cust = await mkCustomer("DINE_IN");
+    const cust = await mkCustomer();
     const o1 = await createOrder(api, { orderType: "DINE_IN", customerId: cust, restaurantId, productId: prod.id, price: Number(prod.price) });
     await flowCash(page, api, { order: o1, label: "DINE_IN" });
     check("DINE_IN CASH: order type kept (no regression)", (await q(`SELECT orderType FROM \`order\` WHERE id = ?`, [o1.id]))[0]?.orderType === "DINE_IN");
@@ -457,7 +455,7 @@ async function main() {
 
   // ---------- TAKEAWAY + DELIVERY: CASH + QRIS ----------
   for (const orderType of ["TAKEAWAY", "DELIVERY"]) {
-    const cust = await mkCustomer(orderType);
+    const cust = await mkCustomer();
     const oCash = await createOrder(api, { orderType, customerId: cust, restaurantId, productId: prod.id, price: Number(prod.price) });
     await flowCash(page, api, { order: oCash, label: orderType });
 

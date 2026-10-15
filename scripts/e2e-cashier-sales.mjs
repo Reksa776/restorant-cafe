@@ -190,10 +190,10 @@ async function main() {
   created.shifts.push(shiftA1);
 
   const o11 = await mkOrder(kasirA, await mkCustomer(kasirA, "A1-1"), "DINE_IN");
-  const p11 = await mkCashPaid(kasirA, o11);
+  await mkCashPaid(kasirA, o11);
 
   const o12 = await mkOrder(kasirA, await mkCustomer(kasirA, "A1-2"), "TAKEAWAY");
-  const p12 = await mkCashPaid(kasirA, o12);
+  await mkCashPaid(kasirA, o12);
 
   const o13 = await mkOrder(kasirA, await mkCustomer(kasirA, "A1-3"), "DINE_IN");
   const pay13 = uid("pay-");

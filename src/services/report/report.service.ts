@@ -164,22 +164,6 @@ export function reportBaseWhere(
 }
 
 /**
- * The "reporting set" (activity): base scope + the selected payment status
- * (default PAID). Drives order counts and the payment breakdown buckets.
- */
-function reportActivityWhere(
-  restaurantId: string,
-  range: ReportRange,
-  branchFilters?: string[] | null,
-  filters?: ReportFilters
-) {
-  return {
-    ...reportBaseWhere(restaurantId, range, branchFilters, filters),
-    paymentStatus: (filters?.status ?? "PAID") as PaymentStatus,
-  };
-}
-
-/**
  * The "revenue set": PAID, OR collected-then-refunded. Revenue metrics
  * (totals, items, order types, best sellers, product sales) are computed from
  * this set so a non-PAID status filter never books failed/expired/unpaid
@@ -600,23 +584,6 @@ function aliasBranchSql(
   return branchFilters?.length
     ? Prisma.sql`AND ${sqlAlias(alias)}.\`branchId\` IN (${Prisma.join([...branchFilters])})`
     : Prisma.empty;
-}
-
-function orderFragment(
-  restaurantId: string,
-  range: ReportRange,
-  branchFilters?: string[] | null,
-  filters?: ReportFilters
-) {
-  return Prisma.sql`
-    AND \`restaurantId\` = ${restaurantId}
-    AND \`createdAt\` >= ${range.start}
-    AND \`createdAt\` <= ${range.end}
-    AND ${revenueSetSql("\`order\`")}
-    ${branchFragment(branchFilters)}
-    ${filters?.orderType ? Prisma.sql`AND \`orderType\` = ${filters.orderType}` : Prisma.empty}
-    ${filters?.paymentMethod ? Prisma.sql`AND \`id\` IN (SELECT \`orderId\` FROM \`payment\` WHERE \`method\` = ${filters.paymentMethod} AND \`status\` = 'PAID')` : Prisma.empty}
-  `;
 }
 
 /**

@@ -111,26 +111,6 @@ async function csvBom(page, path) {
   }, absolute);
 }
 
-async function hasButtonText(page, text) {
-  return page.evaluate((t) => {
-    return Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").includes(t));
-  }, text);
-}
-
-async function clickButton(page, text) {
-  const appeared = await waitFor(() => hasButtonText(page, text), 15000);
-  if (!appeared) throw new Error(`button "${text}" not found`);
-  const clicked = await page.evaluate((t) => {
-    const buttons = Array.from(document.querySelectorAll("button"));
-    const target = buttons.find((b) => (b.textContent || "").trim() === t) || buttons.find((b) => (b.textContent || "").includes(t));
-    if (!target) return false;
-    target.click();
-    return true;
-  }, text);
-  if (!clicked) throw new Error(`button "${text}" not found`);
-  await sleep(300);
-}
-
 /** Click a Base UI Select trigger (by index), then its option containing `text`. */
 async function pickSelect(page, index, text, label) {
   // The branch filter renders only after the session loads — wait until the

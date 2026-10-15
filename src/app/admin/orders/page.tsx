@@ -6,7 +6,7 @@ import { orderService, type Order } from "@/services/order.service";
 import { paymentService } from "@/services/payment.service";
 import { OrderScanner } from "@/components/admin/order-scanner";
 import { toast } from "sonner";
-import { Loader2, AlertCircle, RefreshCw, Plus } from "lucide-react";
+import { AlertCircle, RefreshCw, Plus } from "lucide-react";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { useBranchContext } from "@/hooks/use-branch-context";
