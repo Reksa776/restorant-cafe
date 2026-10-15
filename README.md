@@ -58,8 +58,48 @@ environment that is not a throwaway local database.
 ## Database
 
 - Schema: `prisma/schema.prisma`; migrations in `prisma/migrations/`
-- Apply to a production DB with `npx prisma migrate deploy`
+- Apply to a production DB with **`npm run db:deploy`** — it runs the static
+  migration safety preflight (`npm run db:preflight`) and only then
+  `prisma migrate deploy`, joined with `&&` (fail-closed).
 - Never edit applied migrations; add new timestamped ones.
+
+### Migration safety preflight (STEP 2C.6-C1B)
+
+Prisma 7.10.0 decides the migration **apply order** in the CLI with JavaScript
+`String.prototype.localeCompare` (ICU/CLDR collation of the *runtime*), not by
+file-name bytes. This chain mixes 8-digit and 14-digit directory prefixes and
+carries one cross-migration foreign key, so an order produced by a runtime whose
+`localeCompare` is **not** ICU-aware (e.g. Node built `--with-intl=none`) would
+fail mid-chain with `P3018` / errno 1146.
+
+`tools/preflight-migrations.mjs` is a **static, fail-closed** gate that runs
+before any migration. It opens no database connection, reads/writes no ledger,
+runs no SQL and calls no Prisma command. It fails (exit 1) when:
+
+- the ICU collation canary fails on this runtime;
+- the effective order differs from `tools/migration-order.baseline.json`;
+- a migration directory is missing or unexpected;
+- any `migration.sql` sha256 differs from the baseline;
+- the installed Prisma version differs from the baseline (**hard fail**).
+
+```bash
+npm run db:preflight        # check only (no DB, no writes)
+npm run db:deploy           # preflight && prisma migrate deploy
+npm run db:baseline:update  # regenerate the baseline (explicit + reviewed only)
+```
+
+There is **no bypass/force flag**. A failure means "use a compliant runtime or
+fix the tree", never "press on". The baseline is regenerated **only** by an
+explicit `npm run db:baseline:update` whose diff must be reviewed in the same
+change that adds/edits a migration; it is never updated automatically when a
+preflight or deploy fails.
+
+**Paths that do NOT go through the guard** (deliberate, documented — do not
+assume otherwise): a manual `npx prisma migrate deploy` typed by hand;
+`npm run db:migrate` (`prisma migrate dev`, dev-only and forbidden on a live DB);
+`npm run db:push`; and the Docker images, which run **no** migration step at all
+(`CMD ["node", "server.js"]`, worker `CMD ["npx", "tsx", ...]`) — provisioning
+is a manual operator step. Always use `npm run db:deploy` for provisioning.
 
 ## Payments
 
@@ -124,7 +164,9 @@ pub/sub (see `src/lib/realtime/bus.ts`).
 - Build: `npm run build`; run with `next start -p 3001` under PM2.
 - Reverse proxy (Apache/Cloudflare) terminates TLS and proxies to `:3001`;
   `X-Forwarded-*` headers must be set (SSE needs `X-Accel-Buffering: no`).
-- Apply migrations before starting the new build.
+- Apply migrations before starting the new build — use **`npm run db:deploy`**
+  (it runs `npm run db:preflight` first and stops on any failure). Do not run a
+  raw `npx prisma migrate deploy` on this host: that path is not guarded.
 - Port 3000 is reserved for other applications on the same host — do not
   bind the restaurant app there.
 
