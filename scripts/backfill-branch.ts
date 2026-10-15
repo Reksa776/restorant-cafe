@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
+import { decodeCredential } from "../src/lib/database-url";
 
 // ============================================================
 // Branch Backfill Script
@@ -23,8 +24,9 @@ const urlObj = new URL(url);
 const adapter = new PrismaMariaDb({
   host: urlObj.hostname,
   port: parseInt(urlObj.port || "3306"),
-  user: urlObj.username,
-  password: urlObj.password,
+  // F-2: decode the userinfo exactly once (see src/lib/database-url.ts).
+  user: decodeCredential(urlObj.username),
+  password: decodeCredential(urlObj.password),
   database: urlObj.pathname.replace("/", ""),
   connectionLimit: 5,
 });

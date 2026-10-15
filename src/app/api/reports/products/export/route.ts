@@ -24,9 +24,10 @@ import {
 //   &orderType=...&paymentMethod=...&status=...
 //
 // Product CSV download — ADMIN or CASHIER, restaurant-scoped. Uses the exact
-// same aggregation and revenue semantics as GET /api/reports/products (PAID +
-// non-cancelled only, product-level discount = pro-rata allocation). Never
-// exposes internal IDs.
+// same aggregation and revenue semantics as GET /api/reports/products: the
+// canonical revenue set (non-CANCELLED AND (paid OR collected-then-refunded),
+// composed from `revenueSetSql`), with the product-level discount allocated
+// pro-rata. Never exposes internal IDs.
 // ============================================================
 
 export async function GET(request: NextRequest) {

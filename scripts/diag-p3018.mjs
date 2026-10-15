@@ -22,6 +22,18 @@ function mask(url) {
   }
 }
 
+// STEP 2C.4 (F-2): mirror of decodeCredential() in src/lib/database-url.ts.
+// Inlined on purpose — this script runs on plain `node` (no TS loader), so it
+// must not import the TypeScript helper. Keep the two in sync.
+function decodeCredential(value) {
+  if (!/%[0-9A-Fa-f]{2}/.test(value)) return value;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 const raw = process.env.DATABASE_URL;
 if (!raw) {
   console.error("FATAL: DATABASE_URL is not set in this environment.");
@@ -33,8 +45,8 @@ const url = new URL(raw);
 const adapter = new PrismaMariaDb({
   host: url.hostname,
   port: parseInt(url.port || "3306"),
-  user: url.username,
-  password: url.password,
+  user: decodeCredential(url.username),
+  password: decodeCredential(url.password),
   database: url.pathname.replace("/", ""),
   connectionLimit: 2,
 });

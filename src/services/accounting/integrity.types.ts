@@ -38,17 +38,28 @@ export type IntegrityOverallStatus = "OK" | "WARN" | "CRITICAL";
 
 /**
  * Classification of a COMPLETED OrderItem that has NO snapshot, relative to
- * the PROVEN legacy cutoff (the F.5 snapshot migration's applied time):
+ * the PROVEN legacy cutoff (the F.5 snapshot migration's applied time) and —
+ * only when it was actually OBSERVED — the lower-bound snapshot marker:
  *
- *   legacyExpected    — completed BEFORE the F.5 snapshot feature existed
- *                       (no snapshot could have been written; expected).
- *   anomaly           — completed AT/AFTER the cutoff yet no snapshot exists
- *                       (the snapshot engine was live; this is a real defect).
- *   unknownCompletion — completion time is unavailable, so it cannot be
- *                       classified. It is NEVER silently folded into legacy.
+ *   legacyExpected     — completed BEFORE the cutoff: the snapshot table did
+ *                        not exist yet, so no snapshot could have been written.
+ *   beforeFirstSnapshot— completed AT/AFTER the cutoff but BEFORE the first
+ *                        snapshot ever observed for this tenant. The cutoff
+ *                        proves the SCHEMA existed at that instant; it does NOT
+ *                        prove the snapshot-writing code was deployed or ever
+ *                        ran. This window is therefore UNKNOWN — never a clean
+ *                        OK and never an anomaly. Reachable ONLY when the
+ *                        marker was observed (see IntegritySnapshotMarkerSource);
+ *                        an empty/unverified marker never carves here.
+ *   anomaly            — completed AT/AFTER the cutoff with no snapshot and
+ *                        outside the (unproven) activation window. This is the
+ *                        real defect case and its severity is never lowered.
+ *   unknownCompletion  — completion time is unavailable, so it cannot be
+ *                        classified. It is NEVER silently folded into legacy.
  */
 export type IntegrityLegacyBucket =
   | "legacyExpected"
+  | "beforeFirstSnapshot"
   | "anomaly"
   | "unknownCompletion";
 
@@ -58,14 +69,61 @@ export interface IntegrityBucketCount {
 }
 
 /**
+ * How the snapshot marker (`MIN(orderitemcostsnapshot.completedAt)`, tenant-
+ * wide) was obtained. This separates a VERIFIED EMPTY population from a FAILED
+ * read — they must never be conflated:
+ *
+ *   SNAPSHOT_MIN_OBSERVED      — the marker query succeeded and the tenant has
+ *                                at least one snapshot. `completedAt` is a
+ *                                real observed value. It is a LOWER BOUND of
+ *                                observed engine activity, NOT activation time.
+ *   SNAPSHOT_POPULATION_EMPTY  — the query succeeded and found ZERO snapshots.
+ *                                A verified population fact; it cannot
+ *                                distinguish "engine never wrote" from
+ *                                "snapshots were deleted/restored away".
+ *   SNAPSHOT_MARKER_UNVERIFIED — the query FAILED (or returned an impossible
+ *                                shape). Nothing is known; this is NOT evidence
+ *                                that the population is empty.
+ */
+export type IntegritySnapshotMarkerSource =
+  | "SNAPSHOT_MIN_OBSERVED"
+  | "SNAPSHOT_POPULATION_EMPTY"
+  | "SNAPSHOT_MARKER_UNVERIFIED";
+
+/** Output-only evidence level for C2. Never an input to any severity rule. */
+export type IntegrityEvidenceLevel = "MIGRATION_ONLY" | "SNAPSHOT_OBSERVED";
+
+/** Machine-readable disclosure codes attached to the C2 check. */
+export type IntegrityDisclosureCode =
+  | "SNAPSHOT_POPULATION_EMPTY"
+  | "SNAPSHOT_MARKER_UNVERIFIED"
+  /**
+   * M1-R: the migration ledger holds MORE THAN ONE eligible F.5 row (successful,
+   * not rolled back). The cutoff uses the earliest of them; this code records
+   * that the boundary is disclosed rather than treated as a single proven row.
+   */
+  | "LEGACY_CUTOFF_AMBIGUOUS";
+
+/**
+ * Explicit, non-alarming disclosure. It states an observation + its limits and
+ * is FORBIDDEN from claiming the system is healthy, unhealthy, or that the
+ * engine is inactive.
+ */
+export interface IntegrityDisclosure {
+  code: IntegrityDisclosureCode;
+  text: string;
+}
+
+/**
  * Evidence for the legacy cutoff. `resolved=false` ⇒ no classification.
  *
  * IMPORTANT (F2): the cutoff is the MIGRATION APPLY time — the only proven
- * boundary. The time the snapshot-writing CODE was actually deployed is NOT
- * provable from available evidence, so `codeDeployUnproven` is always true.
- * A completion shortly AFTER the cutoff is therefore classified as an anomaly
- * on the assumption that the engine was live then, and may be a false positive
- * if the code was deployed later. Severity is intentionally NOT lowered.
+ * boundary. The time the snapshot-writing CODE was actually deployed (or ever
+ * ran) is NOT provable from available evidence, so `codeDeployUnproven` is
+ * always true. A completion shortly AFTER the cutoff is still classified as an
+ * anomaly because the engine-live claim cannot be proven EITHER WAY; that may
+ * be a false positive when the code was deployed later. Severity is
+ * intentionally NOT lowered.
  */
 export interface IntegrityCutoffEvidence {
   /** The migration that introduced the snapshot engine (repo artifact). */
@@ -86,14 +144,47 @@ export interface RevenueOrdersWithoutItemsCheck {
   sampleOrderIds: string[];
 }
 
-/** C2 — COMPLETED orders whose items carry no snapshot, split by cutoff. */
+/** C2 — COMPLETED orders whose items carry no snapshot, split by cutoff+marker. */
 export interface CompletedItemsWithoutSnapshotCheck {
   code: "COMPLETED_ORDER_ITEM_WITHOUT_SNAPSHOT";
   status: IntegrityCheckStatus;
   items: number;
   orders: number;
+  /**
+   * The four buckets PARTITION `items` (see IntegrityLegacyBucket):
+   * `legacyExpected + beforeFirstSnapshot + anomaly + unknownCompletion === items`.
+   */
   buckets: Record<IntegrityLegacyBucket, IntegrityBucketCount>;
   cutoff: IntegrityCutoffEvidence;
+  /**
+   * Independent comparison: the status C2 would have WITHOUT the marker
+   * (cutoff-only classification, same cutoff instance). It is always emitted so
+   * a severity change caused by the carve is visible instead of silent.
+   */
+  statusCutoffOnly: IntegrityCheckStatus;
+  /** How the marker was obtained — see IntegritySnapshotMarkerSource. */
+  markerSource: IntegritySnapshotMarkerSource;
+  /**
+   * Tenant-wide `MIN(orderitemcostsnapshot.completedAt)`, or null when no marker
+   * was observed. A LOWER BOUND of observed engine activity — NOT proof of when
+   * the engine was activated/deployed.
+   */
+  firstObservedSnapshotAt: string | null;
+  /** Snapshot rows in the tenant scope; null when the marker read FAILED. */
+  snapshotPopulation: number | null;
+  /** Output-only metadata. Never an input to any severity rule. */
+  evidenceLevel: IntegrityEvidenceLevel;
+  /** Always true: the engine activation/deploy time is not proven by any source. */
+  activationUnproven: true;
+  /** Present only for verified-empty or unverified marker reads. */
+  disclosure: IntegrityDisclosure | null;
+  /**
+   * M1-R: present only when the ledger held more than one ELIGIBLE F.5 row, in
+   * which case the earliest was used. Separate from `disclosure` so the marker
+   * disclosure can never be displaced by it. Display-only metadata: it is never
+   * an input to any severity rule.
+   */
+  cutoffDisclosure: IntegrityDisclosure | null;
   sampleOrderIds: string[];
 }
 

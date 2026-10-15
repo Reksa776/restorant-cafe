@@ -1338,7 +1338,9 @@ export class ReportService {
         orderBy: { _sum: { quantity: "desc" } },
         take: 50,
       }),
-      // Busiest hours (MySQL HOUR()) — sold orders only.
+      // Busiest hours (MySQL HOUR()). Canonical revenue set (A-9, STEP 2C.3B):
+      // a collected-then-refunded order (order mirror UNPAID + a REFUNDED
+      // payment) stays in the hourly bucket, exactly like the daily series.
       prisma.$queryRaw<
         Array<{ hour: number; orders: bigint | number; revenue: number | string }>
       >`
@@ -1350,8 +1352,7 @@ export class ReportService {
           ${branchFragment(branchFilters)}
           AND \`createdAt\` >= ${range.start}
           AND \`createdAt\` <= ${range.end}
-          AND \`status\` <> 'CANCELLED'
-          AND \`paymentStatus\` = 'PAID'
+          AND ${revenueSetSql("\`order\`")}
           ${filters?.orderType ? Prisma.sql`AND \`orderType\` = ${filters.orderType}` : Prisma.empty}
           ${filters?.paymentMethod ? Prisma.sql`AND \`id\` IN (SELECT \`orderId\` FROM \`payment\` WHERE \`method\` = ${filters.paymentMethod} AND \`status\` = 'PAID')` : Prisma.empty}
         GROUP BY HOUR(\`createdAt\`)
@@ -1771,6 +1772,10 @@ export class ReportService {
       ${categoryId ? Prisma.sql`AND oi.\`productId\` IN (SELECT \`id\` FROM \`product\` WHERE \`restaurantId\` = ${restaurantId} AND \`categoryId\` = ${categoryId})` : Prisma.empty}
     `;
 
+    // Canonical revenue set (A-11, STEP 2C.3B): the SAME predicate as
+    // `soldWhere` below, so the product rows can never exclude an order that
+    // `soldOrderCount` / `unsoldProducts` count, and a product sold only on a
+    // fully-refunded order can never vanish from both lists.
     const rows = await prisma.$queryRaw<
       Array<{
         productId: string;
@@ -1794,8 +1799,7 @@ export class ReportService {
       WHERE o.\`restaurantId\` = ${restaurantId}
         AND o.\`createdAt\` >= ${range.start}
         AND o.\`createdAt\` <= ${range.end}
-        AND o.\`status\` <> 'CANCELLED'
-        AND o.\`paymentStatus\` = 'PAID'
+        AND ${revenueSetSql("o")}
         ${branchFragment(branchFilters)}
         ${filters?.orderType ? Prisma.sql`AND o.\`orderType\` = ${filters.orderType}` : Prisma.empty}
         ${filters?.paymentMethod ? Prisma.sql`AND o.\`id\` IN (SELECT \`orderId\` FROM \`payment\` WHERE \`method\` = ${filters.paymentMethod} AND \`status\` = 'PAID')` : Prisma.empty}
@@ -2459,6 +2463,9 @@ export class ReportService {
           ${branchFragment(branchFilters)}
         GROUP BY r.\`branchId\`
       `,
+      // Canonical revenue set (A-12, STEP 2C.3B): the per-branch order-type
+      // breakdown must use the same set as the branch totals above, otherwise
+      // the amounts cannot sum to `totalSales`.
       prisma.$queryRaw<
         Array<{
           branchId: string | null;
@@ -2475,8 +2482,7 @@ export class ReportService {
         WHERE o.\`restaurantId\` = ${restaurantId}
           AND o.\`createdAt\` >= ${range.start}
           AND o.\`createdAt\` <= ${range.end}
-          AND o.\`status\` <> 'CANCELLED'
-          AND o.\`paymentStatus\` = 'PAID'
+          AND ${revenueSetSql("o")}
           AND o.\`branchId\` IS NOT NULL
           ${branchFragment(branchFilters)}
         GROUP BY o.\`branchId\`, o.\`orderType\`

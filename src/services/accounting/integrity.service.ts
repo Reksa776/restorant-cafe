@@ -8,19 +8,27 @@ import {
   INTEGRITY_SAMPLE_LIMIT_DEFAULT,
   type CompletedItemsWithoutSnapshotCheck,
   type IntegrityCutoffEvidence,
+  type IntegrityDisclosure,
   type IntegrityReport,
   type ReconciliationCheck,
   type RevenueOrdersWithoutItemsCheck,
 } from "./integrity.types";
 import {
   LEGACY_CUTOFF_MIGRATION,
+  buildCutoffAmbiguityDisclosure,
   buildCutoffEvidence,
+  buildSnapshotDisclosure,
+  buildSnapshotMarker,
   completedWithoutSnapshotStatus,
+  completedWithoutSnapshotStatusV3,
   deriveOverallStatus,
   deriveReconciliation,
+  carveWindow,
+  evidenceLevelFor,
   partitionViolations,
   reconciliationStatus,
   revenueWithoutItemsStatus,
+  selectLegacyCutoff,
   selectSampleOrderIds,
 } from "./integrity.rules";
 
@@ -43,22 +51,71 @@ import {
 //    isolation is enforced through the caller-supplied `branchFilters`.
 //  * Every raw SQL query carries a tenant predicate. OrderItem has no
 //    restaurantId, so it is ALWAYS scoped through a JOIN to `order`.
-//  * The legacy cutoff is PROVEN from the migration that introduced the
-//    snapshot engine (`20260911143644_f5_order_item_cost_snapshot`), read at
-//    runtime from `_prisma_migrations`. If it cannot be resolved, items are
-//    classified as `unknownCompletion` — NEVER guessed into legacy/anomaly.
+//  * The legacy cutoff is READ from the migration that created the snapshot
+//    table (`20260911143644_f5_order_item_cost_snapshot`) in
+//    `_prisma_migrations`. Only ELIGIBLE rows qualify (`finished_at IS NOT NULL`
+//    AND `rolled_back_at IS NULL`); when several qualify the EARLIEST is used
+//    (ties broken by `id`) and the ambiguity is disclosed. `started_at` is never
+//    a fallback (M-1). Timestamps are read as naive text and parsed as UTC (M-2).
+//    It proves the SCHEMA existed from that instant; it
+//    does NOT prove when the snapshot-writing code was deployed or ever ran
+//    (`codeDeployUnproven` is therefore always true). If the cutoff cannot be
+//    resolved, items are classified as `unknownCompletion` — NEVER guessed.
+//  * M2 adds ONE read-only observation: the tenant-wide first snapshot
+//    (`MIN(completedAt)`). It is a LOWER BOUND of observed engine activity used
+//    only to carve the unproven window out of the anomaly bucket. It never
+//    moves the cutoff. An EMPTY or FAILED marker read cannot activate the
+//    carve, and both states are surfaced as explicit disclosure instead of
+//    being reported as healthy.
 // ============================================================
 
 /**
- * The migration that created `orderitemcostsnapshot` and shipped the frozen
- * COGS engine (F.5). Orders COMPLETED before it existed carry no snapshot by
- * design; this is the ONLY proven boundary between legacy and anomaly.
- *
- * Evidence (repo + DB, read-only):
- *   - `prisma/migrations/20260911143644_f5_order_item_cost_snapshot/migration.sql`
- *   - AUDIT-F5-HISTORICAL-COGS-PROFITABILITY.md (11 September 2026)
- *   - `_prisma_migrations.finished_at` for this migration
+ * Raw marker read: how many snapshots the tenant has and the oldest one.
+ * `population = null` means the read FAILED (nothing is known) — it is NOT the
+ * same fact as a verified empty population.
  */
+interface SnapshotMarkerRow {
+  population: bigint | number | string | null;
+  firstAt: Date | string | null;
+}
+
+/** Tolerant Date parse for a raw driver value (mirrors the cutoff path). */
+function toDateOrNull(v: Date | string | null | undefined): Date | null {
+  if (v == null) return null;
+  const d = v instanceof Date ? v : new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * M2 marker read — ONE query per report, tenant-wide, no branch filter (K1),
+ * with the tenant-consistency predicate (K2). Fail-safe: any error returns
+ * `population = null` (UNVERIFIED) so the caller degrades to cutoff-only
+ * classification and never loses severity.
+ */
+async function observeSnapshotMarker(restaurantId: string): Promise<{
+  population: number | null;
+  firstObservedSnapshotAt: Date | null;
+}> {
+  try {
+    const rows = await prisma.$queryRaw<SnapshotMarkerRow[]>(Prisma.sql`
+      SELECT COUNT(*) AS population, MIN(s.completedAt) AS firstAt
+      FROM orderitemcostsnapshot s
+      JOIN \`order\` o ON o.id = s.orderId
+      WHERE o.restaurantId = ${restaurantId}
+        AND s.restaurantId = o.restaurantId
+    `);
+    const row = rows[0];
+    if (!row) return { population: null, firstObservedSnapshotAt: null };
+    return {
+      population: count(row.population),
+      firstObservedSnapshotAt: toDateOrNull(row.firstAt),
+    };
+  } catch {
+    // Cannot prove anything about the marker → UNVERIFIED, never "empty".
+    return { population: null, firstObservedSnapshotAt: null };
+  }
+}
+
 const n = (v: unknown): number => Number(v ?? 0);
 const count = (v: unknown): number => {
   const x = n(v);
@@ -70,13 +127,30 @@ const count = (v: unknown): number => {
 // ============================================================
 
 interface MigrationRow {
-  finished_at: Date | null;
-  started_at: Date | null;
+  id: string;
+  /** `CAST(finished_at AS CHAR)` — a naive DATETIME literal, read as text (M-2). */
+  finished_at: string | null;
+  /** `CAST(rolled_back_at AS CHAR)` — null for a successful, live apply. */
+  rolled_back_at: string | null;
 }
 
+/**
+ * Resolve the proven cutoff = the F.5 migration's recorded apply time.
+ *
+ * It is the ONLY proven boundary between legacy and anomaly: orders COMPLETED
+ * before it carry no snapshot by design. It says nothing about when the
+ * snapshot-writing code went live (see `codeDeployUnproven`).
+ *
+ * Evidence (repo + DB, read-only):
+ *   - `prisma/migrations/20260911143644_f5_order_item_cost_snapshot/migration.sql`
+ *   - AUDIT-F5-HISTORICAL-COGS-PROFITABILITY.md (11 September 2026)
+ *   - `_prisma_migrations.finished_at` for this migration
+ */
 async function resolveLegacyCutoff(): Promise<{
   cutoff: Date | null;
   evidence: IntegrityCutoffEvidence;
+  /** M1-R: non-null only when more than one ELIGIBLE ledger row exists. */
+  cutoffDisclosure: IntegrityDisclosure | null;
 }> {
   // F2 — the cutoff is the MIGRATION APPLY time only; the code-deploy time is
   // not provable, so `codeDeployUnproven` is always true (never assumed away).
@@ -86,28 +160,45 @@ async function resolveLegacyCutoff(): Promise<{
     resolved: false,
   });
   try {
+    // M-1: EVERY row for the migration is read. Eligibility
+    // (`finished_at IS NOT NULL AND rolled_back_at IS NULL`), deterministic
+    // ordering (`finished_at ASC, id ASC`) and the 0 / 1 / >1 cardinality are
+    // decided by the pure, tested `selectLegacyCutoff` — never by `LIMIT 1`
+    // over an unordered result, and never by a `started_at` fallback.
+    // M-2: the timestamps are read as naive TEXT and parsed as UTC explicitly
+    // (same instant as before — no literal is rewritten or reinterpreted).
     const rows = await prisma.$queryRaw<MigrationRow[]>`
-      SELECT finished_at, started_at
+      SELECT id,
+             CAST(finished_at AS CHAR) AS finished_at,
+             CAST(rolled_back_at AS CHAR) AS rolled_back_at
       FROM _prisma_migrations
       WHERE migration_name = ${LEGACY_CUTOFF_MIGRATION}
-      LIMIT 1
     `;
-    const row = rows[0];
-    const applied = row?.finished_at ?? row?.started_at ?? null;
-    if (!applied) return { cutoff: null, evidence: unresolved };
-    const cutoff = applied instanceof Date ? applied : new Date(applied);
-    if (Number.isNaN(cutoff.getTime())) return { cutoff: null, evidence: unresolved };
+    const selection = selectLegacyCutoff(
+      rows.map((row) => ({
+        id: row.id,
+        finishedAtLiteral: row.finished_at,
+        rolledBackAtLiteral: row.rolled_back_at,
+      }))
+    );
+    // M1-R: ambiguity is DISCLOSED, never hidden — and it never changes the
+    // classification rules or any severity.
+    const cutoffDisclosure = buildCutoffAmbiguityDisclosure(selection.eligibleRows);
+    if (!selection.appliedAt) {
+      return { cutoff: null, evidence: unresolved, cutoffDisclosure };
+    }
     return {
-      cutoff,
+      cutoff: selection.appliedAt,
       evidence: buildCutoffEvidence({
         migration: LEGACY_CUTOFF_MIGRATION,
-        appliedAt: cutoff,
+        appliedAt: selection.appliedAt,
         resolved: true,
       }),
+      cutoffDisclosure,
     };
   } catch {
     // The migration ledger is unavailable → do NOT guess a cutoff.
-    return { cutoff: null, evidence: unresolved };
+    return { cutoff: null, evidence: unresolved, cutoffDisclosure: null };
   }
 }
 
@@ -161,6 +252,8 @@ interface C2RawCounts {
   legacyOrders: bigint | number | string | null;
   anomalyItems: bigint | number | string | null;
   anomalyOrders: bigint | number | string | null;
+  beforeFirstSnapshotItems: bigint | number | string | null;
+  beforeFirstSnapshotOrders: bigint | number | string | null;
   unknownItems: bigint | number | string | null;
   unknownOrders: bigint | number | string | null;
 }
@@ -174,7 +267,19 @@ async function checkCompletedItemsWithoutSnapshot(
   branchFilters: string[] | null,
   sampleLimit: number
 ): Promise<CompletedItemsWithoutSnapshotCheck> {
-  const { cutoff, evidence } = await resolveLegacyCutoff();
+  // Single-source (K3): the cutoff AND the marker are each resolved exactly
+  // once per report; the same instances drive classification, buckets,
+  // `statusCutoffOnly`, samples and evidence.
+  const { cutoff, evidence, cutoffDisclosure } = await resolveLegacyCutoff();
+  const marker = buildSnapshotMarker(await observeSnapshotMarker(restaurantId));
+  // The carve window (single definition: `carveWindow`) is enabled ONLY by a
+  // genuinely observed marker that is STRICTLY NEWER than the cutoff. EMPTY and
+  // UNVERIFIED yield null here, and so does a marker at/before the cutoff
+  // (metadata anomaly). All of those degrade to plain cutoff-only
+  // classification, so buckets stay mutually exclusive, the four buckets always
+  // sum to `totalItems`, and severity can never be lowered by a missing,
+  // failed, or stale marker read.
+  const carveFrom = carveWindow(cutoff, marker);
 
   const branchSql = branchFilters?.length
     ? Prisma.sql`AND o.\`branchId\` IN (${Prisma.join(branchFilters)})`
@@ -205,8 +310,18 @@ async function checkCompletedItemsWithoutSnapshot(
         COUNT(DISTINCT o.id) AS totalOrders,
         SUM(CASE WHEN h.done IS NOT NULL AND h.done < ${cutoff} THEN 1 ELSE 0 END) AS legacyItems,
         COUNT(DISTINCT CASE WHEN h.done IS NOT NULL AND h.done < ${cutoff} THEN o.id END) AS legacyOrders,
-        SUM(CASE WHEN h.done IS NOT NULL AND h.done >= ${cutoff} THEN 1 ELSE 0 END) AS anomalyItems,
-        COUNT(DISTINCT CASE WHEN h.done IS NOT NULL AND h.done >= ${cutoff} THEN o.id END) AS anomalyOrders,
+        SUM(CASE WHEN h.done IS NOT NULL AND h.done >= ${carveFrom ?? cutoff} THEN 1 ELSE 0 END) AS anomalyItems,
+        COUNT(DISTINCT CASE WHEN h.done IS NOT NULL AND h.done >= ${carveFrom ?? cutoff} THEN o.id END) AS anomalyOrders,
+        ${
+          carveFrom
+            ? Prisma.sql`SUM(CASE WHEN h.done IS NOT NULL AND h.done >= ${cutoff} AND h.done < ${carveFrom} THEN 1 ELSE 0 END) AS beforeFirstSnapshotItems,`
+            : Prisma.sql`0 AS beforeFirstSnapshotItems,`
+        }
+        ${
+          carveFrom
+            ? Prisma.sql`COUNT(DISTINCT CASE WHEN h.done IS NOT NULL AND h.done >= ${cutoff} AND h.done < ${carveFrom} THEN o.id END) AS beforeFirstSnapshotOrders,`
+            : Prisma.sql`0 AS beforeFirstSnapshotOrders,`
+        }
         SUM(CASE WHEN h.done IS NULL THEN 1 ELSE 0 END) AS unknownItems,
         COUNT(DISTINCT CASE WHEN h.done IS NULL THEN o.id END) AS unknownOrders
       ${baseFrom}
@@ -222,6 +337,8 @@ async function checkCompletedItemsWithoutSnapshot(
         0 AS legacyOrders,
         0 AS anomalyItems,
         0 AS anomalyOrders,
+        0 AS beforeFirstSnapshotItems,
+        0 AS beforeFirstSnapshotOrders,
         COUNT(*) AS unknownItems,
         COUNT(DISTINCT o.id) AS unknownOrders
       ${baseFrom}
@@ -233,21 +350,34 @@ async function checkCompletedItemsWithoutSnapshot(
   const legacyOrders = count(counts.legacyOrders);
   const anomalyItems = count(counts.anomalyItems);
   const anomalyOrders = count(counts.anomalyOrders);
+  const beforeFirstSnapshotItems = count(counts.beforeFirstSnapshotItems);
+  const beforeFirstSnapshotOrders = count(counts.beforeFirstSnapshotOrders);
   const unknownItems = count(counts.unknownItems);
   const unknownOrders = count(counts.unknownOrders);
   const items = count(counts.totalItems);
   const orders = count(counts.totalOrders);
 
-  // Samples: anomalies first (the actionable ones), then unknowns.
+  // Samples: anomalies first (the actionable ones), then the unproven
+  // activation window, then unknowns.
   const sampleOrderIds: string[] = [];
   if (cutoff && anomalyItems > 0) {
     const rows = await prisma.$queryRaw<OrderIdRow[]>(Prisma.sql`
       SELECT o.id AS orderId
       ${baseFrom}
-        AND h.done IS NOT NULL AND h.done >= ${cutoff}
+        AND h.done IS NOT NULL AND h.done >= ${carveFrom ?? cutoff}
       GROUP BY o.id
       ORDER BY MIN(h.done) ASC
       LIMIT ${sampleLimit}
+    `);
+    for (const r of rows) sampleOrderIds.push(r.orderId);
+  }
+  if (cutoff && carveFrom && beforeFirstSnapshotItems > 0 && sampleOrderIds.length < sampleLimit) {
+    const rows = await prisma.$queryRaw<OrderIdRow[]>(Prisma.sql`
+      SELECT o.id AS orderId
+      ${baseFrom}
+        AND h.done IS NOT NULL AND h.done >= ${cutoff} AND h.done < ${carveFrom}
+      GROUP BY o.id
+      LIMIT ${sampleLimit - sampleOrderIds.length}
     `);
     for (const r of rows) sampleOrderIds.push(r.orderId);
   }
@@ -264,19 +394,45 @@ async function checkCompletedItemsWithoutSnapshot(
 
   return {
     code: "COMPLETED_ORDER_ITEM_WITHOUT_SNAPSHOT",
-    status: completedWithoutSnapshotStatus({
+    // Severity depends on counts + cutoffResolved ONLY (K5). No evidence field
+    // is passed in, so no evidence field can change the status.
+    status: completedWithoutSnapshotStatusV3({
       anomalyItems,
+      beforeFirstSnapshotItems,
       unknownItems,
       cutoffResolved: evidence.resolved,
     }),
     items,
     orders,
+    // The four buckets PARTITION `items` exactly:
+    // legacyExpected + beforeFirstSnapshot + anomaly + unknownCompletion === items
     buckets: {
       legacyExpected: { items: legacyItems, orders: legacyOrders },
+      beforeFirstSnapshot: {
+        items: beforeFirstSnapshotItems,
+        orders: beforeFirstSnapshotOrders,
+      },
       anomaly: { items: anomalyItems, orders: anomalyOrders },
       unknownCompletion: { items: unknownItems, orders: unknownOrders },
     },
     cutoff: evidence,
+    // Independent comparison: what C2 would have said WITHOUT the marker
+    // (cutoff-only). `cutoffAnomalyItems === anomalyItems + beforeFirstSnapshotItems`,
+    // so any carve-induced severity change stays visible side by side.
+    statusCutoffOnly: completedWithoutSnapshotStatus({
+      anomalyItems: anomalyItems + beforeFirstSnapshotItems,
+      unknownItems,
+      cutoffResolved: evidence.resolved,
+    }),
+    markerSource: marker.source,
+    firstObservedSnapshotAt: marker.firstObservedSnapshotAt
+      ? marker.firstObservedSnapshotAt.toISOString()
+      : null,
+    snapshotPopulation: marker.population,
+    evidenceLevel: evidenceLevelFor(marker),
+    activationUnproven: true,
+    disclosure: buildSnapshotDisclosure(marker),
+    cutoffDisclosure,
     sampleOrderIds,
   };
 }

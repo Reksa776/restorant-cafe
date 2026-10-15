@@ -2,16 +2,17 @@ import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 import bcrypt from "bcryptjs";
+import { parseDatabaseUrl } from "../src/lib/database-url";
 
-// Parse DATABASE_URL
+// Parse DATABASE_URL — credentials are percent-decoded exactly once (F-2).
 const url = process.env.DATABASE_URL || "mysql://root:password@localhost:3306/restaurant_app";
-const urlObj = new URL(url);
+const { host, port, user, password, database } = parseDatabaseUrl(url);
 const adapter = new PrismaMariaDb({
-  host: urlObj.hostname,
-  port: parseInt(urlObj.port || "3306"),
-  user: urlObj.username,
-  password: urlObj.password,
-  database: urlObj.pathname.replace("/", ""),
+  host,
+  port,
+  user,
+  password,
+  database,
   connectionLimit: 5,
 });
 
