@@ -12,7 +12,7 @@ Each phase gets its own report under `docs/accounting-hardening/`. Nothing is ap
 | **2C.3B** | Fix A-9 / A-11 (+A-12) reporting predicates + focused regression | ✅ **COMPLETE** | [`STEP-2C-3B-REPORTING-FIX.md`](./STEP-2C-3B-REPORTING-FIX.md) |
 | **2C.4** | F-2 database connection | ✅ **COMPLETE** (audit + fix + regression) | [`STEP-2C-4-DATABASE-CONNECTION.md`](./STEP-2C-4-DATABASE-CONNECTION.md) |
 | **2C.5** | F-5 / M-1 / M-2 cutoff | ✅ **COMPLETE** (audit + approved implementation + regression) | [`STEP-2C-5-CUTOFF-FINALIZATION.md`](./STEP-2C-5-CUTOFF-FINALIZATION.md) (Part I audit/gate + Part II implementation) |
-| **2C.6** | F-6 / F-8 / migration compatibility | 🔎 **CURRENT — AUDIT ONLY + APPROVED LIMITED FOLLOW-UP (Part II)**: audit accepted; v3 target recovered (read-only verification); commit manifest prepared but **NOT committed**; release gate + F-8 A+D documented; **no code/migration/DB change** | [`STEP-2C-6-MIGRATION-COMPATIBILITY.md`](./STEP-2C-6-MIGRATION-COMPATIBILITY.md) (Part I audit + Part II limited follow-up) |
+| **2C.6** | F-6 / F-8 / migration compatibility | ✅ **CLOSED 2026-10-15** — audit accepted (F-6 / F-8, release gate, F-8 A+D documented) and the phase carried through C1 → C1B → C2 → C3 → C4 → A4; final closure: [`STEP-2C-6-FINAL-CLOSURE.md`](./STEP-2C-6-FINAL-CLOSURE.md) | [`STEP-2C-6-MIGRATION-COMPATIBILITY.md`](./STEP-2C-6-MIGRATION-COMPATIBILITY.md) (Part I audit + Part II limited follow-up) |
 | **2C.6-C1** | F-7 commit readiness (4 migration relocations) | 🔎 **AUDIT ONLY — C1 READY, NOT COMMITTED**: exact 4-file boundary proven, statement-preserving (44≡44, 16≡16), dependency order verified, nothing staged; awaiting **AP-1** | [`STEP-2C-6-C1-COMMIT-READINESS.md`](./STEP-2C-6-C1-COMMIT-READINESS.md) |
 | **2C.6-C1A** | Migration ordering & commit safety audit | 🔎 **READ-ONLY AUDIT — C1 STILL READY, STILL ON HOLD**: ordering mechanism read from Prisma source (`localeCompare`), 22/22 ledger≡mechanism, HEAD **2** forward-refs → fixed tree **0**, 44≡44/16≡16, checksums 4/4; awaiting **AP-1** (new AP-4/AP-5) | [`STEP-2C-6-C1A-MIGRATION-ORDERING-AUDIT.md`](./STEP-2C-6-C1A-MIGRATION-ORDERING-AUDIT.md) |
 | **2C.6-C1B** | Migration runner safety guard (design) | 🧭 **DESIGN ONLY — NO IMPLEMENTATION**: static fail-closed preflight (ICU canary + `localeCompare` order ≡ versioned baseline + 22 checksums) before `migrate deploy`; recommendation is a tracked `tools/` guard **not** the gitignored `scripts/`; awaiting **AP-C1B-1…5** | [`STEP-2C-6-C1B-RUNNER-GUARD-DESIGN.md`](./STEP-2C-6-C1B-RUNNER-GUARD-DESIGN.md) |
@@ -28,7 +28,11 @@ Each phase gets its own report under `docs/accounting-hardening/`. Nothing is ap
 | **2C.6-C3-DB** | C3 authorised DB test run (AP-C3-DB-TEST) | ❌ **BLOCKED — NO COMMIT**: container started, identity **PASS** (v3 · 49 tables · 22 ledger rows); F-2 unit **24/24**, M2 unit **78/78**, F-2 live **4/4**, `tsc` **0**, preflight **22/22**, fingerprint **13/13**; accounting suites **98 pass / 2 fail** — cashbook **14/15** and refund-profitability **20/21** fail on refund date attribution (leading cause: **calendar-dependent test isolation** — fixtures stamp `new Date()` = 2026-10-15 while tests query a hardcoded `2026-10-15` window); C1/C1B/C2 + test drift + residual data + DB drift all **ruled out**; conditional AP-C3-COMMIT **not exercised** | [`STEP-2C-6-C3-INTEGRATION-BLOCKER.md`](./STEP-2C-6-C3-INTEGRATION-BLOCKER.md) |
 | **2C.6-C3-FIX** | C3 scoped test isolation fix (AP-C3-TEST-FIX) | ✅ **ROOT CAUSE PROVEN + FIXED (test-only)**: cashbook test 3 kept a production-stamped `paidAt = now` movement that landed in test 10's hardcoded `2026-10-15` control window (test 10 now runs on that exact day and passes); refund-profitability pinned 10 `new Date()` fixtures to dedicated days + relocated 9 service-stamped `approvedAt` values onto them; **111/111 accounting + F-2 live 4/4, all exit 0**, residual 0, date-independence regression PASS | [`STEP-2C-6-C3-TEST-FIX-AND-COMMIT.md`](./STEP-2C-6-C3-TEST-FIX-AND-COMMIT.md) |
 | **2C.6-C3-EXEC** | C3 controlled commit execution (conditional AP-C3-COMMIT) | ✅ **C3 COMMITTED — `4550d28`** (parent `7dc2496`, 1 commit ahead): exactly the **13** C3 paths, path-explicit, fingerprint **13/13** recomputed (2 entries changed, 11 byte-identical); `A/M` only, no 14th file; post-commit parent/paths/blob-fingerprint/index/stash/boundaries all PASS; `tsc` **0**, `db:preflight` **22/22**; **C4 commit NOT authorised** | [`STEP-2C-6-C3-TEST-FIX-AND-COMMIT.md`](./STEP-2C-6-C3-TEST-FIX-AND-COMMIT.md) |
-| 2C.7 | Code quality + lint | ⏳ NOT STARTED | — |
+| **2C.6-C4-EXEC** | C4 controlled documentation commit (AP-C4-COMMIT) | ✅ **C4 COMMITTED — `eb313bb`** (parent `4550d28`, 1 commit ahead): exactly the **24**-path manifest, path-explicit, all `A`, `12592 insertions(+)`; classified worktree reconciled to **32** = 24 C4 + 6 HELD + 2 EXCLUDE; staged-set + staged-blob fingerprint (23 recorded + entry 24 blob `f75c0dc4…`) PASS; `git diff --cached --check` **waived by owner** for the frozen-document class (48 legacy-archive Markdown flags + 1 historical EOF blank; **0** flags from new content); post-commit parent/paths/blobs/index/stash/HELD/EXCLUDE/source all PASS | [`STEP-2C-6-C4-COMMIT-EXECUTION.md`](./STEP-2C-6-C4-COMMIT-EXECUTION.md) |
+| **2C.6-A4-PRE** | A4 committed-tree replay — pre-execution readiness | ⚠️ **READY — NOT EXECUTED, NO DATABASE CONTACT**: HEAD `eb313bb`; static `db:preflight` **PASS 22/22 exit 0**; independent **22/22 checksums, 0 mismatch, order ≡ baseline**; new disposable target `restaurant_app_test_v4` designed; exact replay commands + 7 safety gates + cleanup/recovery + rollback + expected outputs documented; known broken healthcheck recorded; **awaiting AP-3** | [`STEP-2C-6-A4-PRE-EXECUTION-READINESS.md`](./STEP-2C-6-A4-PRE-EXECUTION-READINESS.md) |
+| **2C.6-A4-EXEC** | A4 committed-tree replay execution (AP-3 conditional) | ✅ **REPLAY SUCCESS — STEP 2C.6 EXECUTION COMPLETE**: HEAD `eb313bb` unchanged; new disposable `restaurant_app_test_v4` (3308, `utf8mb4_uca1400_ai_ci`, dedicated `restaurant_test_v4@%` user, credential inert in `.env.test`); guard PASS (tree identity, port/db, protected 3306/3307, Prisma 7.10.0) with `DATABASE_URL` in the **child env** only; `migrate deploy` **exit 0**, **22/22 applied in baseline order**; **49** tables (set ≡ v3), ledger **22/22/0/0**, checksums **22/22**, F.5 once, **0** business rows; **v3 unmodified** (49 / 22-22-0 / last applied 2026-10-14); 3306/3307 never contacted; v4 left as read-only evidence; no push/commit/2C.7 | [`STEP-2C-6-A4-EXECUTION.md`](./STEP-2C-6-A4-EXECUTION.md) |
+| **2C.6-CLOSURE** | STEP 2C.6 final closure (AP-FINAL) | ✅ **CLOSED — READY TO ENTER STEP 2C.7**: evidence chain C1 `350afec` → C1B `cd3d849` → C2 `7dc2496` → C3 `4550d28` → C4 `eb313bb` → A4 verified; DB-free re-checks PASS (`db:preflight` 22/22 exit **0**, independent checksums 22/22 **0 mismatch**, `git diff --check` **0**, `--cached --check` **0**, secret scan clean, 25-report inventory); A4 **not** re-run; C4 whitespace **waiver** + broken healthcheck recorded as exception/limitation; **no production-readiness claim**; no commit/push; next gate **AP-2C7** | [`STEP-2C-6-FINAL-CLOSURE.md`](./STEP-2C-6-FINAL-CLOSURE.md) |
+| 2C.7 | Code quality + lint | ⏳ **NEXT — not started** (needs **AP-2C7**) | — |
 | 2C.8 | Full regression + UAT | ⏳ NOT STARTED | — |
 | 2C.9 | Production release | ⏳ NOT STARTED | — |
 
@@ -459,6 +463,35 @@ Scoped repair of the two blockers recorded by 2C.6-C3-DB, then the conditional C
   fingerprint **13/13** MATCH, index/stash empty after, C4/HELD/EXCLUDE preserved, `prisma/` untouched.
 * **Blocker:** **AP-C4-COMMIT** (C4 manifest staging/commit) — C4 FINAL READINESS was prepared, nothing staged.
 * Detail: [`STEP-2C-6-C3-TEST-FIX-AND-COMMIT.md`](./STEP-2C-6-C3-TEST-FIX-AND-COMMIT.md); continuation state: [`EXECUTION-STATE.md`](./EXECUTION-STATE.md).
+
+## 2C.6-C4-EXEC + A4-PRE status
+
+C4 documentation archive committed under **AP-C4-COMMIT**; A4 readiness prepared but **not executed**.
+**Status: C4 CLOSED — awaiting AP-3. Nothing pushed; STEP 2C.7 untouched.**
+
+* **Commit `eb313bb13d2670b45a2aeb73a7b370d554931321`** on `main`, parent `4550d28a…` (exactly 1 commit ahead), message
+  `docs(accounting): consolidate hardening evidence and roadmap` (verbatim). **24 files, all `A`, +12592/−0**; path-explicit
+  staging only; no source/test/guard/migration/schema, no `.env*`, no HELD/EXCLUDE path.
+* **Classification reconciled:** worktree = **32 entries** = 24 C4 + 6 HELD + 2 EXCLUDE. The readiness report's earlier “31”
+  was measured **before the report itself existed** (23 + 6 + 2) → documentation counting artifact only; **manifest unchanged**,
+  0 ambiguous/missing/unclassified paths.
+* **Fingerprint:** entries 1–23 verified **23/23** on the working tree, the **staged blobs** and the **committed blobs**;
+  entry 24 (the manifest-bearing report) carries no self-hash — its **staged blob `f75c0dc4…`** is the recorded proof and the
+  committed blob reproduces it exactly. All **20** historical paths byte-identical to the pre-session snapshot.
+* **Waived gate (recorded):** `git diff --cached --check` exits **2** with **49** flags, **all** inside two frozen documents
+  (legacy archive: 48 Markdown hard-break trailing spaces; 2C.5 report: 1 EOF blank line) — **0** from newly authored content.
+  Exit 0 would have required editing frozen historical reports; the owner ruled **waive for this class, then commit**. The one
+  flag that was ours (readiness report EOF blank) was fixed and re-gated before the commit.
+* **Post-commit:** parent correct · exactly 24 paths, no 25th · committed blobs == staged blobs (24/24) · index/stash empty ·
+  `git diff --check` **0** · HELD 6 / EXCLUDE 2 preserved · `prisma/`, `src/`, `tests/`, `tools/` untouched · worktree reduced
+  to exactly the 8 HELD/EXCLUDE entries.
+* **A4 readiness (not executed):** static `npm run db:preflight` **PASS exit 0** (22 on disk / 22 baseline, Prisma 7.10.0,
+  ICU 78.3) and an independent **22/22 checksum / order ≡ baseline** verification; replay target `restaurant_app_test_v4` on the
+  same 3308 container; exact guarded commands (`DATABASE_URL` in the child env only — risk **R-1** neutralised), 7 safety gates,
+  STOP conditions, expected outputs, cleanup/recovery and rollback documented. **No database contact, no `migrate deploy`.**
+* **Blocker:** **AP-3** (A4 replay execution). AP-C4 ≠ AP-3. Two reports of this subphase
+  (`STEP-2C-6-C4-COMMIT-EXECUTION.md`, `STEP-2C-6-A4-PRE-EXECUTION-READINESS.md`) plus the ROADMAP/EXECUTION-STATE updates are
+  **intentionally uncommitted** — no second commit was made for them.
 
 ## Production readiness
 
