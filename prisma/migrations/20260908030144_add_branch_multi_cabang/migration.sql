@@ -17,9 +17,6 @@ ALTER TABLE `order` ADD COLUMN `branchId` VARCHAR(191) NULL;
 ALTER TABLE `payment` ADD COLUMN `branchId` VARCHAR(191) NULL;
 
 -- AlterTable
-ALTER TABLE `promo` ADD COLUMN `branchId` VARCHAR(191) NULL;
-
--- AlterTable
 ALTER TABLE `refund` ADD COLUMN `branchId` VARCHAR(191) NULL;
 
 -- AlterTable
@@ -94,9 +91,6 @@ CREATE INDEX `order_branchId_idx` ON `order`(`branchId`);
 CREATE INDEX `payment_branchId_idx` ON `payment`(`branchId`);
 
 -- CreateIndex
-CREATE INDEX `promo_branchId_idx` ON `promo`(`branchId`);
-
--- CreateIndex
 CREATE INDEX `refund_branchId_idx` ON `refund`(`branchId`);
 
 -- CreateIndex
@@ -131,9 +125,6 @@ ALTER TABLE `order` ADD CONSTRAINT `order_branchId_fkey` FOREIGN KEY (`branchId`
 
 -- AddForeignKey
 ALTER TABLE `payment` ADD CONSTRAINT `payment_branchId_fkey` FOREIGN KEY (`branchId`) REFERENCES `branch`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `promo` ADD CONSTRAINT `promo_branchId_fkey` FOREIGN KEY (`branchId`) REFERENCES `branch`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `notification` ADD CONSTRAINT `notification_branchId_fkey` FOREIGN KEY (`branchId`) REFERENCES `branch`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

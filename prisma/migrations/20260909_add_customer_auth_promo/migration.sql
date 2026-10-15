@@ -89,3 +89,18 @@ ALTER TABLE `order`
     ADD CONSTRAINT `order_promoId_fkey`
     FOREIGN KEY (`promoId`) REFERENCES `promo`(`id`)
     ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- ------------------------------------------------------------
+-- 5. Promo <=> Branch (RELOCATED from 20260908030144_add_branch_multi_cabang by the
+--    F-7 repair: that migration ran before `promo` existed. `promo` is created in
+--    section 2 above and `branch` in 20260908030144 (applied earlier), so the
+--    column -> index -> foreign key order below is now fully satisfiable.)
+-- ------------------------------------------------------------
+-- AlterTable
+ALTER TABLE `promo` ADD COLUMN `branchId` VARCHAR(191) NULL;
+
+-- CreateIndex
+CREATE INDEX `promo_branchId_idx` ON `promo`(`branchId`);
+
+-- AddForeignKey
+ALTER TABLE `promo` ADD CONSTRAINT `promo_branchId_fkey` FOREIGN KEY (`branchId`) REFERENCES `branch`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
