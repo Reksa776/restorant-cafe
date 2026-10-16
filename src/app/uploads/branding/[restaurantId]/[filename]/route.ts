@@ -83,4 +83,3 @@ function notFound() {
 
 // Keep the URL prefix import referenced so the contract stays obvious if the
 // constant ever changes.
-export const BRANDING_SERVE_PREFIX = BRANDING_UPLOAD_URL_PREFIX;

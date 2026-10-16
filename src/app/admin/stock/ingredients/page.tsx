@@ -1,6 +1,6 @@
 "use client";
 
-import StockPage from "../page";
+import StockPage from "../stock-page";
 
 /**
  * G.3 — STOK BAHAN BAKU.

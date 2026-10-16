@@ -80,7 +80,9 @@ export class BrandingUploadService {
       );
     }
 
-    const bytes = new Uint8Array(await file.arrayBuffer());
+    // Buffer is accepted by Node's fs.writeFile overload across the Node 20/24
+    // type definitions; a web Uint8Array can be typed as ArrayBufferLike.
+    const bytes = Buffer.from(await file.arrayBuffer());
 
     // Authoritative MIME check — sniff magic bytes.
     const mime = sniffBrandingLogoMime(bytes);

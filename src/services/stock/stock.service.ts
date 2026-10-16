@@ -28,6 +28,8 @@ import { ConflictError, ValidationError } from "@/lib/errors";
 export const StockRefType = {
   PURCHASE_RECEIVE: "PURCHASE_RECEIVE",
   ORDER_READY: "ORDER_READY",
+  /** Legacy identifier retained for historical reports and harnesses. */
+  ORDER_COMPLETED: "ORDER_COMPLETED",
   STOCK_ADJUSTMENT: "STOCK_ADJUSTMENT",
 } as const;
 

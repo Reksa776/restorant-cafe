@@ -85,4 +85,3 @@ function notFound() {
 
 // Keep the URL prefix import referenced so the contract stays obvious if the
 // constant ever changes.
-export const PRODUCT_IMAGE_SERVE_PREFIX = PRODUCT_UPLOAD_URL_PREFIX;
