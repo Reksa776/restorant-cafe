@@ -11,8 +11,7 @@ import type { Order } from "@/services/order.service";
 // ============================================================
 // Print Bill Dialog
 // ============================================================
-// Renders a print-ready bill for an order (A4 / thermal 58mm / thermal
-// 80mm). Pure client-side: window.print() never mutates the order or its
+// Renders a print-ready bill for an order (thermal 80mm). Pure client-side: window.print() never mutates the order or its
 // payments — the bill is built entirely from the already-loaded order data
 // (admin endpoints are tenant-scoped server-side).
 //
@@ -30,14 +29,7 @@ import type { Order } from "@/services/order.service";
 // paymentUrl) ever appear on a product ticket.
 // ============================================================
 
-type PaperFormat = "a4" | "thermal80" | "thermal58";
 type PrintMode = "all" | "perProduct";
-
-const PAPER_OPTIONS: Array<{ value: PaperFormat; label: string }> = [
-  { value: "a4", label: "A4" },
-  { value: "thermal80", label: "Thermal 80mm" },
-  { value: "thermal58", label: "Thermal 58mm" },
-];
 
 const MODE_OPTIONS: Array<{ value: PrintMode; label: string }> = [
   { value: "all", label: "Print All" },
@@ -84,13 +76,11 @@ function parseCustomizations(
 }
 
 /** Paper width applied to the bill body (screen + print share the same box). */
-function paperWidthClass(paper: PaperFormat): string {
+function paperWidthClass(): string {
   // Thermal tickets are fixed-physical-width — keep the paper width on every
   // viewport so a small-screen (mobile) preview stays honest about the actual
   // printed size instead of collapsing to the full container width.
-  if (paper === "thermal58") return "mx-auto w-[52mm] max-w-[52mm]";
-  if (paper === "thermal80") return "mx-auto w-[72mm] max-w-[72mm]";
-  return "w-full sm:max-w-[190mm]";
+  return "mx-auto w-[72mm] max-w-[72mm]";
 }
 
 /**
@@ -577,7 +567,6 @@ export function PrintBillDialog({
   /** Opens the browser print dialog once for a newly paid order. */
   autoPrint?: boolean;
 }) {
-  const [paper, setPaper] = useState<PaperFormat>("a4");
   const [mode, setMode] = useState<PrintMode>("all");
   const autoPrintedOrder = useRef<string | null>(null);
 
@@ -618,9 +607,7 @@ export function PrintBillDialog({
   const billBody =
     mode === "all" ? (
       <div
-        className={`bill-inner mx-auto bg-white text-gray-900 ${paperWidthClass(
-          paper
-        )} px-1 py-2 text-[13px] leading-relaxed`}
+        className={`bill-inner mx-auto bg-white text-gray-900 ${paperWidthClass()} px-1 py-2 text-[13px] leading-relaxed`}
       >
         <FullBill
           order={order}
@@ -635,9 +622,7 @@ export function PrintBillDialog({
         {tickets.map(({ item, key }, index) => (
           <div
             key={key}
-            className={`bill-inner mx-auto bg-white text-gray-900 ${paperWidthClass(
-              paper
-            )} px-1 py-2 text-[13px] leading-relaxed ${
+            className={`bill-inner mx-auto bg-white text-gray-900 ${paperWidthClass()} px-1 py-2 text-[13px] leading-relaxed ${
               index < tickets.length - 1 ? "print:break-after-page" : ""
             }`}
           >
@@ -676,22 +661,7 @@ export function PrintBillDialog({
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-2">
-            {PAPER_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setPaper(opt.value)}
-                className={`rounded-full px-3 py-1 text-xs font-medium border transition-colors ${
-                  paper === opt.value
-                    ? "bg-gray-900 text-white border-gray-900"
-                    : "border-gray-300 text-gray-600 hover:bg-gray-100"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
+          <span className="rounded-full border border-gray-300 px-3 py-1 text-xs text-gray-600">Thermal 80 mm</span>
           <Button onClick={() => window.print()}>
             <Printer className="h-4 w-4 mr-1" />
             Cetak
@@ -724,7 +694,7 @@ export function PrintBillDialog({
           PRINT COPY — portal straight to <body>, hidden on screen.
           In print media every other <body> child is display:none, so
           this copy sits in NORMAL FLOW at the top of the page and
-          paginates naturally (A4 multi-page, or one page per ticket).
+            paginates naturally (thermal 80mm, or one page per ticket).
           This avoids the fragile absolute/visibility math against a
           centered print containing-block that clipped the left half
           of the bill (Chrome print emulation quirk).

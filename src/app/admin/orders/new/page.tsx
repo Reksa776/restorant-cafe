@@ -26,7 +26,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBranchContext } from "@/hooks/use-branch-context";
-import type { Order } from "@/services/order.service";
+import { orderService, type Order } from "@/services/order.service";
+import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
 import { paymentService } from "@/services/payment.service";
 import { customerService } from "@/services/customer.service";
 import { KasirQrisScreen } from "@/components/admin/orders/kasir-qris-screen";
@@ -632,7 +633,7 @@ export default function KasirManualOrderPage() {
 
   // Submission
   const [submitting, setSubmitting] = useState(false);
-  const [phase, setPhase] = useState<"pick" | "cash" | "qris" | "cash-success">("pick");
+  const [phase, setPhase] = useState<"pick" | "cash" | "qris" | "paid-success">("pick");
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [cashierPaymentId, setCashierPaymentId] = useState<string | null>(null);
   const [cashReceivedRaw, setCashReceivedRaw] = useState("");
@@ -987,7 +988,12 @@ export default function KasirManualOrderPage() {
         setCashierPaymentId(paymentId);
       }
       await paymentService.markCashierPaymentPaid(paymentId, received);
-      setPhase("cash-success");
+      try {
+        setCreatedOrder(await orderService.getOrderByNumberScoped(createdOrder.orderNumber));
+      } catch {
+        setCreatedOrder({ ...createdOrder, paymentStatus: "PAID" });
+      }
+      setPhase("paid-success");
     } catch (error) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const msg = (error as any)?.response?.data?.message;
@@ -1055,7 +1061,13 @@ export default function KasirManualOrderPage() {
           amount={createdOrder.grandTotal}
           backHref="/admin/orders"
           backLabel="Kembali ke Pesanan"
-          onPaid={() => {
+          onPaid={async () => {
+            try {
+              setCreatedOrder(await orderService.getOrderByNumberScoped(createdOrder.orderNumber));
+            } catch {
+              setCreatedOrder({ ...createdOrder, paymentStatus: "PAID" });
+            }
+            setPhase("paid-success");
             toast.success("Pembayaran QRIS berhasil");
           }}
         />
@@ -1145,7 +1157,7 @@ export default function KasirManualOrderPage() {
   // ============================================================
   // Cash success
   // ============================================================
-  if (phase === "cash-success" && createdOrder) {
+  if (phase === "paid-success" && createdOrder) {
     return (
       <div className="max-w-md mx-auto py-6">
         <div className="rounded-xl border border-green-200 bg-green-50 p-6 text-center">
@@ -1158,7 +1170,7 @@ export default function KasirManualOrderPage() {
           </p>
           <div className="mt-3 rounded-lg bg-white border border-green-200 px-4 py-3">
             <p className="text-sm font-semibold text-green-800">
-              {rupiah(createdOrder.grandTotal)} dibayar tunai
+              {rupiah(createdOrder.grandTotal)} telah dibayar
             </p>
           </div>
         </div>
@@ -1170,6 +1182,7 @@ export default function KasirManualOrderPage() {
             Buat Pesanan Baru
           </Button>
         </div>
+        <PrintBillDialog order={createdOrder} open onOpenChange={() => undefined} autoPrint />
       </div>
     );
   }

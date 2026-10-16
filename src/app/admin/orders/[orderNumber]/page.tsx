@@ -27,6 +27,7 @@ import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { toast } from "sonner";
 
 const rupiah = (v: string | number) =>
   `Rp${Number(v).toLocaleString("id-ID")}`;
@@ -71,6 +72,7 @@ export default function AdminOrderByNumberPage({
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "not_found" | "error">("loading");
   const [barcodePaymentOpen, setBarcodePaymentOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
+  const [autoPrintBill, setAutoPrintBill] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,12 +137,19 @@ export default function AdminOrderByNumberPage({
   // STABLE prop — the inline `() => loadOrder()` re-created on every render
   // churns the QRIS poll interval (it recreates handleQrisPaid) and can drop
   // the single PAID tick.
-  const handlePaymentCompleted = useCallback(() => {
-    setOrder((prev) =>
-      prev ? { ...prev, paymentStatus: "PAID" } : prev
-    );
-    void loadOrder();
-  }, [loadOrder]);
+  const handlePaymentCompleted = useCallback(async () => {
+    if (!orderNumber) return;
+    try {
+      const fresh = await orderService.getOrderByNumber(orderNumber);
+      setOrder(fresh);
+      setAutoPrintBill(true);
+      setPrintOpen(true);
+    } catch (error) {
+      console.error("Failed to load paid order for automatic bill:", error);
+      toast.error("Pembayaran berhasil, tetapi bill otomatis gagal dimuat");
+      void loadOrder();
+    }
+  }, [orderNumber, loadOrder]);
 
   if (loadState === "loading") {
     return (
@@ -319,7 +328,11 @@ export default function AdminOrderByNumberPage({
       <PrintBillDialog
         order={order}
         open={printOpen}
-        onOpenChange={setPrintOpen}
+        autoPrint={autoPrintBill}
+        onOpenChange={(open) => {
+          setPrintOpen(open);
+          if (!open) setAutoPrintBill(false);
+        }}
       />
 
       {/* Payment flow reuses the ALREADY-FOUND order (from the scan that

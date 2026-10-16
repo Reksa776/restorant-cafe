@@ -196,7 +196,7 @@
    (display:none, so no layout/click space is consumed), leaving the
    bill in NORMAL FLOW at page 1 top-left, where Chrome paginates it
    naturally:
-     - A4 "Print All" spans multiple pages with no clipping.
+     - 80mm thermal paper is used for every bill.
      - "Print Per Product" tickets each force break-after-page.
    The screen preview stays untouched; this copy is hidden on screen.
    Do NOT merge this into visibility-based or absolute-positioned
@@ -205,6 +205,10 @@
    broke the previous implementation.
    ============================================================ */
 @media print {
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
   body > *:not(#print-root) {
     display: none !important;
   }
@@ -212,6 +216,9 @@
     display: block !important;
   }
   #print-root .bill-inner {
+    width: 72mm !important;
+    max-width: 72mm !important;
+    margin: 0 auto !important;
     box-shadow: none;
     border: none;
   }

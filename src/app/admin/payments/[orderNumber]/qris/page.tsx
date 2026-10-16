@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { orderService, type Order } from "@/services/order.service";
 import { KasirQrisScreen } from "@/components/admin/orders/kasir-qris-screen";
+import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
 
 const TYPE_META: Record<string, { label: string; Icon: typeof UtensilsCrossed }> = {
   DINE_IN: { label: "Dine In", Icon: UtensilsCrossed },
@@ -44,6 +45,7 @@ export default function AdminPaymentQrisPage({
 }) {
   const [orderNumber, setOrderNumber] = useState<string | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
+  const [autoPrintOrder, setAutoPrintOrder] = useState<Order | null>(null);
   const [loadState, setLoadState] = useState<
     "loading" | "loaded" | "not_found" | "error"
   >("loading");
@@ -173,9 +175,25 @@ export default function AdminPaymentQrisPage({
             amount={order.grandTotal}
             backHref="/admin/payments"
             backLabel="Kembali ke Payment Dashboard"
+            onPaid={async () => {
+              try {
+                const fresh = await orderService.getOrderByNumberScoped(order.orderNumber);
+                setOrder(fresh);
+                setAutoPrintOrder(fresh);
+              } catch (error) {
+                console.error("Failed to load paid order for automatic bill:", error);
+                setAutoPrintOrder({ ...order, paymentStatus: "PAID" });
+              }
+            }}
           />
         </CardContent>
       </Card>
+      <PrintBillDialog
+        order={autoPrintOrder}
+        open={!!autoPrintOrder}
+        autoPrint
+        onOpenChange={(open) => { if (!open) setAutoPrintOrder(null); }}
+      />
     </div>
   );
 }

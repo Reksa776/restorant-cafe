@@ -25,6 +25,8 @@ import {
   type NormalizedApiError,
 } from "@/lib/api-error-handler";
 import { notifyShiftNotOpen } from "@/lib/notify-shift";
+import { orderService, type Order } from "@/services/order.service";
+import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
 
 const statusColors: Record<string, string> = {
   UNPAID: "bg-gray-100 text-gray-800",
@@ -41,6 +43,7 @@ export default function PaymentsPage() {
   const [error, setError] = useState<NormalizedApiError | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [markingId, setMarkingId] = useState<string | null>(null);
+  const [autoPrintOrder, setAutoPrintOrder] = useState<Order | null>(null);
 
   const loadPayments = useCallback(async (silent = false) => {
     if (!silent) setIsLoading(true);
@@ -92,6 +95,13 @@ export default function PaymentsPage() {
     try {
       await paymentService.markCashierPaymentPaid(payment.id);
       toast.success("Pembayaran kasir berhasil ditandai lunas");
+      try {
+        const fresh = await orderService.getOrder(payment.orderId);
+        if (fresh.paymentStatus === "PAID") setAutoPrintOrder(fresh);
+      } catch (error) {
+        console.error("Failed to load paid order for automatic bill:", error);
+        toast.error("Pembayaran berhasil, tetapi bill otomatis gagal dimuat");
+      }
       await loadPayments(true);
     } catch (error) {
       console.error("Failed to mark cashier payment paid:", error);
@@ -279,6 +289,12 @@ export default function PaymentsPage() {
           )}
         </CardContent>
       </Card>
+      <PrintBillDialog
+        order={autoPrintOrder}
+        open={!!autoPrintOrder}
+        autoPrint
+        onOpenChange={(open) => { if (!open) setAutoPrintOrder(null); }}
+      />
     </div>
   );
 }
