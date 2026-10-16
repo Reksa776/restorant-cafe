@@ -623,6 +623,8 @@ export default function KasirManualOrderPage() {
   // Order details
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [customerId, setCustomerId] = useState<string | null>(null);
+  const [customerMatches, setCustomerMatches] = useState<Array<{ id: string; name?: string | null; phone?: string | null }>>([]);
   const [orderType, setOrderType] = useState<"DINE_IN" | "TAKEAWAY" | "DELIVERY">("DINE_IN");
   const [tableId, setTableId] = useState("");
   const [notes, setNotes] = useState("");
@@ -643,6 +645,20 @@ export default function KasirManualOrderPage() {
         : null;
 
   const workingBranchId = workingBranch?.id ?? null;
+
+  useEffect(() => {
+    const term = `${customerName.trim()} ${customerPhone.trim()}`.trim();
+    if (term.length < 2 || customerId) {
+      setCustomerMatches([]);
+      return;
+    }
+    const timer = setTimeout(() => {
+      customerService.searchForOrder(term)
+        .then(setCustomerMatches)
+        .catch(() => setCustomerMatches([]));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [customerName, customerPhone, customerId]);
 
   // ============================================================
   // Data loading — branch-scoped menu (reuses /api/public/menu so the kasir
@@ -908,10 +924,12 @@ export default function KasirManualOrderPage() {
     setSubmitting(true);
     try {
       // 1. Find-or-create the customer (restaurant from session, server-side).
-      const customer = await customerService.findOrCreateCustomer({
-        name: customerName.trim(),
-        phone: customerPhone.trim() || undefined,
-      });
+      const customer = customerId
+        ? { id: customerId }
+        : await customerService.findOrCreateCustomer({
+            name: customerName.trim(),
+            phone: customerPhone.trim() || undefined,
+          });
 
       // 2. Create the order — server validates products, branch stock,
       //    variants/addons and recomputes all prices.
@@ -1429,7 +1447,7 @@ export default function KasirManualOrderPage() {
               <Input
                 id="cust-name"
                 value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
+                onChange={(e) => { setCustomerName(e.target.value); setCustomerId(null); }}
                 placeholder="Nama pelanggan"
               />
             </div>
@@ -1438,11 +1456,32 @@ export default function KasirManualOrderPage() {
               <Input
                 id="cust-phone"
                 value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
+                onChange={(e) => { setCustomerPhone(e.target.value); setCustomerId(null); }}
                 placeholder="081234567890"
                 inputMode="tel"
               />
             </div>
+            {customerMatches.length > 0 && (
+              <div className="rounded-md border divide-y max-h-44 overflow-y-auto">
+                {customerMatches.map((customer) => (
+                  <button
+                    key={customer.id}
+                    type="button"
+                    className="block w-full px-3 py-2 text-left hover:bg-gray-50"
+                    onClick={() => {
+                      setCustomerId(customer.id);
+                      setCustomerName(customer.name || "");
+                      setCustomerPhone(customer.phone || "");
+                      setCustomerMatches([]);
+                    }}
+                  >
+                    <span className="block text-sm font-medium">{customer.name || "Tanpa nama"}</span>
+                    <span className="block text-xs text-gray-500">{customer.phone || "Tanpa nomor telepon"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {customerId && <p className="text-xs text-green-700">Pelanggan terdaftar dipilih.</p>}
           </div>
 
           {/* Order type + table */}

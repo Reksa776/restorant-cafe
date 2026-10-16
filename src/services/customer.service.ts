@@ -29,6 +29,11 @@ export interface CustomersResponse {
 }
 
 export const customerService = {
+  async searchForOrder(search: string): Promise<Pick<Customer, "id" | "name" | "phone">[]> {
+    const response = await api.get("/customers/search", { params: { search } });
+    return response.data.data;
+  },
+
   async getCustomers(params?: {
     page?: number;
     limit?: number;

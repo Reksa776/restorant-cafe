@@ -43,7 +43,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 
 /**
  * PUT /api/admin/branches/[id]/layout
- * ADMIN/CASHIER. Full-state replace of the branch floor plan with an
+ * CASHIER. Full-state replace of the branch floor plan with an
  * optimistic version lock (409 on conflict).
  *
  * The `[id]` segment (the branchId) comes from the URL; restaurantId is
@@ -60,7 +60,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
-    const ctx = await requireRoles(["ADMIN", "CASHIER"], id);
+    const ctx = await requireRoles(["CASHIER"], id);
 
     // Only guard against a non-JSON body here; every real field validation is
     // delegated to the service's Zod schema (no duplicated rules).

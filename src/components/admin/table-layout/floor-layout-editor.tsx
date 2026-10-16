@@ -73,6 +73,7 @@ interface FloorLayoutEditorProps {
   branchId: string;
   branchCode: string;
   branchName: string;
+  readOnly?: boolean;
 }
 
 /**
@@ -94,6 +95,7 @@ export function FloorLayoutEditor({
   branchId,
   branchCode,
   branchName,
+  readOnly = false,
 }: FloorLayoutEditorProps) {
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [draft, setDraft] = useState<DraftTableItem[]>([]);
@@ -401,7 +403,7 @@ export function FloorLayoutEditor({
 
   return (
     <div className="space-y-4">
-      <FloorLayoutToolbar
+      {!readOnly && <FloorLayoutToolbar
         dirty={dirty}
         isSaving={isSaving}
         onSave={handleSave}
@@ -410,7 +412,7 @@ export function FloorLayoutEditor({
         onCreateTable={() => setAddDialogOpen(true)}
         zoom={zoom}
         onZoomChange={setZoom}
-      />
+      />}
 
       {tables.length === 0 ? (
         <Card>
@@ -422,14 +424,15 @@ export function FloorLayoutEditor({
               Tambahkan meja terlebih dahulu. Setelah dibuat, meja muncul di
               panel &quot;Meja&quot; dan dapat ditempatkan di canvas.
             </p>
-            <Button onClick={() => setAddDialogOpen(true)}>
+            {!readOnly && <Button onClick={() => setAddDialogOpen(true)}>
               <Plus className="h-4 w-4 mr-1.5" />
               Tambah Meja
-            </Button>
+            </Button>}
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className={readOnly ? "max-w-5xl" : "grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]"}>
+          <div className={readOnly ? "pointer-events-none select-none" : undefined} aria-label={readOnly ? "Tampilan review layout" : undefined}>
           <FloorLayoutCanvas
             items={draft}
             inactiveItems={inactiveItems}
@@ -442,7 +445,8 @@ export function FloorLayoutEditor({
             onRotate={handleRotate}
             onUnplace={handleUnplace}
           />
-          <FloorLayoutSidebar
+          </div>
+          {!readOnly && <FloorLayoutSidebar
             activeItems={draft}
             inactiveItems={inactiveItems}
             tables={tablesMap}
@@ -452,17 +456,17 @@ export function FloorLayoutEditor({
             onUnplace={handleUnplace}
             onShapeChange={handleShapeChange}
             onRotate={handleRotate}
-          />
+          />}
         </div>
       )}
 
       {/* Tambah Meja — reuses existing table service (create only). */}
-      <CreateTableDialog
+      {!readOnly && <CreateTableDialog
         open={addDialogOpen}
         onOpenChange={setAddDialogOpen}
         pending={isCreatingTable}
         onSubmit={handleCreateTable}
-      />
+      />}
 
       {/* Reload with unsaved changes → confirm discard. */}
       <ConfirmDialog

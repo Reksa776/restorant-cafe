@@ -124,8 +124,8 @@ const navigation: NavEntry[] = [
       { name: "Stok Bahan Baku", href: "/admin/stock/ingredients", icon: Boxes, roles: ["ADMIN", "CASHIER"] },
       { name: "Stok Produk", href: "/admin/stock/products", icon: Package, roles: ["ADMIN", "CASHIER"] },
       { name: "Stock Movement", href: "/admin/inventory", icon: ClipboardList, roles: ["ADMIN", "CASHIER"] },
-      { name: "Pembelian", href: "/admin/purchasing/purchases", icon: Container, roles: ["ADMIN", "CASHIER"] },
-      { name: "Supplier", href: "/admin/purchasing/suppliers", icon: Truck, roles: ["ADMIN", "CASHIER"] },
+      { name: "Pembelian", href: "/admin/purchasing/purchases", icon: Container, roles: ["ADMIN"] },
+      { name: "Supplier", href: "/admin/purchasing/suppliers", icon: Truck, roles: ["ADMIN"] },
     ],
   },
   {
@@ -149,7 +149,7 @@ const navigation: NavEntry[] = [
     children: [
       { name: "Laporan Penjualan", href: "/admin/reports", icon: BarChart3, roles: ["ADMIN", "CASHIER"], exact: true },
       { name: "Best Selling", href: "/admin/reports/products", icon: TrendingUp, roles: ["ADMIN", "CASHIER"] },
-      { name: "Pembelian", href: "/admin/reports/purchases", icon: Container, roles: ["ADMIN", "CASHIER"] },
+      { name: "Pembelian", href: "/admin/reports/purchases", icon: Container, roles: ["ADMIN"] },
       { name: "Inventory", href: "/admin/reports/inventory", icon: ClipboardList, roles: ["ADMIN", "CASHIER"] },
       { name: "Pembayaran", href: "/admin/reports/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
       { name: "Per Shift", href: "/admin/reports/shift-sales", icon: Clock, roles: ["ADMIN", "CASHIER"] },

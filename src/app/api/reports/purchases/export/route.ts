@@ -9,7 +9,7 @@ import { buildCsv } from "@/lib/csv";
 import { errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import {
-  requireRoles,
+  requireAdmin,
   branchHintFrom,
   authorizedBranches,
 } from "@/lib/auth-helpers";
@@ -19,7 +19,7 @@ import {
 //   ?period=...&startDate=...&endDate=...
 //   &branchId=<id>&supplierId=<id>&status=DRAFT|RECEIVED|CANCELLED
 //
-// Purchase report CSV download — ADMIN or CASHIER (read-only report, matches
+// Purchase report CSV download — ADMIN only (matches
 // the purchase report GET semantics). Uses the SAME filters as the UI. UTF-8
 // BOM + CRLF + RFC 4180 escaping via the shared CSV helper (formula-injection
 // guarded). Bounded to the 5000 most recent purchases in range. Never exports
@@ -31,10 +31,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const branchIdParam = searchParams.get("branchId") || undefined;
-    const ctx = await requireRoles(
-      ["ADMIN", "CASHIER"],
-      branchIdParam || branchHintFrom(request)
-    );
+    const ctx = await requireAdmin(branchIdParam || branchHintFrom(request));
 
     const periodRaw = searchParams.get("period") || "today";
     const period = REPORT_PERIODS.includes(periodRaw as ReportPeriod)

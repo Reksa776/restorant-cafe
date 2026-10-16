@@ -6,7 +6,6 @@ import {
 } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import {
-  requireRoles,
   requireAdmin,
   branchHintFrom,
   authorizedBranches,
@@ -25,13 +24,13 @@ function jsonBody(request: NextRequest) {
 }
 
 /**
- * GET /api/admin/purchases — ADMIN + KASIR (read-only, D3), branch-scoped.
+ * GET /api/admin/purchases — ADMIN only, branch-scoped.
  * POST /api/admin/purchases — ADMIN only; creates a DRAFT purchase.
  */
 export async function GET(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
+    const ctx = await requireAdmin(branchId);
     const params = request.nextUrl.searchParams;
 
     // A client-supplied branch filter must be authorized, never trusted.

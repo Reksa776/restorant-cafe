@@ -25,6 +25,8 @@ export interface Order {
   orderNumber: string;
   status: string;
   paymentStatus: string;
+  /** Server-derived refund state for operational queues such as the kitchen. */
+  fullyRefunded?: boolean;
   orderType: string;
   subtotal: string;
   discount: string;

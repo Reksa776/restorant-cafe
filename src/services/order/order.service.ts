@@ -1398,7 +1398,10 @@ export class OrderService {
               createdAt: true,
             },
             orderBy: { createdAt: "desc" },
-            take: 3,
+          },
+          refunds: {
+            where: { status: "APPROVED" },
+            select: { amount: true },
           },
         },
         orderBy: { createdAt: "desc" },
@@ -1409,7 +1412,17 @@ export class OrderService {
     ]);
 
     return {
-      items: orders,
+      items: orders.map((order) => {
+        const collected = order.payments
+          .filter((payment) => payment.status === "PAID" || payment.status === "REFUNDED")
+          .reduce((sum, payment) => sum + Number(payment.amount), 0);
+        const refunded = order.refunds.reduce((sum, refund) => sum + Number(refund.amount), 0);
+        return {
+          ...order,
+          fullyRefunded:
+            collected > MONEY_EPSILON && refunded >= collected - MONEY_EPSILON,
+        };
+      }),
       total,
       page,
       limit,
@@ -1689,19 +1702,15 @@ export class OrderService {
         }
       }
 
-      // H3.6 — an APPROVED refund means the money was already returned for
-      // this order, so it must NOT be completed (which would consume stock and
-      // freeze COGS for a sale that no longer exists). Read INSIDE this same
-      // transaction so a concurrent refund approval cannot slip through; the
-      // throw rolls back the status flip and every side effect below.
+      // A fully refunded order must not be completed (which would consume
+      // stock and freeze COGS for a sale that no longer exists). Partial
+      // refunds can still complete the remaining order. Read INSIDE this same
+      // transaction so a concurrent refund approval cannot slip through.
       if (order.status !== "COMPLETED" && input.status === "COMPLETED") {
-        const approvedRefund = await tx.refund.findFirst({
-          where: { orderId: id, status: "APPROVED" },
-          select: { id: true },
-        });
-        if (approvedRefund) {
+        const netCollected = await computeNetCollected(tx, id);
+        if (netCollected <= MONEY_EPSILON) {
           throw new ConflictError(
-            "Order memiliki refund yang sudah disetujui dan tidak dapat diselesaikan."
+            "Order sudah direfund penuh dan tidak dapat diselesaikan."
           );
         }
       }

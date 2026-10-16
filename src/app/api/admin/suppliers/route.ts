@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { successResponse, createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
-import { requireRoles, requireAdmin } from "@/lib/auth-helpers";
+import { requireAdmin } from "@/lib/auth-helpers";
 import {
   listSuppliers,
   createSupplier,
@@ -17,7 +17,7 @@ function jsonBody(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    const ctx = await requireRoles(["ADMIN", "CASHIER"]);
+    const ctx = await requireAdmin();
     const params = request.nextUrl.searchParams;
     const result = await listSuppliers(ctx.restaurantId, {
       search: params.get("search") ?? undefined,

@@ -8,7 +8,7 @@ import {
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import {
-  requireRoles,
+  requireAdmin,
   branchHintFrom,
   authorizedBranches,
 } from "@/lib/auth-helpers";
@@ -20,7 +20,7 @@ import {
 //   &page=1&limit=50
 //
 // Purchase report (purchase value / quantity / status — NEVER COGS/profit).
-// ADMIN or CASHIER, restaurant-scoped (restaurantId from the session — never
+// ADMIN only, restaurant-scoped (restaurantId from the session — never
 // from the query string). Branch is resolved server-side: an explicit
 // branchId param is validated against the user's assignments. DRAFT is never
 // counted as received stock; only RECEIVED goods entered inventory.
@@ -31,10 +31,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const branchIdParam = searchParams.get("branchId") || undefined;
-    const ctx = await requireRoles(
-      ["ADMIN", "CASHIER"],
-      branchIdParam || branchHintFrom(request)
-    );
+    const ctx = await requireAdmin(branchIdParam || branchHintFrom(request));
 
     const periodRaw = searchParams.get("period") || "today";
     const period = REPORT_PERIODS.includes(periodRaw as ReportPeriod)

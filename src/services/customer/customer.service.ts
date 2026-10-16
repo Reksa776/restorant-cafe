@@ -22,6 +22,24 @@ const CUSTOMER_PUBLIC_SELECT = {
 } as const;
 
 export class CustomerService {
+  /** Small POS-only lookup; never exposes CRM metrics or account fields. */
+  async searchForOrder(restaurantId: string, search: string, branchFilters?: string[] | null) {
+    const term = search.trim();
+    if (term.length < 2) return [];
+    const rows = await prisma.customer.findMany({
+      where: {
+        restaurantId,
+        isActive: true,
+        ...(branchFilters?.length ? { orders: { some: { branchId: { in: branchFilters } } } } : {}),
+        OR: [{ name: { contains: term } }, { phone: { contains: term } }],
+      },
+      select: { id: true, name: true, phone: true },
+      orderBy: { updatedAt: "desc" },
+      take: 8,
+    });
+    return rows;
+  }
+
   async getCustomers(
     restaurantId: string,
     params?: {

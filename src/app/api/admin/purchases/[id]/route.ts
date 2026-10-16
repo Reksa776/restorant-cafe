@@ -2,7 +2,6 @@ import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import {
-  requireRoles,
   requireAdmin,
   branchHintFrom,
   authorizedBranches,
@@ -17,14 +16,14 @@ import {
 type Params = { params: Promise<{ id: string }> };
 
 /**
- * GET /api/admin/purchases/[id] — ADMIN + KASIR (read-only, D3),
+ * GET /api/admin/purchases/[id] — ADMIN only,
  * branch-scoped.
  * PATCH /api/admin/purchases/[id] — ADMIN only, DRAFT purchases only (STEP 4).
  */
 export async function GET(request: NextRequest, { params }: Params) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
+    const ctx = await requireAdmin(branchId);
     const { id } = await params;
 
     const purchase = await getPurchase(

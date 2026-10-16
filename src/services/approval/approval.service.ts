@@ -419,6 +419,7 @@ export class ApprovalService {
       );
     }
 
+    let orderCancelledByRefund = false;
     const decided = await prisma.$transaction(async (tx) => {
       const status: RequestStatus = input.approve ? "APPROVED" : "REJECTED";
       // H2 (G8) — GUARDED transition: only ONE request may move this refund
@@ -561,6 +562,39 @@ export class ApprovalService {
             });
           }
         }
+
+        // A fully refunded active order is operationally cancelled so it
+        // cannot remain stranded in the kitchen queue. Partial refunds leave
+        // the order active and the remaining items can still be completed.
+        if (totalPaid > MONEY_EPSILON && netPaid <= MONEY_EPSILON) {
+          const activeOrder = await tx.order.findUnique({
+            where: { id: refund.orderId },
+            select: { status: true, tableId: true },
+          });
+          if (activeOrder && activeOrder.status !== "COMPLETED" && activeOrder.status !== "CANCELLED") {
+            const cancelled = await tx.order.updateMany({
+              where: { id: refund.orderId, status: activeOrder.status },
+              data: { status: "CANCELLED" },
+            });
+            if (cancelled.count) {
+              orderCancelledByRefund = true;
+              await tx.orderStatusHistory.create({
+                data: {
+                  orderId: refund.orderId,
+                  status: "CANCELLED",
+                  notes: "Refund disetujui penuh oleh admin",
+                  changedBy: input.adminId,
+                },
+              });
+              if (activeOrder.tableId) {
+                await tx.table.update({
+                  where: { id: activeOrder.tableId },
+                  data: { status: "AVAILABLE" },
+                });
+              }
+            }
+          }
+        }
       }
 
       const updated = await tx.refund.findUnique({ where: { id: refund.id } });
@@ -587,6 +621,14 @@ export class ApprovalService {
       REALTIME_EVENT_TYPES.DASHBOARD_UPDATED,
       refund.orderId
     );
+    if (orderCancelledByRefund) {
+      emitRealtime(
+        input.restaurantId,
+        REALTIME_EVENT_TYPES.ORDER_STATUS_CHANGED,
+        refund.orderId,
+        { orderId: refund.orderId, status: "CANCELLED", reason: "REFUND_APPROVED" }
+      );
+    }
 
     await auditService.log({
       restaurantId: input.restaurantId,

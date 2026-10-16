@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Building2, Loader2 } from "lucide-react";
 import { useBranchContext } from "@/hooks/use-branch-context";
+import { useUserRole } from "@/hooks/use-user-role";
 import { FloorLayoutEditor } from "@/components/admin/table-layout/floor-layout-editor";
 
 /**
@@ -16,6 +17,8 @@ import { FloorLayoutEditor } from "@/components/admin/table-layout/floor-layout-
  */
 export default function TableLayoutPage() {
   const { branches, branchId, isLoading: branchCtxLoading } = useBranchContext();
+  const { role } = useUserRole();
+  const isAdminReview = role === "ADMIN";
 
   const effectiveBranch = useMemo(() => {
     if (branchId) return branches.find((branch) => branch.id === branchId) ?? null;
@@ -29,8 +32,9 @@ export default function TableLayoutPage() {
       <div>
         <h1 className="text-3xl font-bold">Layout Cafe</h1>
         <p className="text-gray-500">
-          Susun meja secara visual di canvas. Meja tetap dikelola lewat halaman
-          Meja.
+          {isAdminReview
+            ? "Review layout meja per cabang. Perubahan layout dilakukan kasir di lokasi cabang."
+            : "Susun meja secara visual di canvas. Meja tetap dikelola lewat halaman Meja."}
         </p>
       </div>
 
@@ -59,6 +63,7 @@ export default function TableLayoutPage() {
           branchId={effectiveBranch.id}
           branchCode={effectiveBranch.code}
           branchName={effectiveBranch.name}
+          readOnly={isAdminReview}
         />
       )}
     </div>

@@ -148,7 +148,9 @@ export default function StockPage({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-3xl font-bold">Stok</h1>
-          <p className="text-gray-500">Kelola stok produk dan bahan baku per cabang</p>
+          <p className="text-gray-500">
+            Stok produk menu bisa langsung disesuaikan kasir dengan alasan wajib, tanpa menunggu approval admin. Stok bahan baku tetap dikelola admin.
+          </p>
         </div>
         {workingBranch && (
           <Badge className="inline-flex w-fit items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200">
@@ -175,7 +177,7 @@ export default function StockPage({
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle className="text-base">Daftar Stok</CardTitle>
+              <CardTitle className="text-base">Stok Produk Menu</CardTitle>
               {!canEditProductStock && (
                 <Badge variant="outline" className="gap-1 text-gray-500">
                   <Lock className="h-3 w-3" />

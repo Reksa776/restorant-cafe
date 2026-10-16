@@ -44,7 +44,7 @@ export default function KitchenPage() {
 
       // Client-side filter: only show orders relevant to the kitchen.
       const active = result.items.filter((o) =>
-        KDS_STATUSES.includes(o.status)
+        KDS_STATUSES.includes(o.status) && !o.fullyRefunded
       );
       setOrders(active);
     } catch (err) {
@@ -70,6 +70,7 @@ export default function KitchenPage() {
       REALTIME_EVENT_TYPES.ORDER_CREATED,
       REALTIME_EVENT_TYPES.ORDER_STATUS_CHANGED,
       REALTIME_EVENT_TYPES.ORDER_UPDATED,
+      REALTIME_EVENT_TYPES.REFUND_DECIDED,
       REALTIME_EVENT_TYPES.OFFLINE_POLL,
     ],
     () => {
