@@ -11,12 +11,52 @@ import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { auditService } from "@/services/audit/audit.service";
 import { IpaymuProvider } from "./providers/ipaymu/ipaymu.provider";
 import type { PaymentProvider } from "./payment.types";
+import {
+  RESERVATION_PAYMENT_HOLD_MINUTES,
+} from "@/services/reservation/reservation.slots";
 
 export class PaymentService {
   private provider: PaymentProvider;
 
   constructor() {
     this.provider = new IpaymuProvider();
+  }
+
+  /**
+   * A public reservation's unpaid preorder only holds its slot temporarily.
+   * Expire it before accepting cashier cash/QRIS after the hold window, so a
+   * late payment cannot confirm a table that may already have been rebooked.
+   */
+  private async assertReservationPaymentWindow(
+    orderId: string,
+    restaurantId: string
+  ): Promise<void> {
+    const reservation = await prisma.reservation.findFirst({
+      where: { orderId, restaurantId, source: "PUBLIC", status: "PENDING" },
+      select: { id: true, createdAt: true },
+    });
+    if (
+      !reservation ||
+      Date.now() - reservation.createdAt.getTime() <=
+        RESERVATION_PAYMENT_HOLD_MINUTES * 60_000
+    ) {
+      return;
+    }
+
+    const { reservationService } = await import(
+      "@/services/reservation/reservation.service"
+    );
+    try {
+      await reservationService.cancelReservation(reservation.id, restaurantId, {
+        cancelReason: "Pembayaran tidak diselesaikan dalam batas waktu",
+      });
+    } catch {
+      // The reservation may have changed concurrently. The cashier still
+      // must not collect against this stale pending booking.
+    }
+    throw new ConflictError(
+      `Waktu pembayaran reservasi habis (${RESERVATION_PAYMENT_HOLD_MINUTES} menit). Buat reservasi baru.`
+    );
   }
 
   /**
@@ -636,6 +676,8 @@ customer: { select: { id: true, name: true, phone: true } },
       throw new NotFoundError("Pembayaran kasir tidak ditemukan");
     }
 
+    await this.assertReservationPaymentWindow(payment.orderId, restaurantId);
+
     const amountDue = Math.round(Number(payment.amount) * 100) / 100;
     const isFormPayment = options?.amountReceived !== undefined;
     const amountReceived =
@@ -762,6 +804,19 @@ customer: { select: { id: true, name: true, phone: true } },
         data: { paymentStatus: "PAID" },
       });
 
+      // Cashier-collected payments (cash or cashier QRIS fallback) must
+      // confirm an attached public reservation in the same transaction, just
+      // like a successful payment webhook.
+      const { reservationService } = await import(
+        "@/services/reservation/reservation.service"
+      );
+      const confirmedReservationId =
+        await reservationService.confirmFromPaidOrderInTransaction(
+          tx,
+          payment.orderId,
+          restaurantId
+        );
+
       // Cash in hand → kitchen may start (form completion or QRIS fallback).
       let orderAdvanced = false;
       if (
@@ -805,7 +860,12 @@ customer: { select: { id: true, name: true, phone: true } },
         },
       });
 
-      return { alreadyPaid: false, orderAdvanced, shiftId };
+      return {
+        alreadyPaid: false,
+        orderAdvanced,
+        shiftId,
+        confirmedReservationId,
+      };
     });
 
     // Centralized audit trail (best-effort, after the write commits).
@@ -875,6 +935,16 @@ customer: { select: { id: true, name: true, phone: true } },
         REALTIME_EVENT_TYPES.DASHBOARD_UPDATED,
         payment.orderId
       );
+
+      if (result.confirmedReservationId) {
+        const { reservationService } = await import(
+          "@/services/reservation/reservation.service"
+        );
+        await reservationService.notifyReservationConfirmedFromPayment(
+          result.confirmedReservationId,
+          restaurantId
+        );
+      }
 
       // The order advanced to PROCESSING (switched-QRIS fallback collected).
       if (result.orderAdvanced) {
@@ -1294,6 +1364,8 @@ customer: { select: { id: true, name: true, phone: true } },
     if (!order) {
       throw new NotFoundError("Order not found");
     }
+
+    await this.assertReservationPaymentWindow(order.id, restaurantId);
 
     // Already paid orders cannot create new payments
     if (

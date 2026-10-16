@@ -69,6 +69,7 @@ import {
 } from "./reservation-flow";
 import type {
   ReservationPurchaseLine,
+  ReservationPaymentMethod,
   ReservationWizardStep,
 } from "./reservation-flow";
 import { ReservationProductPicker } from "@/components/customer/reservation/reservation-product-picker";
@@ -313,6 +314,7 @@ export default function ReservationPage() {
   const [guestName, setGuestName] = useState("");
   const [guestPhone, setGuestPhone] = useState("");
   const [notes, setNotes] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState<ReservationPaymentMethod>("QRIS");
   const [guestTried, setGuestTried] = useState(false);
 
   // ---- Pembelian — LOCAL wizard cart (never the global useCart/localStorage)
@@ -807,7 +809,7 @@ export default function ReservationPage() {
       return;
     }
     if (purchaseLines.length === 0) {
-      toast.error("Pilih minimal 1 produk dan bayar dengan QRIS untuk mengamankan reservasi.");
+      toast.error("Pilih minimal 1 produk dan metode pembayaran untuk mengamankan reservasi.");
       setStep("purchase");
       return;
     }
@@ -825,9 +827,9 @@ export default function ReservationPage() {
       guestPhone: guestPhone.trim(),
       notes: notes.trim() || undefined,
     };
-    // Public reservation requires a nonzero preorder and QRIS payment.
+    // Public reservation requires a nonzero preorder and a payment intent.
     payload.items = toReservationOrderItems(purchaseLines);
-    payload.paymentMethod = "QRIS";
+    payload.paymentMethod = paymentMethod;
     if (effectiveRestaurantId) payload.restaurantId = effectiveRestaurantId;
 
     try {
@@ -1647,12 +1649,28 @@ export default function ReservationPage() {
             <p className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
               Pembayaran
             </p>
-            <div className="rounded-xl border border-brand-primary/30 bg-brand-primary/5 p-3 text-sm font-semibold text-brand-primary">
-              QRIS — reservasi dikonfirmasi setelah pembayaran berhasil.
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setPaymentMethod("QRIS")}
+                aria-pressed={paymentMethod === "QRIS"}
+                className={`rounded-xl border p-3 text-left transition-colors ${paymentMethod === "QRIS" ? "border-brand-primary bg-brand-primary/5 ring-1 ring-brand-primary" : "border-gray-200 hover:border-gray-300"}`}
+              >
+                <span className="block text-sm font-semibold">QRIS sekarang</span>
+                <span className="mt-1 block text-xs font-normal text-gray-500">Bayar online setelah reservasi dibuat.</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentMethod("KASIR")}
+                aria-pressed={paymentMethod === "KASIR"}
+                className={`rounded-xl border p-3 text-left transition-colors ${paymentMethod === "KASIR" ? "border-brand-primary bg-brand-primary/5 ring-1 ring-brand-primary" : "border-gray-200 hover:border-gray-300"}`}
+              >
+                <span className="block text-sm font-semibold">Bayar di Kasir</span>
+                <span className="mt-1 block text-xs font-normal text-gray-500">Kasir bisa menerima tunai atau QRIS.</span>
+              </button>
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              Pilih minimal satu produk dan selesaikan pembayaran QRIS untuk
-              mengamankan reservasi. Booking yang belum dibayar belum terkonfirmasi.
+              Reservasi baru terkonfirmasi setelah pembayaran berhasil. Jika pilih bayar di kasir, tunjukkan QR reservasi dan nomor pesanan ke kasir dalam 15 menit agar slot tidak kedaluwarsa.
             </p>
           </div>
 
@@ -1819,14 +1837,16 @@ export default function ReservationPage() {
                   </span>
                 </DetailRow>
               </dl>
-              {/* Online reservations are secured through QRIS payment. */}
+              {/* Cashier payment is completed by staff against this order. */}
               {created.order.paymentStatus !== "PAID" &&
                 created.order.status !== "CANCELLED" && (
                   <Link
                     href={`/reservasi/${created.code}/payment`}
                     className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary text-brand-primary-foreground py-3 px-4 font-semibold hover:bg-brand-primary/90 transition-colors"
                   >
-                    Bayar Sekarang dengan QRIS
+                    {created.order.paymentMethod === "KASIR"
+                      ? "Lihat cara bayar di kasir"
+                      : "Bayar Sekarang dengan QRIS"}
                   </Link>
                 )}
             </div>

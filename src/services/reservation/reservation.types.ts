@@ -135,13 +135,13 @@ export const CreatePublicReservationSchema = z.object({
   guestName: GuestNameSchema,
   guestPhone: GuestPhoneSchema,
   notes: NotesSchema.optional().nullable(),
-  /** A reservation must include at least one paid preorder item to deter fake bookings. */
+  /** A reservation must include at least one preorder item to deter fake bookings. */
   items: z.array(OrderItemInputSchema).min(1, "Pilih minimal 1 produk untuk mengamankan reservasi"),
   /**
-   * Reservation prepayment is QRIS-only. The reservation is confirmed by the
-   * existing payment webhook only after the order is successfully paid.
+   * QRIS can be paid immediately; KASIR records an unpaid cashier intent and
+   * the reservation is confirmed only after cashier payment succeeds.
    */
-  paymentMethod: z.literal("QRIS").default("QRIS"),
+  paymentMethod: z.enum(["QRIS", "KASIR"]).default("QRIS"),
   /** Literal: a public request can never claim to be an ADMIN booking. */
   source: z.literal("PUBLIC").default("PUBLIC"),
 });

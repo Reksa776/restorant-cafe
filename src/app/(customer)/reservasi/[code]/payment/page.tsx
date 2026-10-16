@@ -343,6 +343,7 @@ export default function ReservationPaymentPage({
   }, [phoneInput, code, restaurantId]);
 
   const order = details?.order ?? null;
+  const cashierIntent = data?.payment?.method === "KASIR" || order?.paymentMethod === "KASIR";
   const amount = useMemo(
     () => data?.payment?.amount ?? data?.grandTotal ?? order?.grandTotal ?? null,
     [data?.payment?.amount, data?.grandTotal, order?.grandTotal]
@@ -625,10 +626,12 @@ export default function ReservationPaymentPage({
                       </div>
                       <div>
                         <h2 className="text-lg font-bold text-gray-900">
-                          Pembayaran Belum Dibuat
+                          {cashierIntent ? "Pembayaran di Kasir" : "Pembayaran Belum Dibuat"}
                         </h2>
                         <p className="text-sm text-gray-500 mt-1">
-                          Tuntaskan pembayaran reservasi Anda dengan QRIS.
+                          {cashierIntent
+                            ? "Tunjukkan QR reservasi dan nomor pesanan kepada kasir. Kasir dapat memproses tunai atau membuat QRIS kasir. Reservasi terkonfirmasi setelah pembayaran berhasil."
+                            : "Tuntaskan pembayaran reservasi Anda dengan QRIS."}
                         </p>
                       </div>
                       {amount != null && (
@@ -639,19 +642,21 @@ export default function ReservationPaymentPage({
                           </span>
                         </p>
                       )}
-                      <button
-                        type="button"
-                        onClick={createPayment}
-                        disabled={busy !== "idle"}
-                        className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary text-brand-primary-foreground py-3 px-4 font-semibold hover:bg-brand-primary/90 transition-colors disabled:opacity-50"
-                      >
-                        {busy === "creating" ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <QrCode className="h-4 w-4" />
-                        )}
-                        Bayar dengan QRIS
-                      </button>
+                      {!cashierIntent && (
+                        <button
+                          type="button"
+                          onClick={createPayment}
+                          disabled={busy !== "idle"}
+                          className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary text-brand-primary-foreground py-3 px-4 font-semibold hover:bg-brand-primary/90 transition-colors disabled:opacity-50"
+                        >
+                          {busy === "creating" ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <QrCode className="h-4 w-4" />
+                          )}
+                          Bayar dengan QRIS
+                        </button>
+                      )}
                     </div>
                   )}
 
