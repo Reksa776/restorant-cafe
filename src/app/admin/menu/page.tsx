@@ -959,7 +959,7 @@ export default function MenuPage() {
 
       {/* Product Dialog — Info + Komposisi (recipe/BOM, F.3) tabs when editing */}
       <Dialog open={isProductDialogOpen} onOpenChange={(open) => { setIsProductDialogOpen(open); if (!open) resetRecipeState(); }}>
-        <DialogContent className={editingProduct ? "sm:max-w-2xl" : "sm:max-w-md"}>
+        <DialogContent className={editingProduct ? "max-h-[90dvh] overflow-y-auto sm:max-w-2xl" : "max-h-[90dvh] overflow-y-auto sm:max-w-md"}>
           <DialogHeader>
             <DialogTitle>{editingProduct ? "Edit Produk" : "Tambah Produk"}</DialogTitle>
             <DialogDescription>{editingProduct ? "Ubah informasi produk" : "Tambahkan produk baru"}</DialogDescription>
@@ -1016,8 +1016,8 @@ export default function MenuPage() {
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    <div className="grid grid-cols-[1fr_100px_100px_36px] gap-2 text-xs font-medium text-gray-500">
-                      <span>Ingredient</span>
+                    <div className="grid grid-cols-[minmax(0,1fr)_64px_64px_32px] gap-2 text-xs font-medium text-gray-500 sm:grid-cols-[minmax(0,1fr)_100px_100px_36px]">
+                      <span>Bahan Baku</span>
                       <span>Qty</span>
                       <span>Unit</span>
                       <span />
@@ -1028,7 +1028,7 @@ export default function MenuPage() {
                       );
                       const selected = recipeIngredients.find((i) => i.id === row.ingredientId);
                       return (
-                        <div key={row.key} className="grid grid-cols-[1fr_100px_100px_36px] items-center gap-2">
+                        <div key={row.key} className="grid grid-cols-[minmax(0,1fr)_64px_64px_32px] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_100px_100px_36px]">
                           <Select
                             value={row.ingredientId || "__none__"}
                             onValueChange={(v) => {
@@ -1038,7 +1038,7 @@ export default function MenuPage() {
                             }}
                           >
                             <SelectTrigger>
-                              <SelectValue placeholder="Pilih bahan" />
+                              <SelectValue placeholder="Pilih bahan">{selected?.name ?? "Pilih bahan"}</SelectValue>
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="__none__">Pilih bahan...</SelectItem>
@@ -1066,7 +1066,7 @@ export default function MenuPage() {
                               {selected ? compatibleIngredientUnits(selected.baseUnit).map((unit) => <SelectItem key={unit} value={unit}>{unit}</SelectItem>) : <SelectItem value="__none__">—</SelectItem>}
                             </SelectContent>
                           </Select>
-                          <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={() => removeRecipeRow(row.key)}>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0 sm:h-9 sm:w-9" onClick={() => removeRecipeRow(row.key)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
                         </div>
@@ -1315,7 +1315,7 @@ export default function MenuPage() {
               </p>
             ) : (
               <div className="space-y-2">
-                <div className="grid grid-cols-[1fr_100px_80px_36px] gap-2 text-xs font-medium text-gray-500">
+                <div className="grid grid-cols-[minmax(0,1fr)_64px_64px_32px] gap-2 text-xs font-medium text-gray-500 sm:grid-cols-[minmax(0,1fr)_100px_80px_36px]">
                   <span>Bahan Baku</span>
                   <span>Qty / unit</span>
                   <span>Satuan</span>
@@ -1329,7 +1329,7 @@ export default function MenuPage() {
                   return (
                     <div
                       key={row.key}
-                      className="grid grid-cols-[1fr_100px_80px_36px] items-center gap-2"
+                      className="grid grid-cols-[minmax(0,1fr)_64px_64px_32px] items-center gap-2 sm:grid-cols-[minmax(0,1fr)_100px_80px_36px]"
                     >
                       <Select
                         value={row.ingredientId || "__none__"}
@@ -1340,7 +1340,7 @@ export default function MenuPage() {
                         }}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder="Pilih bahan" />
+                          <SelectValue placeholder="Pilih bahan">{selected?.name ?? "Pilih bahan"}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__none__">Pilih bahan...</SelectItem>

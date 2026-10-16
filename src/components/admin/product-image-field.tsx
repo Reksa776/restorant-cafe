@@ -194,7 +194,7 @@ export function ProductImageField({
       {/* Preview */}
       <div
         className={cn(
-          "relative w-full aspect-[4/3] overflow-hidden rounded-lg border bg-gray-50 flex items-center justify-center",
+          "relative mx-auto h-36 w-full max-w-xs overflow-hidden rounded-lg border bg-gray-50 flex items-center justify-center sm:h-40",
           dragging && "border-blue-400 bg-blue-50"
         )}
         onDragOver={(e) => {
@@ -211,7 +211,7 @@ export function ProductImageField({
           <img
             src={previewUrl}
             alt="Preview gambar produk"
-            className="w-full h-full object-cover"
+            className="h-full w-full object-contain"
             onError={() => setBroken(true)}
           />
         ) : (
