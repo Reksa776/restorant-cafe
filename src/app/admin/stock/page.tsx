@@ -29,8 +29,9 @@ import { toast } from "sonner";
  * Server re-validates authorization on every read/write, so a forged
  * branchId or x-branch-id never exposes/edits another branch.
  *
- * D3: stok hanya bisa diubah ADMIN (penyesuaian manual tercatat sebagai
- * StockMovement ADJUSTMENT dengan alasan wajib). KASIR hanya membaca.
+ * Product stock can be adjusted by ADMIN and CASHIER (each adjustment is
+ * recorded as a StockMovement ADJUSTMENT with a required reason). Ingredient
+ * stock and HPP settings remain ADMIN-only.
  */
 export default function StockPage({
   initialTab = "products",
@@ -42,6 +43,7 @@ export default function StockPage({
   const { branchId, branches, isLoading: ctxLoading } = useBranchContext();
   const { role, isLoading: roleLoading } = useUserRole();
   const isAdmin = role === "ADMIN";
+  const canEditProductStock = role === "ADMIN" || role === "CASHIER";
 
   const [items, setItems] = useState<BranchProductRow[]>([]);
   const [drafts, setDrafts] = useState<Record<string, number>>({});
@@ -174,7 +176,7 @@ export default function StockPage({
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">Daftar Stok</CardTitle>
-              {!isAdmin && (
+              {!canEditProductStock && (
                 <Badge variant="outline" className="gap-1 text-gray-500">
                   <Lock className="h-3 w-3" />
                   Hanya baca
@@ -209,7 +211,7 @@ export default function StockPage({
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      {isAdmin ? (
+                      {canEditProductStock ? (
                         <>
                           <Button
                             variant="outline"
@@ -261,7 +263,7 @@ export default function StockPage({
                         </span>
                       )}
                     </div>
-                    {isAdmin && isDirty(p) && (
+                    {canEditProductStock && isDirty(p) && (
                       <Input
                         type="text"
                         value={reasons[p.productId] ?? ""}

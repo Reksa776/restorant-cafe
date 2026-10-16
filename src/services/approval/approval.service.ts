@@ -531,7 +531,7 @@ export class ApprovalService {
         // H5 — STOCK RESTORE on refund approval.
         // Restore product + ingredient stock for the refunded quantities.
         // Only when: (a) the order has a branchId (stock was deducted at
-        // COMPLETED time), (b) the order was COMPLETED (stock was actually
+        // READY time), (b) the order reached READY/COMPLETED (stock was actually
         // consumed), and (c) the refund has quantity-based allocations.
         // Idempotency: the guarded PENDING→APPROVED transition above
         // guarantees this block runs exactly once per refund.
@@ -542,7 +542,11 @@ export class ApprovalService {
             where: { id: refund.orderId },
             select: { id: true, branchId: true, status: true, restaurantId: true },
           });
-          if (fullOrder && fullOrder.branchId && fullOrder.status === "COMPLETED") {
+          if (
+            fullOrder &&
+            fullOrder.branchId &&
+            ["READY", "COMPLETED"].includes(fullOrder.status)
+          ) {
             await this.restoreStockForRefund(tx, {
               restaurantId: input.restaurantId,
               branchId: fullOrder.branchId,
@@ -793,13 +797,13 @@ export class ApprovalService {
           data: { status: "FAILED" },
         });
 
-        // H5 — STOCK RESTORE on cancellation of a COMPLETED order.
+        // H5 — STOCK RESTORE on cancellation after the order reached READY.
         // Restore product + ingredient stock for ALL order items.
-        // Only when the order was COMPLETED (stock was actually consumed).
-        // Non-COMPLETED orders never had stock deducted, so nothing to restore.
+        // Only when the order reached READY/COMPLETED (stock was consumed).
+        // Orders cancelled before READY never had product stock deducted.
         // Idempotency: the guarded PENDING→APPROVED transition above
         // guarantees this block runs exactly once per cancellation.
-        if (order.status === "COMPLETED" && order.branchId) {
+        if (["READY", "COMPLETED"].includes(order.status) && order.branchId) {
           await this.restoreStockForCancellation(tx, {
             restaurantId: input.restaurantId,
             branchId: order.branchId,
@@ -979,10 +983,10 @@ export class ApprovalService {
   }
 
   /**
-   * H5 — Restore product + ingredient stock for a cancelled COMPLETED order.
+   * H5 — Restore product + ingredient stock for an order cancelled after READY.
    *
    * Called inside the decideCancellation transaction. Restores ALL order
-   * items' stock (the full order was consumed at COMPLETED time).
+   * items' product stock (the full order was consumed at READY time).
    *
    * Idempotency: guaranteed by the guarded PENDING→APPROVED transition.
    */

@@ -1752,17 +1752,36 @@ export class OrderService {
         },
       });
 
-      // Stock deduction on COMPLETED — only when transitioning FROM a
-      // non-COMPLETED status (idempotency: COMPLETED→COMPLETED is a no-op).
+      // Product stock deduction on READY — only on the real
+      // PROCESSING→READY transition. For orders already READY when this
+      // behavior is deployed, retain the former COMPLETED-time deduction as
+      // a one-time fallback when no ORDER_READY movement exists.
       // Uses atomic conditional UPDATE to prevent negative stock under
       // concurrent access. The order must have a branchId for
       // BranchProduct to be resolved; legacy orders without a branch
       // skip stock deduction (no branch to deduct from).
+      let legacyReadyNeedsStockDeduction = false;
       if (
-        order.status !== "COMPLETED" &&
+        order.status === "READY" &&
         input.status === "COMPLETED" &&
         order.branchId
       ) {
+        const readyMovement = await tx.stockMovement.findFirst({
+          where: {
+            restaurantId,
+            branchId: order.branchId,
+            refType: StockRefType.ORDER_READY,
+            refId: order.id,
+          },
+          select: { id: true },
+        });
+        legacyReadyNeedsStockDeduction = !readyMovement;
+      }
+
+      const deductProductStockNow =
+        (order.status === "PROCESSING" && input.status === "READY") ||
+        legacyReadyNeedsStockDeduction;
+      if (deductProductStockNow && order.branchId) {
         // Aggregate quantity per product across order items
         const freshItems = await tx.orderItem.findMany({
           where: { orderId: id },
@@ -1792,7 +1811,9 @@ export class OrderService {
               productId: pid,
               type: "OUT",
               quantity: -qty,
-              refType: StockRefType.ORDER_COMPLETED,
+              refType: legacyReadyNeedsStockDeduction
+                ? "ORDER_COMPLETED"
+                : StockRefType.ORDER_READY,
               refId: order.id,
               reason: input.notes ?? null,
               userId: changedBy ?? undefined,
@@ -1800,7 +1821,7 @@ export class OrderService {
           } catch (error) {
             if (error instanceof ConflictError) {
               throw new ConflictError(
-                `Stok produk tidak mencukupi — pesanan tidak dapat diselesaikan`
+                `Stok produk tidak mencukupi — status ${input.status} tidak dapat diterapkan`
               );
             }
             throw error;

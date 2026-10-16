@@ -12,10 +12,9 @@ type Params = { params: Promise<{ id: string; productId: string }> };
  * Mutates per-branch product availability, optional price override, and
  * inventory stock.
  *
- * Stock changes (D3): ADMIN only, and MUST carry a `reason` — the write goes
- * through the StockMovement ADJUSTMENT ledger (consolidated in Phase C). KASIR
- * is read-only for inventory; availability/price tweaks remain available to
- * both roles. A branch-scoped user may only modify their own branches.
+ * Stock changes: ADMIN + KASIR, and MUST carry a `reason` — the write goes
+ * through the StockMovement ADJUSTMENT ledger. HPP costing settings remain
+ * ADMIN-only. A branch-scoped user may only modify their own branches.
  */
 export async function PUT(request: NextRequest, { params }: Params) {
   try {
@@ -43,11 +42,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
       costing.data.costingMode !== undefined ||
       costing.data.manualHpp !== undefined;
 
-    // Stock adjustment AND HPP method are inventory/financial mutations →
-    // ADMIN only. Anything else (availability/price) keeps the legacy
-    // ADMIN + KASIR permission.
+    // HPP method is a financial mutation → ADMIN only. Product stock
+    // adjustments and availability/price changes are available to both roles.
     const ctx =
-      changingStock || changingCosting
+      changingCosting
         ? await requireRoles(["ADMIN"], branchId)
         : await requireRoles(["ADMIN", "CASHIER"], branchId);
 

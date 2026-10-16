@@ -14,12 +14,12 @@ import { ConflictError, ValidationError } from "@/lib/errors";
 //
 // qty semantics (documented in schema.prisma):
 //   IN         quantity > 0  — receiving goods adds stock
-//   OUT        quantity < 0  — an Order reaching COMPLETED removes stock
+//   OUT        quantity < 0  — an Order reaching READY removes stock
 //   ADJUSTMENT quantity is a signed delta (+ / -)
 // balanceAfter is captured BEFORE-AFTER so the ledger is fully replayable.
 //
 // refType/refId identify the source document (PURCHASE_RECEIVE + purchaseId,
-// ORDER_COMPLETED + orderId). They are NOT unique: one purchase legitimately
+// ORDER_READY + orderId). They are NOT unique: one purchase legitimately
 // produces one movement per item. Duplicate requests are prevented at the
 // source-document status transition (see purchase.receive and
 // order.updateOrderStatus), never by a movement-level unique constraint.
@@ -27,7 +27,7 @@ import { ConflictError, ValidationError } from "@/lib/errors";
 
 export const StockRefType = {
   PURCHASE_RECEIVE: "PURCHASE_RECEIVE",
-  ORDER_COMPLETED: "ORDER_COMPLETED",
+  ORDER_READY: "ORDER_READY",
   STOCK_ADJUSTMENT: "STOCK_ADJUSTMENT",
 } as const;
 
