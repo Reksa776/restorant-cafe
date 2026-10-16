@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Printer } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -569,13 +569,33 @@ export function PrintBillDialog({
   order,
   open,
   onOpenChange,
+  autoPrint = false,
 }: {
   order: Order | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Opens the browser print dialog once for a newly paid order. */
+  autoPrint?: boolean;
 }) {
   const [paper, setPaper] = useState<PaperFormat>("a4");
   const [mode, setMode] = useState<PrintMode>("all");
+  const autoPrintedOrder = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!autoPrint || !open || !order || autoPrintedOrder.current === order.id) {
+      return;
+    }
+    const finishPrint = () => onOpenChange(false);
+    const timer = window.setTimeout(() => {
+      autoPrintedOrder.current = order.id;
+      window.addEventListener("afterprint", finishPrint, { once: true });
+      window.print();
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("afterprint", finishPrint);
+    };
+  }, [autoPrint, open, order, onOpenChange]);
 
   if (!order) return null;
 

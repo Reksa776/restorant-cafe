@@ -26,7 +26,8 @@ type ActionState =
   | { kind: "cancel-request"; orderId: string };
 
 /**
- * Refund + cancellation actions with ADMIN PASSWORD confirmation.
+ * Cancellation action with ADMIN PASSWORD confirmation. Refund requests are
+ * handled from the dedicated Refund page.
  *
  * Flow:
  * - CASHIER clicks → a request is submitted (requestedByCashierId) and an
@@ -41,10 +42,13 @@ export function ApprovalActions({
   order,
   onDone,
   compact,
+  showRefund = false,
 }: {
   order: Order;
   onDone?: () => void;
   compact?: boolean;
+  /** Refund requests live in the standalone Refund menu, not order detail. */
+  showRefund?: boolean;
 }) {
   const { role } = useUserRole();
   const isAdmin = role === "ADMIN";
@@ -55,10 +59,10 @@ export function ApprovalActions({
   const [adminPassword, setAdminPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // A completed order may still need a refund. Cancel remains limited to
-  // active, unpaid orders; a paid order must use the refund workflow.
+  // Paid orders use the standalone refund workflow. Cancellation only applies
+  // to active unpaid orders.
   if (order.status === "CANCELLED") return null;
-  const canRefund = order.paymentStatus === "PAID";
+  const canRefund = showRefund && order.paymentStatus === "PAID";
   const canCancel =
     order.status !== "COMPLETED" && order.paymentStatus !== "PAID";
   if (!canRefund && !canCancel) return null;

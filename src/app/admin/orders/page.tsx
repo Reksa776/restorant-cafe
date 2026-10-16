@@ -23,10 +23,35 @@ import { OrderSummary } from "@/components/admin/orders/order-summary";
 import { OrderFilters } from "@/components/admin/orders/order-filters";
 import { OrderCard } from "@/components/admin/orders/order-card";
 import { OrderDetail } from "@/components/admin/orders/order-detail";
+import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
 import {
   OrderCardSkeleton,
   OrderSummarySkeleton,
 } from "@/components/admin/orders/order-skeleton";
+
+const AUTO_PRINT_STORAGE_KEY = "restaurant-auto-printed-orders";
+
+function wasOrderAutoPrinted(orderId: string) {
+  try {
+    const ids = JSON.parse(window.localStorage.getItem(AUTO_PRINT_STORAGE_KEY) || "[]");
+    return Array.isArray(ids) && ids.includes(orderId);
+  } catch {
+    return false;
+  }
+}
+
+function rememberAutoPrintedOrder(orderId: string) {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(AUTO_PRINT_STORAGE_KEY) || "[]");
+    const ids = Array.isArray(stored) ? stored.filter((id) => typeof id === "string") : [];
+    window.localStorage.setItem(
+      AUTO_PRINT_STORAGE_KEY,
+      JSON.stringify([...ids.filter((id) => id !== orderId), orderId].slice(-300))
+    );
+  } catch {
+    // Printing still proceeds if browser storage is unavailable.
+  }
+}
 
 export default function OrdersPage() {
   const router = useRouter();
@@ -55,6 +80,7 @@ export default function OrdersPage() {
   // Detail drawer state
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [autoPrintOrder, setAutoPrintOrder] = useState<Order | null>(null);
 
   // ============================================================
   // Data Loading
@@ -118,6 +144,26 @@ export default function OrdersPage() {
     ],
     (evt) => {
       const orderId = evt.data?.orderId as string | undefined;
+      const isPaidEvent =
+        evt.data?.status === "PAID" &&
+        (evt.type === REALTIME_EVENT_TYPES.PAYMENT_STATUS_CHANGED ||
+          evt.type === REALTIME_EVENT_TYPES.PAYMENT_CREATED ||
+          evt.type === REALTIME_EVENT_TYPES.OFFLINE_POLL);
+      if (orderId && isPaidEvent) {
+        if (!wasOrderAutoPrinted(orderId)) {
+          void orderService
+            .getOrder(orderId)
+            .then((freshOrder) => {
+              if (freshOrder.paymentStatus !== "PAID") return;
+              rememberAutoPrintedOrder(orderId);
+              setAutoPrintOrder(freshOrder);
+            })
+            .catch((error) => {
+              console.error("Failed to load paid order for automatic bill:", error);
+              toast.error("Pembayaran berhasil, tetapi bill otomatis gagal dimuat");
+            });
+        }
+      }
       // Keep an open detail sheet live without waiting for the refetch.
       if (orderId) {
         setSelectedOrder((prev) => {
@@ -165,6 +211,10 @@ export default function OrdersPage() {
     setSelectedOrder(order);
     setIsDetailOpen(true);
   };
+
+  const handleAutoPrintOpenChange = useCallback((open: boolean) => {
+    if (!open) setAutoPrintOrder(null);
+  }, []);
 
   const handleStatusUpdate = async (orderId: string, status: string) => {
     setIsUpdating(true);
@@ -405,6 +455,13 @@ export default function OrdersPage() {
             }
           }
         }}
+      />
+
+      <PrintBillDialog
+        order={autoPrintOrder}
+        open={!!autoPrintOrder}
+        autoPrint
+        onOpenChange={handleAutoPrintOpenChange}
       />
     </div>
   );

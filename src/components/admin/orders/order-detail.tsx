@@ -501,8 +501,7 @@ export function OrderDetail({
             </>
           )}
 
-          {/* Refund / cancel approval actions (admins approve with password,
-              cashiers submit requests) — only while money is in play. */}
+          {/* Cancellation requests remain available for active unpaid orders. */}
           {order.paymentStatus !== "PAID" && order.status === "PENDING" && (
             <>
               <Separator />

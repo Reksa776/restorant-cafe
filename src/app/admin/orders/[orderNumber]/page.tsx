@@ -276,8 +276,7 @@ export default function AdminOrderByNumberPage({
                 <CheckCircle2 className="h-4 w-4" />
                 Pesanan sudah lunas
               </div>
-              {/* Refund / cancel with admin password — also here for direct
-                  actions without opening the orders list. */}
+              {/* Cancellation stays in the order flow; refunds have a dedicated menu. */}
               <ApprovalActions order={order} compact onDone={loadOrder} />
             </div>
           ) : order.status === "CANCELLED" ? (

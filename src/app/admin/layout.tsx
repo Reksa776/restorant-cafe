@@ -36,6 +36,7 @@ import {
   CalendarDays,
   LayoutGrid,
   BookOpen,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
@@ -133,6 +134,7 @@ const navigation: NavEntry[] = [
     children: [
       { name: "Payments", href: "/admin/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
       { name: "Riwayat Penjualan", href: "/admin/cashier/sales", icon: Receipt, roles: ["ADMIN", "CASHIER"] },
+      { name: "Refund", href: "/admin/refunds", icon: RotateCcw, roles: ["ADMIN", "CASHIER"] },
       // ACCOUNTING PHASE B — operational expense tracking (ADMIN only).
       { name: "Pengeluaran", href: "/admin/accounting/expenses", icon: Wallet, roles: ["ADMIN"] },
       // ACCOUNTING PHASE C — cashbook read-model (ADMIN only).
