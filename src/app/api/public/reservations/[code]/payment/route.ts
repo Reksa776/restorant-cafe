@@ -12,6 +12,8 @@ import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { normalizePhone } from "@/lib/phone";
 import { tryGetCustomerSessionFromRequest } from "@/lib/customer-session.server";
 import { resolvePublicReservationRestaurant } from "../../_resolve-public-context";
+import { RESERVATION_PAYMENT_HOLD_MINUTES } from "@/services/reservation/reservation.slots";
+import { reservationService } from "@/services/reservation/reservation.service";
 
 // ============================================================
 // PUBLIC RESERVATION PAYMENT — Phase 2 (payment ownership redesign).
@@ -39,6 +41,8 @@ type OwnedReservation = {
   orderId: string | null;
   customerId: string | null;
   guestPhone: string;
+  source: string;
+  createdAt: Date;
 };
 
 /**
@@ -67,6 +71,8 @@ async function resolveOwnedReservation(
       orderId: true,
       customerId: true,
       guestPhone: true,
+      source: true,
+      createdAt: true,
     },
   });
   if (!reservation) {
@@ -184,6 +190,18 @@ export async function POST(
       throw new ConflictError(
         "Reservasi sudah dibatalkan — pembayaran tidak dapat dibuat"
       );
+    }
+    if (
+      reservation.source === "PUBLIC" &&
+      reservation.status === "PENDING" &&
+      Date.now() - reservation.createdAt.getTime() > RESERVATION_PAYMENT_HOLD_MINUTES * 60_000
+    ) {
+      await reservationService.cancelReservation(
+        reservation.id,
+        reservation.restaurantId,
+        { cancelReason: "Pembayaran tidak diselesaikan dalam batas waktu" }
+      );
+      throw new ConflictError("Waktu pembayaran reservasi habis. Silakan buat reservasi baru.");
     }
     if (!reservation.orderId) {
       throw new ConflictError(

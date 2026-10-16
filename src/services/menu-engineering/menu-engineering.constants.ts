@@ -33,15 +33,15 @@ export const CLASSIFICATION_INSIGHTS: Record<
   string,
   string
 > = {
-  STAR: "High sales volume and strong profitability.",
-  PLOWHORSE: "High sales volume but profitability is below the scope median.",
-  PUZZLE: "Strong profitability but sales volume is below the scope median.",
-  DOG: "Low sales volume and low profitability.",
-  NEGATIVE_MARGIN: "Current selling price is below current HPP.",
-  UNCOSTED: "Profitability unavailable because historical cost coverage is incomplete.",
-  NO_DATA: "No sales in the selected period.",
-  INSUFFICIENT_DATA: "Not enough sales data for reliable classification.",
-  NEW: "New product — monitor performance.",
+  STAR: "Laris dan laba per porsinya di atas nilai tengah. Pertahankan kualitas dan ketersediaan.",
+  PLOWHORSE: "Laris, tetapi laba per porsinya di bawah nilai tengah. Tinjau harga, porsi, dan HPP.",
+  PUZZLE: "Laba per porsinya tinggi, tetapi belum banyak terjual. Coba perbaiki promosi atau penempatan.",
+  DOG: "Penjualan dan laba per porsinya di bawah nilai tengah. Tinjau ulang produk ini.",
+  NEGATIVE_MARGIN: "Peringatan: harga jual cabang saat ini di bawah HPP.",
+  UNCOSTED: "Laba belum bisa dinilai karena HPP historis belum lengkap.",
+  NO_DATA: "Belum ada penjualan pada periode ini.",
+  INSUFFICIENT_DATA: "Transaksi belum cukup untuk penilaian yang andal.",
+  NEW: "Produk baru; pantau penjualannya sebelum mengambil keputusan.",
 } as const;
 
 // ============================================================
@@ -87,6 +87,7 @@ export interface ClassifyInput {
   qtySold: number;
   orderCount: number;
   grossProfit: number | null;
+  profitPerUnit?: number | null;
   currentSellingPrice: number | null;
   isNew: boolean;
   uncostedItems: number;
@@ -106,7 +107,8 @@ export interface ClassifyResult {
 }
 
 export function classifyProduct(input: ClassifyInput): ClassifyResult {
-  const { qtySold, orderCount, grossProfit, currentSellingPrice, isNew } = input;
+  const { qtySold, orderCount, currentSellingPrice, isNew } = input;
+  const grossProfit = input.profitPerUnit ?? input.grossProfit;
 
   // 1. No sales → NEW (recently created) / NO_DATA.
   if (qtySold === 0 || orderCount === 0) {

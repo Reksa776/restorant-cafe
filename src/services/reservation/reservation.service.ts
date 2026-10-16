@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { Prisma } from "@prisma/client";
 import type { Reservation, ReservationStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { emitRealtime } from "@/lib/realtime/bus";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import {
   ConflictError,
   ForbiddenError,
@@ -14,6 +16,7 @@ import { branchService } from "@/services/branch/branch.service";
 import {
   RESERVATION_DEFAULT_DURATION_MINUTES,
   RESERVATION_HOLDING_STATUSES,
+  RESERVATION_PAYMENT_HOLD_MINUTES,
   RESERVATION_SLOT_CONFIG,
   dateOnlyFromDb,
   overlaps,
@@ -109,6 +112,18 @@ function dbDateFromDateOnly(dateOnly: string): Date {
 // NOT in this list, so their intervals free the table. `Table.status` is never
 // consulted: it is the order/QR lifecycle flag, unrelated to availability.
 const HOLDING: ReservationStatus[] = [...RESERVATION_HOLDING_STATUSES];
+
+function activeReservationWhere(now = new Date()): Prisma.ReservationWhereInput {
+  const paymentHoldCutoff = new Date(now.getTime() - RESERVATION_PAYMENT_HOLD_MINUTES * 60_000);
+  return {
+    status: { in: HOLDING },
+    OR: [
+      { status: { not: "PENDING" } },
+      { source: { not: "PUBLIC" } },
+      { createdAt: { gte: paymentHoldCutoff } },
+    ],
+  };
+}
 
 /**
  * Legal status transitions.
@@ -663,7 +678,7 @@ export class ReservationService {
       where: {
         tableId,
         reservationDate: dbDate,
-        status: { in: HOLDING },
+        ...activeReservationWhere(),
       },
       select: {
         partySize: true,
@@ -710,7 +725,7 @@ export class ReservationService {
       throw new ValidationError("Minimal 1 produk harus dipilih");
     }
 
-    return orderService.createCustomerOrderInTransaction(
+    const result = await orderService.createCustomerOrderInTransaction(
       tx,
       {
         customerName: data.guestName,
@@ -729,6 +744,10 @@ export class ReservationService {
       data.branchId,
       { reservationMode: true }
     );
+    if (Number(result.order.grandTotal) <= 0) {
+      throw new ValidationError("Total transaksi reservasi harus lebih dari Rp0");
+    }
+    return result;
   }
 
   // ============================================================
@@ -968,7 +987,7 @@ export class ReservationService {
             where: {
               tableId: data.tableId,
               reservationDate: dbDate,
-              status: { in: HOLDING },
+              ...activeReservationWhere(),
             },
             select: {
               partySize: true,
@@ -1000,7 +1019,7 @@ export class ReservationService {
           branchId: data.branchId,
           reservationDate: dbDate,
           startMinutes: data.startMinutes,
-          status: { in: HOLDING },
+          ...activeReservationWhere(),
         };
         if (data.customerId) {
           dupWhere.customerId = data.customerId;
@@ -1082,6 +1101,11 @@ export class ReservationService {
     }
 
     const view = (await reservationViews([committed.reservation]))[0];
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.RESERVATION_CREATED, view.id, {
+      reservationId: view.id,
+      branchId: view.branchId,
+      reservationDate: view.reservationDate,
+    });
 
     // Reservation ↔ Order: the order (+ items + KASIR payment) and the
     // reservation committed together, so announce the purchase's realtime
@@ -1398,6 +1422,7 @@ export class ReservationService {
       select: {
         id: true,
         status: true,
+        source: true,
         orderId: true,
         confirmedAt: true,
         seatedAt: true,
@@ -1414,6 +1439,19 @@ export class ReservationService {
       throw new ConflictError(
         `Transisi status ${current.status} → ${target} tidak diizinkan`
       );
+    }
+
+    if (target === "CONFIRMED" && current.source === "PUBLIC") {
+      if (!current.orderId) {
+        throw new ConflictError("Reservasi online belum memiliki transaksi pembayaran");
+      }
+      const order = await prisma.order.findFirst({
+        where: { id: current.orderId, restaurantId },
+        select: { paymentStatus: true },
+      });
+      if (order?.paymentStatus !== "PAID") {
+        throw new ConflictError("Reservasi hanya dapat dikonfirmasi setelah pembayaran berhasil");
+      }
     }
 
     const updated = await prisma.$transaction(async (tx) => {
@@ -1489,6 +1527,11 @@ export class ReservationService {
     });
 
     const view = (await reservationViews([updated]))[0];
+    emitRealtime(restaurantId, REALTIME_EVENT_TYPES.RESERVATION_UPDATED, view.id, {
+      reservationId: view.id,
+      branchId: view.branchId,
+      status: view.status,
+    });
 
     // R7 — lifecycle transition is persisted and resolved; dispatch the
     // best-effort WhatsApp notification for the NEW server-side status

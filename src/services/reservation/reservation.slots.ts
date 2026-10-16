@@ -52,6 +52,9 @@ export const RESERVATION_MAX_DURATION_MINUTES = 240;
 /** Durations must be a multiple of this (whole quarter-hours). */
 export const RESERVATION_DURATION_STEP_MINUTES = 15;
 
+/** Public bookings hold a slot briefly while the guest completes QRIS. */
+export const RESERVATION_PAYMENT_HOLD_MINUTES = 15;
+
 export const RESERVATION_MINUTES_PER_DAY = 24 * 60;
 
 // ============================================================

@@ -77,7 +77,7 @@ export class MenuEngineeringService {
     const [
       histResult,
       branchQtyMap,
-      activeProducts,
+      allProducts,
       categories,
       uncostedStatusMap,
       costingBranch,
@@ -85,12 +85,13 @@ export class MenuEngineeringService {
       this.fetchAllProfitability(ctx.restaurantId, range, branchFilters),
       this.fetchBranchQty(ctx.restaurantId, range, branchFilters),
       prisma.product.findMany({
-        where: { restaurantId: ctx.restaurantId, isActive: true },
+        where: { restaurantId: ctx.restaurantId },
         select: {
           id: true,
           name: true,
           price: true,
           createdAt: true,
+          isActive: true,
           categoryId: true,
           category: { select: { id: true, name: true } },
         },
@@ -129,11 +130,27 @@ export class MenuEngineeringService {
       }
     }
 
-    const createdMap = new Map(activeProducts.map((p) => [p.id, p.createdAt]));
-    const priceMap = new Map(activeProducts.map((p) => [p.id, p.price]));
+    const productIds = new Set(allProducts.map((p) => p.id));
+    const productsForRows = [
+      ...allProducts.filter((p) => p.isActive || histMap.has(p.id)),
+      ...histResult.products
+        .filter((p) => !productIds.has(p.productId))
+        .map((p) => ({
+          id: p.productId,
+          name: p.name,
+          price: null as string | null,
+          createdAt: new Date(0),
+          isActive: false,
+          categoryId: p.categoryId,
+          category: p.categoryName ? { id: p.categoryId ?? "", name: p.categoryName } : null,
+        })),
+    ];
+    const createdMap = new Map(productsForRows.map((p) => [p.id, p.createdAt]));
+    const priceMap = new Map(productsForRows.map((p) => [p.id, p.price]));
 
-    // Build rows for every ACTIVE product in scope.
-    const rows: MenuEngineeringProductRow[] = activeProducts.map((p) => {
+    // Include active catalogue items and inactive/deleted items with sales in
+    // this period, so historical revenue is not silently dropped.
+    const rows: MenuEngineeringProductRow[] = productsForRows.map((p) => {
       const hist = histMap.get(p.id);
       const cur = costMap.get(p.id);
       const historicalCogs = hist?.cogs ?? 0;
@@ -180,6 +197,11 @@ export class MenuEngineeringService {
         currentHpp,
         currentSellingPrice,
         currentMarginPct,
+        contributionProfitPerUnit:
+          hist?.grossProfit !== null && hist?.grossProfit !== undefined && hist.qtySold > 0
+            ? num(hist.grossProfit / hist.qtySold)
+            : null,
+        isActive: p.isActive,
         currentPriceOverrideActive: overrideMap.get(p.id) === true,
         costStatus: cur?.costStatus ?? null,
         costedItems: hist?.costedItems ?? 0,
@@ -208,13 +230,15 @@ export class MenuEngineeringService {
 
     // Page-level row set (category + search narrowing for display only).
     const search = input.search?.trim().toLowerCase();
-    const visibleRows = rows.filter(
+    const scopeRows = rows.filter(
       (r) =>
         (!input.categoryId || r.categoryId === input.categoryId) &&
         (!search ||
           !r.productName ||
-          r.productName.toLowerCase().includes(search)) &&
-        (!input.classification || r.classification === input.classification)
+          r.productName.toLowerCase().includes(search))
+    );
+    const visibleRows = scopeRows.filter(
+      (r) => !input.classification || r.classification === input.classification
     );
 
     visibleRows.sort((a, b) => b.netSales - a.netSales || b.qtySold - a.qtySold);
@@ -232,7 +256,7 @@ export class MenuEngineeringService {
     const paginatedProducts = visibleRows.slice(pageStart, pageStart + limit);
 
     const summary = buildMenuEngineeringSummary(rows, firstProfitability.summary);
-    const classification = this.buildClassificationCounts(visibleRows);
+    const classification = this.buildClassificationCounts(scopeRows);
 
     return {
       period: input.period,
@@ -415,9 +439,8 @@ export class MenuEngineeringService {
   }
 
   private isNewProduct(createdAt: Date, start: Date, end: Date): boolean {
-    const inPeriod = createdAt >= start && createdAt <= end;
-    const cutoff = new Date(Date.now() - NEW_PRODUCT_DAYS * 24 * 60 * 60 * 1000);
-    return inPeriod || createdAt >= cutoff;
+    const cutoff = new Date(end.getTime() - NEW_PRODUCT_DAYS * 24 * 60 * 60 * 1000);
+    return createdAt >= cutoff && createdAt <= end;
   }
 
   // ------------------------------------------------------------
@@ -455,7 +478,11 @@ export class MenuEngineeringService {
 
     return {
       qtyMedian: calculateMedian(qtySet.map((r) => r.qtySold)),
-      profitMedian: calculateMedian(profitSet.map((r) => r.grossProfit as number)),
+      // Compare per-unit contribution, so high sales volume does not inflate
+      // both classification axes at once.
+      contributionProfitPerUnitMedian: calculateMedian(
+        profitSet.map((r) => r.contributionProfitPerUnit ?? 0)
+      ),
       scope,
       productCount: qtySet.length,
       categoryId: thresholdCategoryId,
@@ -477,6 +504,7 @@ export class MenuEngineeringService {
       qtySold: row.qtySold,
       orderCount: row.orderCount,
       grossProfit: row.grossProfit,
+      profitPerUnit: row.contributionProfitPerUnit,
       currentSellingPrice: row.currentSellingPrice,
       isNew: row.isNew,
       uncostedItems: row.uncostedItems,
@@ -487,7 +515,7 @@ export class MenuEngineeringService {
           : uncostedStatusMap.get(row.productId)) ?? null,
       negativeMargin: row.negativeMargin,
       qtyMedian: threshold?.qtyMedian ?? null,
-      profitMedian: threshold?.profitMedian ?? null,
+      profitMedian: threshold?.contributionProfitPerUnitMedian ?? null,
     });
     row.classification = result.classification;
     row.classificationReason = result.classificationReason;

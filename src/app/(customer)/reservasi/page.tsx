@@ -50,7 +50,6 @@ import {
   PURCHASE_STEP_SUBTITLE,
   PURCHASE_STEP_TITLE,
   RESERVATION_CONFLICT_MESSAGE,
-  RESERVATION_PAYMENT_METHOD_LABELS,
   RESERVATION_STATUS_LABELS,
   RESERVATION_STEP_LABELS,
   RESERVATION_WIZARD_STEPS,
@@ -69,7 +68,6 @@ import {
   toReservationOrderItems,
 } from "./reservation-flow";
 import type {
-  ReservationPaymentMethod,
   ReservationPurchaseLine,
   ReservationWizardStep,
 } from "./reservation-flow";
@@ -321,9 +319,6 @@ export default function ReservationPage() {
   const [purchaseLines, setPurchaseLines] = useState<ReservationPurchaseLine[]>(
     []
   );
-  // Payment intent for the reservation's own order (DINE_IN).
-  const [paymentMethod, setPaymentMethod] =
-    useState<ReservationPaymentMethod>("QRIS");
 
   // ---- Submit ----
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -812,11 +807,10 @@ export default function ReservationPage() {
       return;
     }
     if (purchaseLines.length === 0) {
-      toast.error(PURCHASE_EMPTY_MESSAGE);
+      toast.error("Pilih minimal 1 produk dan bayar dengan QRIS untuk mengamankan reservasi.");
       setStep("purchase");
       return;
     }
-
     setIsSubmitting(true);
     setSubmitError(null);
 
@@ -830,11 +824,10 @@ export default function ReservationPage() {
       guestName: guestName.trim(),
       guestPhone: guestPhone.trim(),
       notes: notes.trim() || undefined,
-      // The purchase that BELONGS to this reservation. Only ids + quantities
-      // cross the wire — the server re-prices everything from the database.
-      items: toReservationOrderItems(purchaseLines),
-      paymentMethod,
     };
+    // Public reservation requires a nonzero preorder and QRIS payment.
+    payload.items = toReservationOrderItems(purchaseLines);
+    payload.paymentMethod = "QRIS";
     if (effectiveRestaurantId) payload.restaurantId = effectiveRestaurantId;
 
     try {
@@ -1654,26 +1647,12 @@ export default function ReservationPage() {
             <p className="text-xs font-bold uppercase tracking-wide text-gray-400 mb-2">
               Pembayaran
             </p>
-            <div className="grid grid-cols-2 gap-2">
-              {(["QRIS", "KASIR"] as const).map((method) => (
-                <button
-                  key={method}
-                  type="button"
-                  onClick={() => setPaymentMethod(method)}
-                  aria-pressed={paymentMethod === method}
-                  className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
-                    paymentMethod === method
-                      ? "border-brand-primary bg-brand-secondary text-brand-secondary-foreground"
-                      : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
-                  }`}
-                >
-                  {RESERVATION_PAYMENT_METHOD_LABELS[method]}
-                </button>
-              ))}
+            <div className="rounded-xl border border-brand-primary/30 bg-brand-primary/5 p-3 text-sm font-semibold text-brand-primary">
+              QRIS — reservasi dikonfirmasi setelah pembayaran berhasil.
             </div>
             <p className="mt-2 text-xs text-gray-500">
-              Status pembayaran: belum dibayar — pembayaran diselesaikan setelah
-              reservasi dibuat.
+              Pilih minimal satu produk dan selesaikan pembayaran QRIS untuk
+              mengamankan reservasi. Booking yang belum dibayar belum terkonfirmasi.
             </p>
           </div>
 
@@ -1840,22 +1819,14 @@ export default function ReservationPage() {
                   </span>
                 </DetailRow>
               </dl>
-              {/* Payment CTA — PHASE 3: QRIS pays INSIDE the reservation flow
-                  (reservation code identifier), never the Order payment page.
-                  KASIR keeps its existing order/cashier flow. */}
+              {/* Online reservations are secured through QRIS payment. */}
               {created.order.paymentStatus !== "PAID" &&
                 created.order.status !== "CANCELLED" && (
                   <Link
-                    href={
-                      paymentMethod === "KASIR"
-                        ? `/order/${created.order.orderNumber}`
-                        : `/reservasi/${created.code}/payment`
-                    }
+                    href={`/reservasi/${created.code}/payment`}
                     className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary text-brand-primary-foreground py-3 px-4 font-semibold hover:bg-brand-primary/90 transition-colors"
                   >
-                    {paymentMethod === "KASIR"
-                      ? "Lihat Pesanan & Bayar di Kasir"
-                      : "Bayar Sekarang"}
+                    Bayar Sekarang dengan QRIS
                   </Link>
                 )}
             </div>

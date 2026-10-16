@@ -135,21 +135,13 @@ export const CreatePublicReservationSchema = z.object({
   guestName: GuestNameSchema,
   guestPhone: GuestPhoneSchema,
   notes: NotesSchema.optional().nullable(),
+  /** A reservation must include at least one paid preorder item to deter fake bookings. */
+  items: z.array(OrderItemInputSchema).min(1, "Pilih minimal 1 produk untuk mengamankan reservasi"),
   /**
-   * The purchase that BELONGS to this reservation (reservation = booking +
-   * order + payment, one flow). REQUIRED and identical in shape to the public
-   * order-item input — prices/discount/tax/total are recomputed server-side by
-   * the EXISTING order engine; the client only sends ids + quantity + choices.
+   * Reservation prepayment is QRIS-only. The reservation is confirmed by the
+   * existing payment webhook only after the order is successfully paid.
    */
-  items: z
-    .array(OrderItemInputSchema)
-    .min(1, "Minimal 1 produk harus dipilih"),
-  /**
-   * DINE-IN payment intent recorded with the order ("KASIR" creates the UNPAID
-   * cashier payment atomically; "QRIS" is initiated on the existing payment
-   * page). Optional — absent leaves the order UNPAID with no intent.
-   */
-  paymentMethod: z.enum(["QRIS", "KASIR"]).optional(),
+  paymentMethod: z.literal("QRIS").default("QRIS"),
   /** Literal: a public request can never claim to be an ADMIN booking. */
   source: z.literal("PUBLIC").default("PUBLIC"),
 });

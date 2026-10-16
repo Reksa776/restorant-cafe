@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
     const branchId = searchParams.get("branch") || null;
     const categoryId = searchParams.get("category") || null;
     const search = searchParams.get("q") || null;
+    const classification = searchParams.get("classification") || null;
 
     const report = await menuEngineeringService.getMenuEngineeringReport(
       {
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
         endDate,
         branchId,
         categoryId,
+        classification,
         search,
         page: 1,
         limit: 500,

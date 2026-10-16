@@ -89,6 +89,14 @@ export interface ReservationListParams {
  * `branchId` param here is an additional validated view filter.
  */
 export const reservationService = {
+  async create(input: {
+    branchId: string; reservationDate: string; startMinutes: number; durationMinutes: number;
+    partySize: number; guestName: string; guestPhone: string; notes?: string;
+  }): Promise<ReservationTableView> {
+    const response = await api.post("/admin/reservations", input);
+    return response.data.data as ReservationTableView;
+  },
+
   async list(
     params: ReservationListParams = {}
   ): Promise<ReservationListResult> {

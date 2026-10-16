@@ -491,6 +491,8 @@ export interface ReservationReport {
     count: number;
     guests: number;
   }>;
+  byHour: Array<{ hour: number; count: number; guests: number }>;
+  cancellationReasons: Array<{ reason: string; count: number }>;
   byDate: Array<{
     date: string;
     total: number;

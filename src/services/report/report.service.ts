@@ -3055,6 +3055,8 @@ export class ReportService {
       funnelRows,
       orderPaymentRows,
       reservationRevenue,
+      hourRows,
+      cancellationReasonRows,
     ] = await Promise.all([
       prisma.reservation.groupBy({
         by: ["status"],
@@ -3171,6 +3173,24 @@ export class ReportService {
             total: { productRevenue: 0, refundRevenue: 0, netSales: 0 },
             byBranch: new Map<string, RefundRevenueBucket>(),
           }),
+      prisma.$queryRaw<Array<{ hour: number | bigint | string; count: number | bigint | string; guests: number | bigint | string }>>`
+        SELECT FLOOR(r.startMinutes / 60) AS hour, COUNT(*) AS count,
+               COALESCE(SUM(r.partySize), 0) AS guests
+        FROM reservation r
+        WHERE r.restaurantId = ${restaurantId}
+          AND r.reservationDate >= ${range.start} AND r.reservationDate <= ${range.end}
+          ${branchSql}
+        GROUP BY FLOOR(r.startMinutes / 60) ORDER BY hour ASC
+      `,
+      prisma.$queryRaw<Array<{ reason: string; count: number | bigint | string }>>`
+        SELECT LEFT(COALESCE(NULLIF(TRIM(r.cancelReason), ''), 'Tanpa alasan'), 80) AS reason,
+               COUNT(*) AS count
+        FROM reservation r
+        WHERE r.restaurantId = ${restaurantId} AND r.status = 'CANCELLED'
+          AND r.reservationDate >= ${range.start} AND r.reservationDate <= ${range.end}
+          ${branchSql}
+        GROUP BY reason ORDER BY count DESC
+      `,
     ]);
 
     const branchIds = branchRows
@@ -3294,6 +3314,8 @@ export class ReportService {
         noShow: Number(r.noShow),
         guests: Number(r.guests),
       })),
+      byHour: hourRows.map((r) => ({ hour: Number(r.hour), count: Number(r.count), guests: Number(r.guests) })),
+      cancellationReasons: cancellationReasonRows.map((r) => ({ reason: r.reason, count: Number(r.count) })),
       paymentStatus: paymentBreakdown,
     };
   }

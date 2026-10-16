@@ -155,7 +155,7 @@ const navigation: NavEntry[] = [
       { name: "Per Shift", href: "/admin/reports/shift-sales", icon: Clock, roles: ["ADMIN", "CASHIER"] },
       { name: "Multi Outlet", href: "/admin/reports/multi-outlet", icon: Store, roles: ["ADMIN"] },
       { name: "Profitabilitas", href: "/admin/profitability", icon: TrendingUp, roles: ["ADMIN"] },
-      { name: "Menu Engineering", href: "/admin/menu-engineering", icon: PieChart, roles: ["ADMIN"] },
+      { name: "Analisis Performa Menu", href: "/admin/menu-engineering", icon: PieChart, roles: ["ADMIN"] },
     ],
   },
   {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -50,6 +50,8 @@ import {
   formatTimeSlot,
 } from "@/components/admin/reservations/reservation-format";
 import { formatPhoneDisplay } from "@/lib/phone";
+import { useRealtimeListener } from "@/components/admin/realtime-provider";
+import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import type { ReservationStatusValue } from "@/services/reservation/reservation.types";
 
 const PAGE_SIZE = 15;
@@ -106,7 +108,7 @@ function statusErrorMessage(error: unknown): string {
 }
 
 export default function ReservationsPage() {
-  const { branches, isLoading: branchCtxLoading } = useBranchContext();
+  const { branches, branchId, isLoading: branchCtxLoading } = useBranchContext();
 
   const [items, setItems] = useState<ReservationTableView[]>([]);
   const [total, setTotal] = useState(0);
@@ -137,6 +139,9 @@ export default function ReservationsPage() {
   // Scan / manual code lookup (READ-ONLY — never mutates the reservation).
   const [lookupCode, setLookupCode] = useState("");
   const [lookingUp, setLookingUp] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createForm, setCreateForm] = useState({ branchId: "", date: "", time: "10:00", duration: "90", partySize: "2", name: "", phone: "", notes: "" });
 
   const hasActiveFilters =
     search !== "" ||
@@ -179,6 +184,11 @@ export default function ReservationsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- established admin fetch pattern (see customers/tables/orders pages)
     load();
   }, [branchCtxLoading, load]);
+
+  useRealtimeListener(
+    [REALTIME_EVENT_TYPES.RESERVATION_CREATED, REALTIME_EVENT_TYPES.RESERVATION_UPDATED, REALTIME_EVENT_TYPES.OFFLINE_POLL],
+    () => { if (!loading) void load(); }
+  );
 
   const resetFilters = () => {
     setSearchInput("");
@@ -277,12 +287,64 @@ export default function ReservationsPage() {
     name: b.name,
   }));
 
+  const openCreate = () => {
+    const today = new Date();
+    const date = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    setCreateForm((current) => ({ ...current, branchId: branchId ?? branches[0]?.id ?? "", date }));
+    setCreateOpen(true);
+  };
+
+  const submitCreate = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (createSaving) return;
+    setCreateSaving(true);
+    try {
+      const [hours, minutes] = createForm.time.split(":").map(Number);
+      const reservation = await reservationService.create({
+        branchId: createForm.branchId, reservationDate: createForm.date,
+        startMinutes: hours * 60 + minutes, durationMinutes: Number(createForm.duration),
+        partySize: Number(createForm.partySize), guestName: createForm.name.trim(),
+        guestPhone: createForm.phone.trim(), notes: createForm.notes.trim() || undefined,
+      });
+      toast.success(`Reservasi ${reservation.code} berhasil dibuat`);
+      setCreateOpen(false);
+      setPage(1);
+      await load();
+    } catch (err) {
+      toast.error(statusErrorMessage(err));
+    } finally {
+      setCreateSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold">Reservasi</h1>
         <p className="text-gray-500">Kelola reservasi pelanggan</p>
+        <Button className="mt-3" onClick={openCreate}>Buat Reservasi</Button>
       </div>
+
+      {createOpen && (
+        <Card>
+          <CardHeader><CardTitle>Reservasi Baru</CardTitle></CardHeader>
+          <CardContent>
+            <form onSubmit={submitCreate} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <label className="text-sm">Cabang<select required value={createForm.branchId} onChange={(e) => setCreateForm({ ...createForm, branchId: e.target.value })} className="mt-1 w-full rounded-md border bg-background px-3 py-2">
+                <option value="">Pilih cabang</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+              </select></label>
+              <label className="text-sm">Tanggal<Input required type="date" value={createForm.date} onChange={(e) => setCreateForm({ ...createForm, date: e.target.value })} /></label>
+              <label className="text-sm">Jam<Input required type="time" step={900} value={createForm.time} onChange={(e) => setCreateForm({ ...createForm, time: e.target.value })} /></label>
+              <label className="text-sm">Durasi (menit)<Input required type="number" min={15} max={240} step={15} value={createForm.duration} onChange={(e) => setCreateForm({ ...createForm, duration: e.target.value })} /></label>
+              <label className="text-sm">Jumlah tamu<Input required type="number" min={1} max={100} value={createForm.partySize} onChange={(e) => setCreateForm({ ...createForm, partySize: e.target.value })} /></label>
+              <label className="text-sm">Nama tamu<Input required value={createForm.name} onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })} /></label>
+              <label className="text-sm">WhatsApp<Input required value={createForm.phone} onChange={(e) => setCreateForm({ ...createForm, phone: e.target.value })} /></label>
+              <label className="text-sm sm:col-span-2">Catatan<Input value={createForm.notes} onChange={(e) => setCreateForm({ ...createForm, notes: e.target.value })} /></label>
+              <div className="flex items-end gap-2"><Button type="submit" disabled={createSaving || !createForm.branchId}>{createSaving ? "Menyimpan…" : "Simpan"}</Button><Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>Batal</Button></div>
+            </form>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Scan / manual lookup — READ-ONLY lookup by reservation code */}
       <Card>

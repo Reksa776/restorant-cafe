@@ -366,6 +366,61 @@ export default function ReservationReportPage() {
               </CardContent>
             </Card>
 
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader><CardTitle>Jam Kedatangan Populer</CardTitle></CardHeader>
+              <CardContent>
+                {report.byHour.length === 0 ? <p className="text-sm text-gray-500">Belum ada data.</p> : (
+                  <div className="space-y-2">{report.byHour.map((row) => (
+                    <div key={row.hour} className="flex items-center justify-between text-sm">
+                      <span>{String(row.hour).padStart(2, "0")}:00–{String(row.hour + 1).padStart(2, "0")}:00</span>
+                      <span className="tabular-nums">{row.count} reservasi · {row.guests} tamu</span>
+                    </div>
+                  ))}</div>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle>Alasan Pembatalan</CardTitle></CardHeader>
+              <CardContent>
+                {report.cancellationReasons.length === 0 ? <p className="text-sm text-gray-500">Belum ada data.</p> : (
+                  <div className="space-y-2">{report.cancellationReasons.map((row) => (
+                    <div key={row.reason} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="truncate">{row.reason}</span><span className="tabular-nums">{row.count}</span>
+                    </div>
+                  ))}</div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader><CardTitle>Ukuran Rombongan</CardTitle></CardHeader>
+              <CardContent>
+                {report.byPartySize.length === 0 ? <p className="text-sm text-gray-500">Belum ada data.</p> : (
+                  <div className="space-y-2">{report.byPartySize.map((row) => (
+                    <div key={row.partySize} className="flex items-center justify-between text-sm">
+                      <span>{row.partySize} orang</span><span className="tabular-nums">{row.count} reservasi</span>
+                    </div>
+                  ))}</div>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle>Per Meja</CardTitle></CardHeader>
+              <CardContent>
+                {report.byTable.length === 0 ? <p className="text-sm text-gray-500">Belum ada data meja.</p> : (
+                  <div className="space-y-2">{report.byTable.map((row) => (
+                    <div key={row.tableId ?? "unassigned"} className="flex items-center justify-between text-sm">
+                      <span>{row.name || (row.number ? `Meja ${row.number}` : "Belum dipilih")}</span><span className="tabular-nums">{row.count} reservasi · {row.guests} tamu</span>
+                    </div>
+                  ))}</div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
             <Card>
               <CardHeader>
                 <CardTitle>Cabang</CardTitle>

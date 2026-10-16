@@ -43,6 +43,10 @@ export interface MenuEngineeringProductRow {
   currentHpp: number | null;
   currentSellingPrice: number | null;
   currentMarginPct: number | null;
+  /** Historical contribution margin per sold unit, refund-adjusted. */
+  contributionProfitPerUnit?: number | null;
+  /** Inactive products remain visible when they had sales in this period. */
+  isActive?: boolean;
   currentPriceOverrideActive: boolean;
   costStatus: CostStatus | null;
   costedItems: number;
@@ -91,7 +95,7 @@ export interface MenuEngineeringBranchRow {
 
 export interface MenuEngineeringThreshold {
   qtyMedian: number;
-  profitMedian: number;
+  contributionProfitPerUnitMedian: number;
   scope: MedianScope;
   productCount: number;
   categoryId: string | null;
