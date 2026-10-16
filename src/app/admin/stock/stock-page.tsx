@@ -322,6 +322,7 @@ function IngredientStockTab({
   const [loading, setLoading] = useState(true);
   const [adjusting, setAdjusting] = useState<string | null>(null);
   const [targetStock, setTargetStock] = useState<Record<string, string>>({});
+  const [openingCosts, setOpeningCosts] = useState<Record<string, string>>({});
   const [reasons, setReasons] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<string | null>(null);
 
@@ -358,11 +359,18 @@ function IngredientStockTab({
       toast.error("Alasan penyesuaian wajib diisi");
       return;
     }
+    const openingCostRaw = openingCosts[item.ingredientId];
+    const openingUnitCost = openingCostRaw?.trim() ? Number(openingCostRaw) : undefined;
+    if (item.averageCost == null && target > 0 && (openingUnitCost == null || !Number.isFinite(openingUnitCost) || openingUnitCost < 0)) {
+      toast.error("WAC belum tersedia. Isi biaya awal per satuan atau terima pembelian bahan baku.");
+      return;
+    }
     setSaving(item.ingredientId);
     try {
       await ingredientService.adjustStock(item.ingredientId, {
         branchId: workingBranchId,
         targetStock: target,
+        openingUnitCost,
         reason,
       });
       setItems((prev) =>
@@ -372,6 +380,7 @@ function IngredientStockTab({
       );
       setAdjusting(null);
       setReasons((prev) => ({ ...prev, [item.ingredientId]: "" }));
+      setOpeningCosts((prev) => ({ ...prev, [item.ingredientId]: "" }));
       toast.success(`Stok ${item.ingredientName} diperbarui`);
     } catch (error: unknown) {
       const msg =
@@ -505,18 +514,31 @@ function IngredientStockTab({
                   )}
                 </div>
                 {isAdmin && adjusting === item.ingredientId && (
-                  <Input
-                    type="text"
-                    value={reasons[item.ingredientId] ?? ""}
-                    onChange={(e) =>
-                      setReasons((prev) => ({
-                        ...prev,
-                        [item.ingredientId]: e.target.value,
-                      }))
-                    }
-                    placeholder="Alasan penyesuaian (wajib)"
-                    className="h-8 w-full text-sm sm:w-64"
-                  />
+                  <div className="flex w-full flex-col gap-2 sm:flex-row">
+                    {item.averageCost == null && Number(targetStock[item.ingredientId] ?? item.stock) > 0 && (
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={openingCosts[item.ingredientId] ?? ""}
+                        onChange={(e) => setOpeningCosts((prev) => ({ ...prev, [item.ingredientId]: e.target.value }))}
+                        placeholder={`Biaya awal / ${UNIT_LABELS[item.baseUnit] || item.baseUnit} (Rp)`}
+                        className="h-8 w-full text-sm sm:w-64"
+                      />
+                    )}
+                    <Input
+                      type="text"
+                      value={reasons[item.ingredientId] ?? ""}
+                      onChange={(e) =>
+                        setReasons((prev) => ({
+                          ...prev,
+                          [item.ingredientId]: e.target.value,
+                        }))
+                      }
+                      placeholder="Alasan penyesuaian (wajib)"
+                      className="h-8 w-full text-sm sm:w-64"
+                    />
+                  </div>
                 )}
               </li>
             ))}

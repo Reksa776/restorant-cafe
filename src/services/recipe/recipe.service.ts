@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { NotFoundError, ValidationError } from "@/lib/errors";
+import { ingredientUnitFactor } from "@/lib/ingredient-units";
 import type {
   RecipeDto,
   RecipeItemDto,
@@ -77,7 +78,7 @@ class RecipeService {
    * - ≥ 1 item, no duplicate ingredient
    * - every ingredient exists in the same restaurant
    * - quantity is a valid Decimal > 0 (never Number())
-   * - unit matches ingredient.baseUnit (no conversion)
+   * - unit is compatible with ingredient.baseUnit (quantity is normalized)
    *
    * Single transaction: deleteMany + createMany inside a recipe upsert —
    * a partial save is impossible.
@@ -126,9 +127,9 @@ class RecipeService {
       }
 
       const ingredient = ingredientById.get(item.ingredientId)!;
-      if (item.unit !== ingredient.baseUnit) {
+      if (ingredientUnitFactor(item.unit, ingredient.baseUnit) == null) {
         throw new ValidationError(
-          `Unit untuk ${ingredient.name} harus ${ingredient.baseUnit}`
+          `Satuan ${item.unit} tidak sesuai dengan satuan dasar ${ingredient.baseUnit} untuk ${ingredient.name}`
         );
       }
 

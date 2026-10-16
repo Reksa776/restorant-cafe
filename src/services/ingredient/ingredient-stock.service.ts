@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ConflictError, IngredientCompletionError, NotFoundError, ValidationError } from "@/lib/errors";
 import { extractSelection } from "@/services/costing/customization-selection";
+import { ingredientUnitFactor } from "@/lib/ingredient-units";
 
 // ============================================================
 // Ingredient Stock Service
@@ -168,6 +169,7 @@ interface AggregatedRequirement {
 /** BOM line shape needed for consumption (WAC is irrelevant to stock). */
 interface ConsumptionBomLine {
   quantity: Prisma.Decimal;
+  unit: string;
   ingredient: { id: string; name: string; baseUnit: string; isActive: boolean } | null;
 }
 
@@ -190,6 +192,7 @@ interface OptionConsumptionRow {
 /** Addon/option mini-BOM sub-select shared by both component queries. */
 const CONSUMPTION_BOM_SELECT = {
   quantity: true,
+  unit: true,
   ingredient: {
     select: { id: true, name: true, baseUnit: true, isActive: true },
   },
@@ -282,6 +285,7 @@ export async function consumeOrderIngredients(
             items: {
               select: {
                 quantity: true,
+                unit: true,
                 ingredient: {
                   select: { id: true, name: true, baseUnit: true, isActive: true },
                 },
@@ -397,7 +401,9 @@ export async function consumeOrderIngredients(
             recipeItem.ingredient,
             `resep ${product.name}`
           );
-          addRequirement(ingredient, recipeItem.quantity.mul(orderQty));
+          const factor = ingredientUnitFactor(recipeItem.unit, ingredient.baseUnit);
+          if (!factor) throw new IngredientCompletionError("INVALID_INGREDIENT_UNIT", `Satuan bahan pada resep ${product.name} tidak cocok.`);
+          addRequirement(ingredient, recipeItem.quantity.mul(factor).mul(orderQty));
         }
       }
     }
@@ -446,7 +452,9 @@ export async function consumeOrderIngredients(
           line.ingredient,
           `addon ${addon.name}`
         );
-        addRequirement(ingredient, line.quantity.mul(addonQty).mul(orderQty));
+        const factor = ingredientUnitFactor(line.unit, ingredient.baseUnit);
+        if (!factor) throw new IngredientCompletionError("INVALID_INGREDIENT_UNIT", `Satuan bahan pada addon ${addon.name} tidak cocok.`);
+        addRequirement(ingredient, line.quantity.mul(factor).mul(addonQty).mul(orderQty));
       }
     }
 
@@ -477,7 +485,9 @@ export async function consumeOrderIngredients(
           line.ingredient,
           `pilihan ${option.name}`
         );
-        addRequirement(ingredient, line.quantity.mul(orderQty));
+        const factor = ingredientUnitFactor(line.unit, ingredient.baseUnit);
+        if (!factor) throw new IngredientCompletionError("INVALID_INGREDIENT_UNIT", `Satuan bahan pada pilihan ${option.name} tidak cocok.`);
+        addRequirement(ingredient, line.quantity.mul(factor).mul(orderQty));
       }
     }
   }
@@ -644,7 +654,8 @@ export async function adjustIngredientStock(
   targetStock: number,
   reason: string,
   userId: string,
-  branchFilters?: string[] | null
+  branchFilters?: string[] | null,
+  openingUnitCost?: number
 ) {
   // Validate ingredient exists and belongs to restaurant
   const ingredient = await prisma.ingredient.findFirst({
@@ -671,29 +682,67 @@ export async function adjustIngredientStock(
   const existing = await prisma.branchIngredient.findUnique({
     where: { branchId_ingredientId: { branchId, ingredientId } },
   });
+  if (openingUnitCost != null && existing?.averageCost != null) {
+    throw new ValidationError("Biaya stok awal hanya dapat diisi sebelum WAC tersedia");
+  }
+  if (existing?.averageCost == null && targetStock > 0 && openingUnitCost == null) {
+    throw new ValidationError("WAC belum tersedia. Isi biaya per satuan untuk stok awal atau terima pembelian bahan baku.");
+  }
+  if (openingUnitCost != null && targetStock <= 0) {
+    throw new ValidationError("Isi stok awal lebih dari 0 untuk menetapkan biaya awal");
+  }
   const currentStockD = existing?.stock ?? new Prisma.Decimal(0);
   const currentStock = Number(currentStockD);
   const deltaD = new Prisma.Decimal(targetStock).sub(currentStockD);
 
-  if (deltaD.isZero()) {
+  if (deltaD.isZero() && openingUnitCost == null) {
     throw new ValidationError("Nilai stok tidak berubah");
+  }
+
+  // Existing stock may predate WAC tracking. Let admins value it without
+  // manufacturing a zero-quantity stock movement.
+  if (deltaD.isZero() && openingUnitCost != null) {
+    const initialized = await prisma.branchIngredient.updateMany({
+      where: { branchId, ingredientId, averageCost: null },
+      data: { averageCost: new Prisma.Decimal(openingUnitCost).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP) },
+    });
+    if (!initialized.count) throw new ConflictError("WAC bahan baru saja diperbarui. Muat ulang stok dan coba lagi.");
+    return {
+      ingredientId, ingredientName: ingredient.name, baseUnit: ingredient.baseUnit,
+      branchId, branchName: branch.name, previousStock: currentStock,
+      targetStock, delta: 0, movementId: null,
+    };
   }
 
   const movementType: IngredientMovementType = deltaD.greaterThan(0) ? "IN" : "OUT";
   const quantity = Number(deltaD); // signed: positive for IN, negative for OUT
 
   const result = await prisma.$transaction(async (tx) => {
-    return applyIngredientStockMovement(tx, {
+    const movement = await applyIngredientStockMovement(tx, {
       restaurantId,
       branchId,
       ingredientId,
       type: movementType,
       quantity,
-      reason,
+      reason: openingUnitCost != null
+        ? `${reason} (biaya stok awal ${openingUnitCost} per ${ingredient.baseUnit})`
+        : reason,
       refType: IngredientStockRefType.STOCK_ADJUSTMENT,
       refId: null,
       userId,
     });
+    if (openingUnitCost != null) {
+      const initialized = await tx.branchIngredient.updateMany({
+        where: { branchId, ingredientId, averageCost: null },
+        data: {
+          averageCost: new Prisma.Decimal(openingUnitCost).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP),
+        },
+      });
+      if (!initialized.count) {
+        throw new ConflictError("WAC bahan baru saja diperbarui. Muat ulang stok dan coba lagi.");
+      }
+    }
+    return movement;
   }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 
   return {

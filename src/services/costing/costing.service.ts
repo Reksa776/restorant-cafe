@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { NotFoundError } from "@/lib/errors";
 import { assertBranchInScope } from "@/lib/auth-helpers";
 import type { AuthenticatedContext } from "@/lib/auth-helpers";
+import { ingredientUnitFactor } from "@/lib/ingredient-units";
 import type {
   CostingListResponse,
   GetCostingListInput,
@@ -307,8 +308,15 @@ class CostingService {
         missingReason = "MISSING_WAC";
       } else {
         wac = branchIngredient.averageCost;
-        cost = item.quantity.mul(wac);
-        zeroCost = wac.isZero();
+        const unitFactor = ingredientUnitFactor(item.unit, ingredient.baseUnit);
+        if (unitFactor == null) {
+          missingReason = "INVALID_UNIT";
+        } else {
+          cost = item.quantity.mul(new Prisma.Decimal(unitFactor)).mul(wac);
+        }
+      }
+      if (!missingReason && cost != null) {
+        zeroCost = wac?.isZero() ?? false;
         covered += 1;
         sum = sum.add(cost);
       }

@@ -51,6 +51,7 @@ import {
   recommendationService,
   type RecommendationProduct,
 } from "@/services/recommendation.service";
+import { compatibleIngredientUnits } from "@/lib/ingredient-units";
 
 // ============================================================
 // Helpers
@@ -74,21 +75,21 @@ function apiErrorMessage(error: unknown, fallback: string): string {
 
 /**
  * One editable recipe row in the Komposisi tab of the product dialog.
- * Unit is NOT editable — it always follows the selected ingredient's
- * baseUnit (F.3 rule; no unit conversion).
+ * Unit may be selected from units compatible with the ingredient's base unit.
  */
 interface RecipeRow {
   key: string;
   ingredientId: string;
   quantity: string;
+  unit: string;
 }
 
-/** One editable mini-BOM row (addon/option composition). Unit always follows
- * the ingredient's baseUnit — same rule as the product recipe (no conversion). */
+/** One editable mini-BOM row (addon/option composition). */
 interface BomRow {
   key: string;
   ingredientId: string;
   quantity: string;
+  unit: string;
 }
 
 /** Which addon/option the mini-BOM dialog is editing. `parentId` is the
@@ -379,6 +380,7 @@ export default function MenuPage() {
               key: crypto.randomUUID(),
               ingredientId: it.ingredientId,
               quantity: it.quantity,
+              unit: it.unit,
             }))
           : []
       );
@@ -395,8 +397,15 @@ export default function MenuPage() {
     if (tab === "komposisi" && editingProduct) {
       if (recipeIngredients.length === 0) {
         ingredientService
-          .list({ isActive: "true", limit: 100 })
-          .then((res) => setRecipeIngredients(res.items))
+        .list({ isActive: "true", page: 1, limit: 100 })
+          .then(async (res) => {
+            const all = [...res.items];
+            for (let page = 2; page <= res.totalPages; page++) {
+              const next = await ingredientService.list({ isActive: "true", page, limit: 100 });
+              all.push(...next.items);
+            }
+            setRecipeIngredients(all);
+          })
           .catch(() => toast.error("Gagal memuat bahan baku"));
       }
       loadRecipeRows(editingProduct.id);
@@ -410,7 +419,7 @@ export default function MenuPage() {
     }
     setRecipeRows((rows) => [
       ...rows,
-      { key: crypto.randomUUID(), ingredientId: "", quantity: "" },
+      { key: crypto.randomUUID(), ingredientId: "", quantity: "", unit: "" },
     ]);
   };
 
@@ -456,11 +465,10 @@ export default function MenuPage() {
     setIsRecipeSaving(true);
     try {
       const items = filled.map((r) => {
-        const ing = recipeIngredients.find((i) => i.id === r.ingredientId);
         return {
           ingredientId: r.ingredientId,
           quantity: r.quantity.trim(),
-          unit: ing?.baseUnit ?? "",
+          unit: r.unit,
         };
       });
       const recipe = await menuService.saveRecipe(editingProduct.id, items);
@@ -471,6 +479,7 @@ export default function MenuPage() {
               key: crypto.randomUUID(),
               ingredientId: it.ingredientId,
               quantity: it.quantity,
+              unit: it.unit,
             }))
           : []
       );
@@ -650,8 +659,13 @@ export default function MenuPage() {
   const ensureIngredients = useCallback(async () => {
     if (recipeIngredients.length > 0) return;
     try {
-      const res = await ingredientService.list({ isActive: "true", limit: 100 });
-      setRecipeIngredients(res.items);
+      const first = await ingredientService.list({ isActive: "true", page: 1, limit: 100 });
+      const all = [...first.items];
+      for (let page = 2; page <= first.totalPages; page++) {
+        const next = await ingredientService.list({ isActive: "true", page, limit: 100 });
+        all.push(...next.items);
+      }
+      setRecipeIngredients(all);
     } catch {
       toast.error("Gagal memuat bahan baku");
     }
@@ -672,6 +686,7 @@ export default function MenuPage() {
           key: crypto.randomUUID(),
           ingredientId: it.ingredientId,
           quantity: it.quantity,
+          unit: it.unit,
         }))
       );
     } catch (error) {
@@ -688,8 +703,8 @@ export default function MenuPage() {
       return;
     }
     setBomRows((rows) => [
-      ...rows,
-      { key: crypto.randomUUID(), ingredientId: "", quantity: "" },
+          ...rows,
+      { key: crypto.randomUUID(), ingredientId: "", quantity: "", unit: "" },
     ]);
   };
 
@@ -724,11 +739,10 @@ export default function MenuPage() {
     setIsBomSaving(true);
     try {
       const items: BomItemInput[] = filled.map((r) => {
-        const ing = recipeIngredients.find((i) => i.id === r.ingredientId);
         return {
           ingredientId: r.ingredientId,
           quantity: r.quantity.trim(),
-          unit: ing?.baseUnit ?? "",
+          unit: r.unit,
         };
       });
       if (bomTarget.kind === "addon") {
@@ -1017,9 +1031,11 @@ export default function MenuPage() {
                         <div key={row.key} className="grid grid-cols-[1fr_100px_100px_36px] items-center gap-2">
                           <Select
                             value={row.ingredientId || "__none__"}
-                            onValueChange={(v) =>
-                              updateRecipeRow(row.key, { ingredientId: v && v !== "__none__" ? v : "" })
-                            }
+                            onValueChange={(v) => {
+                              const id = v && v !== "__none__" ? v : "";
+                              const ing = recipeIngredients.find((i) => i.id === id);
+                              updateRecipeRow(row.key, { ingredientId: id, unit: ing?.baseUnit ?? "" });
+                            }}
                           >
                             <SelectTrigger>
                               <SelectValue placeholder="Pilih bahan" />
@@ -1044,9 +1060,12 @@ export default function MenuPage() {
                             onChange={(e) => updateRecipeRow(row.key, { quantity: e.target.value })}
                             placeholder="0.150"
                           />
-                          <div className="flex h-9 items-center justify-center rounded-md border bg-gray-50 text-sm text-gray-600">
-                            {selected?.baseUnit ?? "—"}
-                          </div>
+                      <Select value={row.unit ?? "__none__"} onValueChange={(unit) => updateRecipeRow(row.key, { unit: unit ?? "" })} disabled={!selected}>
+                            <SelectTrigger><SelectValue placeholder="Satuan" /></SelectTrigger>
+                            <SelectContent>
+                              {selected ? compatibleIngredientUnits(selected.baseUnit).map((unit) => <SelectItem key={unit} value={unit}>{unit}</SelectItem>) : <SelectItem value="__none__">—</SelectItem>}
+                            </SelectContent>
+                          </Select>
                           <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={() => removeRecipeRow(row.key)}>
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -1314,11 +1333,11 @@ export default function MenuPage() {
                     >
                       <Select
                         value={row.ingredientId || "__none__"}
-                        onValueChange={(v) =>
-                          updateBomRow(row.key, {
-                            ingredientId: v && v !== "__none__" ? v : "",
-                          })
-                        }
+                        onValueChange={(v) => {
+                          const id = v && v !== "__none__" ? v : "";
+                          const ing = recipeIngredients.find((i) => i.id === id);
+                          updateBomRow(row.key, { ingredientId: id, unit: ing?.baseUnit ?? "" });
+                        }}
                       >
                         <SelectTrigger>
                           <SelectValue placeholder="Pilih bahan" />
@@ -1343,9 +1362,12 @@ export default function MenuPage() {
                         onChange={(e) => updateBomRow(row.key, { quantity: e.target.value })}
                         placeholder="0.020"
                       />
-                      <div className="flex h-9 items-center justify-center rounded-md border bg-gray-50 text-sm text-gray-600">
-                        {selected?.baseUnit ?? "—"}
-                      </div>
+                      <Select value={row.unit ?? "__none__"} onValueChange={(unit) => updateBomRow(row.key, { unit: unit ?? "" })} disabled={!selected}>
+                        <SelectTrigger><SelectValue placeholder="Satuan" /></SelectTrigger>
+                        <SelectContent>
+                          {selected ? compatibleIngredientUnits(selected.baseUnit).map((unit) => <SelectItem key={unit} value={unit}>{unit}</SelectItem>) : <SelectItem value="__none__">—</SelectItem>}
+                        </SelectContent>
+                      </Select>
                       <Button
                         variant="ghost"
                         size="sm"

@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { ingredientUnitFactor } from "@/lib/ingredient-units";
 
 // ============================================================
 // H4.2 — Tolerant reader for the stored `OrderItem.customizations` snapshot.
@@ -167,6 +168,7 @@ export type ComponentReason =
   | "INACTIVE_COMPONENT"
   | "NOT_FOUND"
   | "INVALID_QUANTITY"
+  | "INVALID_UNIT"
   | "MALFORMED_CUSTOMIZATION";
 
 export interface ComponentIngredientCost {
@@ -226,7 +228,13 @@ export function computeComponentCost(
     }
 
     const wac = branchIngredient.averageCost;
-    const cost = line.quantity.mul(wac);
+    const factor = ingredientUnitFactor(line.unit, ingredient.baseUnit);
+    if (factor == null) {
+      reasons.add("INVALID_UNIT");
+      items.push(toIngredientCost(line, null, null, false, null));
+      continue;
+    }
+    const cost = line.quantity.mul(new Prisma.Decimal(factor)).mul(wac);
     sum = sum.add(cost);
     covered += 1;
     items.push(toIngredientCost(line, wac, cost, wac.isZero(), null));

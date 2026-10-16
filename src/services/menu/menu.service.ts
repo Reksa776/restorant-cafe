@@ -10,6 +10,7 @@ import { auditService } from "@/services/audit/audit.service";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import { normalizeProductImageUrl } from "@/lib/product-image";
+import { ingredientUnitFactor } from "@/lib/ingredient-units";
 import { productImageUploadService } from "@/services/upload/product-image-upload.service";
 
 /**
@@ -962,9 +963,9 @@ export class MenuService {
         throw new ValidationError("Quantity melebihi batas maksimum");
       }
 
-      if (item.unit !== ingredient.baseUnit) {
+      if (ingredientUnitFactor(item.unit, ingredient.baseUnit) == null) {
         throw new ValidationError(
-          `Unit untuk ${ingredient.name} harus ${ingredient.baseUnit}`
+          `Satuan ${item.unit} tidak sesuai dengan satuan dasar ${ingredient.baseUnit} untuk ${ingredient.name}`
         );
       }
 

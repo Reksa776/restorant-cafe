@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { compatibleIngredientUnits } from "@/lib/ingredient-units";
 
 const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
 
@@ -144,7 +145,7 @@ export default function NewPurchasePage() {
       prev.map((it, i) => {
         if (i !== index) return it;
         const updated = { ...it, ...patch };
-        // Unit is fixed to the ingredient's base unit (no conversion in F.2/G).
+        // Default to the ingredient's base unit; compatible units can be chosen.
         if (patch.ingredientId) {
           const ing = ingredients.find((x) => x.id === patch.ingredientId);
           if (ing) updated.unit = ing.baseUnit;
@@ -367,12 +368,15 @@ export default function NewPurchasePage() {
                 </div>
                 <div className="col-span-3 space-y-1 sm:col-span-2">
                   <Label className="text-xs text-gray-500">Satuan</Label>
-                  <div className="flex h-9 items-center rounded-md border border-gray-200 bg-gray-50 px-3 text-sm text-gray-700">
-                    {it.unit || "—"}
-                  </div>
+                  <Select value={it.unit ?? "__none__"} onValueChange={(unit) => setIngredientItem(index, { unit: unit ?? "" })} disabled={!selectedIng}>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Satuan" /></SelectTrigger>
+                    <SelectContent>
+                      {selectedIng ? compatibleIngredientUnits(selectedIng.baseUnit).map((unit) => <SelectItem key={unit} value={unit}>{unit}</SelectItem>) : <SelectItem value="__none__">—</SelectItem>}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="col-span-3 space-y-1 sm:col-span-2">
-                  <Label className="text-xs text-gray-500">Harga Beli</Label>
+                  <Label className="text-xs text-gray-500">Harga per {it.unit || "satuan"}</Label>
                   <Input
                     type="number"
                     min={0}

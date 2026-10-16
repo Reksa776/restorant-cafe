@@ -6,6 +6,7 @@ import {
   ValidationError,
 } from "@/lib/errors";
 import { round2 } from "@/lib/money";
+import { ingredientUnitFactor } from "@/lib/ingredient-units";
 import {
   applyStockMovement,
   StockRefType,
@@ -142,7 +143,7 @@ function toNumber(value: Prisma.Decimal | number): number {
 /**
  * Validate raw ingredient purchase items against the tenant's Ingredient master
  * and return normalized rows with server-derived lineTotal.
- * unit must match Ingredient.baseUnit (no conversion in F.2).
+ * units may be compatible; received stock and WAC are normalized to baseUnit.
  */
 async function normalizeIngredientItems(
   restaurantId: string,
@@ -174,10 +175,10 @@ async function normalizeIngredientItems(
     if (!ing) {
       throw new ValidationError("Bahan baku tidak ditemukan");
     }
-    // F.2: unit must match baseUnit (no conversion)
-    if (item.unit !== ing.baseUnit) {
+    const unitFactor = ingredientUnitFactor(item.unit, ing.baseUnit);
+    if (unitFactor == null) {
       throw new ValidationError(
-        `Satuan pembelian ${item.unit} tidak sesuai dengan satuan dasar ${ing.baseUnit} untuk ${ing.name}`
+        `Satuan pembelian ${item.unit} tidak dapat dikonversi ke ${ing.baseUnit} untuk ${ing.name}`
       );
     }
     const quantity = Number(item.quantity);
@@ -555,7 +556,7 @@ export async function receivePurchase(
     },
     include: {
       items: true,
-      purchaseIngredients: true,
+      purchaseIngredients: { include: { ingredient: { select: { baseUnit: true } } } },
       branch: { select: { code: true, name: true } },
       supplier: { select: { name: true } },
     },
@@ -576,9 +577,11 @@ export async function receivePurchase(
   const ingredientAggregates = new Map<string, { totalQty: Prisma.Decimal; totalCost: Prisma.Decimal; lastUnitCost: Prisma.Decimal }>();
   for (const pi of purchase.purchaseIngredients) {
     const existing = ingredientAggregates.get(pi.ingredientId);
-    const qty = new Prisma.Decimal(pi.quantity.toString());
+    const factor = ingredientUnitFactor(pi.unit, pi.ingredient.baseUnit);
+    if (factor == null) throw new ValidationError("Satuan pembelian tidak kompatibel dengan satuan dasar bahan");
+    const qty = new Prisma.Decimal(pi.quantity.toString()).mul(new Prisma.Decimal(factor));
     const cost = new Prisma.Decimal(pi.lineTotal.toString());
-    const unitCost = new Prisma.Decimal(pi.unitCost.toString());
+    const unitCost = new Prisma.Decimal(pi.unitCost.toString()).div(new Prisma.Decimal(factor));
     if (existing) {
       existing.totalQty = existing.totalQty.add(qty);
       existing.totalCost = existing.totalCost.add(cost);

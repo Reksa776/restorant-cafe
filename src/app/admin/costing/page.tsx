@@ -64,9 +64,9 @@ function apiErrorMessage(error: unknown, fallback: string): string {
 }
 
 const statusLabels: Record<CostStatus, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
-  COMPLETE: { label: "Complete", variant: "default" },
-  INCOMPLETE: { label: "Incomplete", variant: "destructive" },
-  NO_RECIPE: { label: "No Recipe", variant: "secondary" },
+  COMPLETE: { label: "Lengkap", variant: "default" },
+  INCOMPLETE: { label: "Belum lengkap", variant: "destructive" },
+  NO_RECIPE: { label: "Belum ada resep", variant: "secondary" },
 };
 
 function StatusBadge({ status }: { status: CostStatus }) {
@@ -279,11 +279,11 @@ function CostingDetailDialog({
                       ) : (
                         <Save className="h-4 w-4" />
                       )}
-                      <span className="ml-2">Simpan</span>
+                    <span className="ml-2">Simpan</span>
                     </Button>
                   </div>
                   <p className="text-xs text-amber-600">
-                    Manual HPP tidak menggunakan Recipe/WAC.
+                    Isi HPP per porsi secara manual. Nilai ini dapat mencakup kemasan, tenaga kerja, waste, atau biaya lain yang ingin dihitung. Resep dan WAC tidak digunakan selama mode manual aktif.
                   </p>
                 </div>
               ) : (
@@ -315,11 +315,11 @@ function CostingDetailDialog({
                 onClick={() => setSimulationOpen(true)}
               >
                 <FlaskConical className="mr-2 h-4 w-4" />
-                What-If Simulation
+                Simulasi perubahan harga/HPP
               </Button>
             </div>
 
-            <h4 className="mt-5 mb-2 text-sm font-semibold">RECIPE COST</h4>
+            <h4 className="mt-5 mb-2 text-sm font-semibold">Rincian biaya resep</h4>
             {detail.costingMode === "MANUAL" ? (
               <p className="rounded-lg border border-dashed p-4 text-sm text-gray-500">
                 Metode Manual — HPP memakai nilai manual per cabang; Recipe/WAC
@@ -333,11 +333,11 @@ function CostingDetailDialog({
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Ingredient</TableHead>
+                <TableHead>Bahan baku</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
-                    <TableHead>Unit</TableHead>
-                    <TableHead className="text-right">WAC</TableHead>
-                    <TableHead className="text-right">Cost</TableHead>
+                <TableHead>Satuan</TableHead>
+                <TableHead className="text-right">WAC</TableHead>
+                <TableHead className="text-right">Biaya</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -442,6 +442,7 @@ function componentReasonLabel(reasons: string[]): string {
     INACTIVE_COMPONENT: "Addon/option tidak aktif",
     NOT_FOUND: "Addon/option tidak ditemukan",
     INVALID_QUANTITY: "Jumlah pilihan tidak valid",
+    INVALID_UNIT: "Satuan bahan tidak sesuai",
     MALFORMED_CUSTOMIZATION: "Data pilihan tidak dapat dibaca",
   };
   const labels = reasons.map((r) => map[r] ?? r);
@@ -454,6 +455,8 @@ function CostingItemRow({ item }: { item: CostingItem }) {
       ? "WAC belum tersedia"
       : item.missingReason === "INACTIVE_INGREDIENT"
         ? "Ingredient tidak aktif"
+        : item.missingReason === "INVALID_UNIT"
+          ? "Satuan tidak cocok"
         : null;
 
   return (
@@ -831,8 +834,14 @@ export default function CostingPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [status, setStatus] = useState<CostStatus | "">("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(search), 300);
+    return () => window.clearTimeout(timer);
+  }, [search]);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
@@ -860,7 +869,7 @@ export default function CostingPage() {
         page,
         limit: 20,
         categoryId: categoryId || undefined,
-        search: search || undefined,
+        search: debouncedSearch || undefined,
         status: status || undefined,
       });
       setItems(result.items);
@@ -875,7 +884,7 @@ export default function CostingPage() {
     } finally {
       setLoading(false);
     }
-  }, [workingBranchId, page, categoryId, search, status]);
+  }, [workingBranchId, page, categoryId, debouncedSearch, status]);
 
   useEffect(() => {
     load();
@@ -883,7 +892,7 @@ export default function CostingPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [categoryId, status, search, workingBranchId]);
+  }, [categoryId, status, debouncedSearch, workingBranchId]);
 
   const openDetail = (productId: string) => {
     setSelectedProductId(productId);
@@ -893,11 +902,20 @@ export default function CostingPage() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-bold">Product Costing</h1>
+        <h1 className="text-xl font-bold">HPP Produk</h1>
         <p className="text-sm text-gray-500">
-          HPP saat ini per cabang dari Recipe × WAC — data cost bersifat internal.
+          HPP dihitung per cabang dari resep dan biaya rata-rata bahan (WAC). Pengaturan HPP bersifat opsional untuk order dan checkout.
         </p>
       </div>
+
+      <Card className="border-blue-100 bg-blue-50/50">
+        <CardContent className="grid gap-3 p-4 text-sm md:grid-cols-3">
+          <div><p className="font-semibold">1. Siapkan bahan baku</p><p className="text-gray-600">Buat bahan dan satuan dasarnya.</p><a className="text-blue-700 underline" href="/admin/ingredients">Kelola bahan baku</a></div>
+          <div><p className="font-semibold">2. Isi biaya bahan per cabang</p><p className="text-gray-600">Terima pembelian atau atur biaya stok awal.</p><a className="text-blue-700 underline" href="/admin/purchasing/purchases/new">Buat pembelian</a></div>
+          <div><p className="font-semibold">3. Hubungkan resep ke menu</p><p className="text-gray-600">Edit produk menu, lalu tambah komposisi bahan.</p><a className="text-blue-700 underline" href="/admin/menu">Kelola menu</a></div>
+          <p className="text-xs text-gray-500 md:col-span-3">Jika HPP tidak disiapkan atau dinonaktifkan, customer tetap dapat memesan dan checkout. Stok produk menu tetap dikelola terpisah oleh kasir.</p>
+        </CardContent>
+      </Card>
 
       {defaultedBranch && (
         <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
@@ -946,9 +964,9 @@ export default function CostingPage() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">Semua Status</SelectItem>
-                <SelectItem value="COMPLETE">Complete</SelectItem>
-                <SelectItem value="INCOMPLETE">Incomplete</SelectItem>
-                <SelectItem value="NO_RECIPE">No Recipe</SelectItem>
+                <SelectItem value="COMPLETE">Lengkap</SelectItem>
+                <SelectItem value="INCOMPLETE">Belum lengkap</SelectItem>
+                <SelectItem value="NO_RECIPE">Belum ada resep</SelectItem>
               </SelectContent>
             </Select>
 
@@ -978,8 +996,8 @@ export default function CostingPage() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Product</TableHead>
-                  <TableHead className="text-right">Price</TableHead>
+                  <TableHead>Produk</TableHead>
+                  <TableHead className="text-right">Harga jual</TableHead>
                   <TableHead className="text-right">HPP</TableHead>
                   <TableHead className="text-right">Margin</TableHead>
                   <TableHead className="text-right">Food Cost</TableHead>

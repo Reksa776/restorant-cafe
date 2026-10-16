@@ -13,7 +13,7 @@ import { z } from "zod/v4";
 export const costStatuses = ["NO_RECIPE", "COMPLETE", "INCOMPLETE"] as const;
 export type CostStatus = (typeof costStatuses)[number];
 
-export const missingReasons = ["MISSING_WAC", "INACTIVE_INGREDIENT"] as const;
+export const missingReasons = ["MISSING_WAC", "INACTIVE_INGREDIENT", "INVALID_UNIT"] as const;
 export type MissingReason = (typeof missingReasons)[number];
 
 // -----------------------------------------------
@@ -148,6 +148,7 @@ export const componentReasons = [
   "INACTIVE_COMPONENT",
   "NOT_FOUND",
   "INVALID_QUANTITY",
+  "INVALID_UNIT",
   "MALFORMED_CUSTOMIZATION",
 ] as const;
 export type ComponentReason = (typeof componentReasons)[number];

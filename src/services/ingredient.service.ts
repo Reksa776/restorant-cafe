@@ -119,6 +119,7 @@ export const ingredientService = {
     data: {
       branchId: string;
       targetStock: number;
+      openingUnitCost?: number;
       reason: string;
     }
   ): Promise<{

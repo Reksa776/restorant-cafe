@@ -25,6 +25,7 @@ export const GetIngredientsSchema = z.object({
 export const AdjustIngredientStockSchema = z.object({
   branchId: z.string().min(1, "Cabang wajib dipilih"),
   targetStock: z.number().min(0, "Stok tidak boleh negatif"),
+  openingUnitCost: z.number().min(0, "Biaya per satuan tidak boleh negatif").optional(),
   reason: z.string().min(1, "Alasan penyesuaian wajib diisi").max(500),
 });
 

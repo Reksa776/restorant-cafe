@@ -7,7 +7,7 @@ import { recipeUnits } from "@/services/recipe/recipe.types";
 // Mirrors the F.3 Recipe/RecipeItem contract exactly so both BOMs
 // behave identically:
 //   - quantity is a positive decimal STRING ("0.020"), never a JS float
-//   - unit MUST equal Ingredient.baseUnit (no unit conversion)
+//   - unit must be compatible with Ingredient.baseUnit (quantity is normalized)
 //   - a given ingredient may appear at most once per addon/option
 //
 // `items: []` is allowed and means "no BOM" (clears any existing

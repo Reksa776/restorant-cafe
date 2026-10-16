@@ -34,7 +34,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
       parsed.data.targetStock,
       parsed.data.reason,
       ctx.userId,
-      authorizedBranches(ctx)
+      authorizedBranches(ctx),
+      parsed.data.openingUnitCost
     );
 
     return successResponse(result, "Stok bahan baku berhasil disesuaikan");

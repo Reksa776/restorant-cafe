@@ -1,4 +1,5 @@
 import { Prisma, OrderItemCostStatus } from "@prisma/client";
+import { ingredientUnitFactor } from "@/lib/ingredient-units";
 import {
   aggregateSelectionCost,
   extractSelection,
@@ -71,9 +72,11 @@ export interface HistoricalHppProduct {
   recipe: {
     items: Array<{
       quantity: Prisma.Decimal;
+      unit?: string;
       ingredient: {
         id: string;
         isActive: boolean;
+        baseUnit?: string;
         branchIngredients: Array<{ averageCost: Prisma.Decimal | null }>;
       };
     }>;
@@ -146,7 +149,13 @@ export function computeHistoricalHpp(
         break;
       }
 
-      sum = sum.add(item.quantity.mul(branchIngredient.averageCost));
+      const factor = ingredientUnitFactor(item.unit ?? ingredient.baseUnit ?? "", ingredient.baseUnit ?? item.unit ?? "");
+      if (factor == null) {
+        map.set(product.id, { hpp: null, status: "MISSING_WAC" });
+        incomplete = true;
+        break;
+      }
+      sum = sum.add(item.quantity.mul(new Prisma.Decimal(factor)).mul(branchIngredient.averageCost));
       covered += 1;
     }
 
@@ -486,10 +495,12 @@ async function loadPerProductHpp(
           items: {
             select: {
               quantity: true,
+              unit: true,
               ingredient: {
                 select: {
                   id: true,
                   isActive: true,
+                  baseUnit: true,
                   branchIngredients: {
                     where: { branchId: input.branchId },
                     select: { averageCost: true },
