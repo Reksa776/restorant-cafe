@@ -101,7 +101,15 @@ export class BrandingUploadService {
 
     try {
       await fs.mkdir(absoluteDir, { recursive: true });
-      await fs.writeFile(path.join(absoluteDir, filename), bytes);
+      // Use a FileHandle for the runtime-generated filename. Turbopack treats
+      // fs.writeFile(dynamicPath, ...) as a build-time file glob and can scan
+      // the entire repository when tenant IDs/UUIDs are part of the path.
+      const handle = await fs.open(path.join(absoluteDir, filename), "wx");
+      try {
+        await handle.writeFile(bytes);
+      } finally {
+        await handle.close();
+      }
     } catch (error) {
       console.error("Failed to save uploaded logo:", error);
       throw new AppError("Upload failed", 500, "UPLOAD_FAILED");
