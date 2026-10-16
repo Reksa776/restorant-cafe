@@ -453,7 +453,7 @@ export default function ReservationPaymentPage({
                   {details?.code ?? code}
                 </p>
               </div>
-              <span className="shrink-0 rounded-full bg-brand-secondary text-brand-primary border border-brand-primary/20 text-[11px] font-bold px-2.5 py-1">
+              <span className="shrink-0 rounded-full bg-brand-secondary text-brand-secondary-foreground border border-brand-primary/20 text-[11px] font-bold px-2.5 py-1">
                 {RESERVATION_STATUS_LABELS[details?.status ?? ""] ??
                   details?.status ??
                   "—"}

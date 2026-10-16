@@ -361,7 +361,7 @@ function CustomizationModal({
                       onClick={() => handleGroupSelect(group.id, option.id, isMulti, group.maxSelect)}
                       className={`w-full flex items-center justify-between p-3 rounded-lg border-2 transition-colors text-sm ${
                         isOptionSelected
-                          ? "border-brand-primary bg-brand-secondary"
+                          ? "border-brand-primary bg-brand-secondary text-brand-secondary-foreground"
                           : "border-gray-200 hover:border-brand-accent"
                       }`}
                     >
@@ -375,7 +375,7 @@ function CustomizationModal({
                             }`}
                           >
                             {isOptionSelected && (
-                              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                              <svg className="w-3 h-3 text-brand-primary-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                               </svg>
                             )}
@@ -396,7 +396,7 @@ function CustomizationModal({
                         <span>{option.name}</span>
                       </div>
                       {Number(option.priceAdjustment) !== 0 && (
-                        <span className="text-gray-500 text-xs">
+                        <span className={`${isOptionSelected ? "text-brand-secondary-foreground/70" : "text-gray-500"} text-xs`}>
                           {Number(option.priceAdjustment) > 0 ? "+" : ""} Rp{Math.abs(Number(option.priceAdjustment)).toLocaleString("id-ID")}
                         </span>
                       )}
@@ -436,7 +436,7 @@ function CustomizationModal({
                         >
                           {qty > 0 && (
                             <svg
-                              className="w-3 h-3 text-white"
+                              className="w-3 h-3 text-brand-primary-foreground"
                               fill="none"
                               viewBox="0 0 24 24"
                               stroke="currentColor"
@@ -817,7 +817,7 @@ function ProductCard({
                   >
                     <Minus className="h-4 w-4" />
                   </button>
-                  <span className="min-w-7 px-1 text-center text-sm font-bold text-white tabular-nums">
+                  <span className="min-w-7 px-1 text-center text-sm font-bold text-brand-primary-foreground tabular-nums">
                     {quantity}
                   </span>
                   <button
@@ -838,7 +838,7 @@ function ProductCard({
                 >
                   <Minus className="h-4 w-4" />
                 </button>
-                <span className="w-12 text-center text-sm font-bold text-white tabular-nums">
+                <span className="w-12 text-center text-sm font-bold text-brand-primary-foreground tabular-nums">
                   {quantity}
                 </span>
                 <button
@@ -1607,14 +1607,14 @@ function MenuContent() {
           </p>
           {customerBranch && !tableContext && (
             <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-brand-secondary px-3 py-1">
-              <span className="text-[11px] font-semibold text-gray-700">
+              <span className="text-[11px] font-semibold text-brand-secondary-foreground">
                 {customerBranch.branchName}
               </span>
-              <span className="text-gray-300">•</span>
+              <span className="text-brand-secondary-foreground/40">•</span>
               <button
                 type="button"
                 onClick={handleChangeBranch}
-                className="text-[11px] font-bold text-brand-primary hover:underline"
+                className="text-[11px] font-bold text-brand-secondary-foreground hover:underline"
               >
                 Ganti Cabang
               </button>

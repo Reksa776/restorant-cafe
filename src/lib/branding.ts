@@ -77,9 +77,8 @@ export function normalizeBrandingColor(value: string): string {
 }
 
 /**
- * Pick a readable foreground (#ffffff or the app's near-black #111827) for a
- * given #RRGGBB background, using WCAG relative luminance. Prevents custom
- * themes from producing unreadable combinations (e.g. white text on white).
+ * Pick the higher-contrast foreground (#ffffff or the app's near-black
+ * #111827) for a given #RRGGBB background using WCAG contrast ratios.
  */
 export function getContrastText(hex: string): string {
   const match = /^#([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})$/.exec(
@@ -97,7 +96,10 @@ export function getContrastText(hex: string): string {
   const g = toLinear(parseInt(match[2], 16));
   const b = toLinear(parseInt(match[3], 16));
   const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  return luminance > 0.45 ? "#111827" : "#ffffff";
+  const dark = 0.009; // Approximate relative luminance of #111827.
+  const contrastWithWhite = 1.05 / (luminance + 0.05);
+  const contrastWithDark = (luminance + 0.05) / (dark + 0.05);
+  return contrastWithDark >= contrastWithWhite ? "#111827" : "#ffffff";
 }
 
 /**

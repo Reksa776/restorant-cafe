@@ -549,7 +549,7 @@ export default function AccountPage() {
                   type="button"
                   onClick={() => goToPage(page - 1)}
                   disabled={page <= 1 || ordersLoading}
-                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary hover:text-brand-secondary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Sebelumnya
                 </button>
@@ -560,7 +560,7 @@ export default function AccountPage() {
                   type="button"
                   onClick={() => goToPage(page + 1)}
                   disabled={page >= totalPages || ordersLoading}
-                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary hover:text-brand-secondary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Berikutnya
                 </button>
@@ -642,7 +642,7 @@ export default function AccountPage() {
                   type="button"
                   onClick={() => goToReservationPage(reservationPage - 1)}
                   disabled={reservationPage <= 1 || reservationsLoading}
-                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary hover:text-brand-secondary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Sebelumnya
                 </button>
@@ -656,7 +656,7 @@ export default function AccountPage() {
                     reservationPage >= reservationTotalPages ||
                     reservationsLoading
                   }
-                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-3 py-1.5 hover:bg-brand-secondary hover:text-brand-secondary-foreground transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Berikutnya
                 </button>

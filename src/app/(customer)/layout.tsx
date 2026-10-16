@@ -132,7 +132,7 @@ function CustomerHeader() {
               <button
                 type="button"
                 onClick={() => setAuthOpen(true)}
-                className="inline-flex items-center gap-1 text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-2.5 py-1 hover:bg-brand-secondary transition-colors"
+                className="inline-flex items-center gap-1 text-xs font-medium text-brand-primary border border-brand-primary/30 rounded-full px-2.5 py-1 hover:bg-brand-secondary hover:text-brand-secondary-foreground transition-colors"
               >
                 <LogIn className="h-3.5 w-3.5" />
                 Masuk

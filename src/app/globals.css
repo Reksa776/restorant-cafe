@@ -153,6 +153,18 @@
   }
 }
 
+/* Solid branding backgrounds always get their calculated matching text color.
+   Components can still choose an explicit semantic color on child elements. */
+.bg-brand-primary {
+  color: var(--brand-primary-foreground);
+}
+.bg-brand-secondary {
+  color: var(--brand-secondary-foreground);
+}
+.bg-brand-accent {
+  color: var(--brand-accent-foreground);
+}
+
 /* Hide scrollbar for horizontal scroll areas */
 .scrollbar-hide {
   -ms-overflow-style: none;

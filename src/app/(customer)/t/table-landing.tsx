@@ -286,7 +286,7 @@ export default function TableLanding({
       <button
         onClick={handleReserve}
         disabled={isContinuing}
-        className="w-full max-w-xs inline-flex items-center justify-center gap-2 rounded-xl border border-brand-primary/40 bg-brand-secondary/60 text-brand-primary py-3 font-medium hover:bg-brand-secondary transition-colors disabled:opacity-50"
+        className="w-full max-w-xs inline-flex items-center justify-center gap-2 rounded-xl border border-brand-primary/40 bg-brand-secondary/60 text-brand-secondary-foreground py-3 font-medium hover:bg-brand-secondary transition-colors disabled:opacity-50"
       >
         <CalendarDays className="h-4 w-4" />
         Reservasi Meja Ini

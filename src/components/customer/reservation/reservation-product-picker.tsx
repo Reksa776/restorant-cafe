@@ -596,7 +596,7 @@ function ProductCustomizeModal({
                         key={option.id}
                         className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm cursor-pointer ${
                           checked
-                            ? "border-brand-primary bg-brand-secondary"
+                            ? "border-brand-primary bg-brand-secondary text-brand-secondary-foreground"
                             : "border-gray-200 hover:bg-gray-50"
                         }`}
                       >
@@ -622,7 +622,7 @@ function ProductCustomizeModal({
                           </span>
                         </span>
                         {adj !== 0 && (
-                          <span className="shrink-0 text-xs text-gray-500">
+                          <span className={`shrink-0 text-xs ${checked ? "text-brand-secondary-foreground/70" : "text-gray-500"}`}>
                             {adj > 0 ? "+" : ""}
                             {formatRupiah(adj)}
                           </span>

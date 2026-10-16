@@ -1390,7 +1390,7 @@ export default function ReservationPage() {
                             onClick={() => selectTable(table.tableId)}
                             className={`text-left w-full rounded-xl border p-4 transition-colors min-w-0 ${
                               selected
-                                ? "border-brand-primary bg-brand-secondary ring-2 ring-brand-primary/40"
+                                ? "border-brand-primary bg-white ring-2 ring-brand-primary/40"
                                 : "border-gray-200 bg-white hover:border-brand-primary/50 hover:bg-brand-secondary/50"
                             }`}
                           >
@@ -1663,7 +1663,7 @@ export default function ReservationPage() {
                   aria-pressed={paymentMethod === method}
                   className={`rounded-xl border px-3 py-2.5 text-sm font-medium transition-colors ${
                     paymentMethod === method
-                      ? "border-brand-primary bg-brand-secondary text-brand-primary"
+                      ? "border-brand-primary bg-brand-secondary text-brand-secondary-foreground"
                       : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
                   }`}
                 >

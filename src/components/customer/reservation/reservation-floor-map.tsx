@@ -161,7 +161,7 @@ function TableNode({
       onClick={() => onSelect(table.tableId)}
       className={`absolute flex flex-col items-center justify-center border text-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary ${shapeClass} ${
         selected
-          ? "border-brand-primary bg-brand-secondary text-brand-primary ring-2 ring-brand-primary/50"
+          ? "border-brand-primary bg-brand-secondary text-brand-secondary-foreground ring-2 ring-brand-primary/50"
           : styleDef.box
       }`}
     >
@@ -223,7 +223,7 @@ function FallbackTableCard({
       aria-pressed={selected}
       className={`w-full rounded-xl border p-4 text-left transition-colors ${
         selected
-          ? "border-brand-primary bg-brand-secondary ring-2 ring-brand-primary/40"
+          ? "border-brand-primary bg-white ring-2 ring-brand-primary/40"
           : styleDef.box
       }`}
     >

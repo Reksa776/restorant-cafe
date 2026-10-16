@@ -958,14 +958,16 @@ export default function CheckoutPage() {
                   </span>
                   <Icon
                     className={`h-5 w-5 flex-shrink-0 ${
-                      isSelected ? "text-brand-primary" : "text-gray-400"
+                      isSelected
+                        ? "text-brand-secondary-foreground"
+                        : "text-gray-400"
                     }`}
                   />
                   <span className="min-w-0">
                     <span className="block text-sm font-medium">
                       {opt.label}
                     </span>
-                    <span className="block text-xs text-gray-500">
+                    <span className={`block text-xs ${isSelected ? "text-brand-secondary-foreground/70" : "text-gray-500"}`}>
                       {opt.desc}
                     </span>
                   </span>
