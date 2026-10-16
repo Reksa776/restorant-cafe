@@ -14,7 +14,6 @@ import {
   userService,
   type CashierShift,
   type ShiftOverride,
-  type RefundRequest,
   type CancellationRequest,
 } from "@/services/shift.service";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
@@ -109,10 +108,6 @@ export default function ShiftsPage() {
   // Admin lists
   const [allShifts, setAllShifts] = useState<ShiftWithBreakdown[]>([]);
   const [pendingOverrides, setPendingOverrides] = useState<ShiftOverride[]>([]);
-  // PHASE 7B — the SAME pending-approval payload also carries the refund and
-  // cancellation queues (already fetched by `listPendingApprovals`); they were
-  // previously discarded so the admin had no way to action them.
-  const [pendingRefunds, setPendingRefunds] = useState<RefundRequest[]>([]);
   const [pendingCancellations, setPendingCancellations] = useState<
     CancellationRequest[]
   >([]);
@@ -145,7 +140,7 @@ export default function ShiftsPage() {
 
   // Admin approval dialog (password confirmation)
   const [approveTarget, setApproveTarget] = useState<{
-    kind: "override" | "refund" | "cancellation";
+    kind: "override" | "cancellation";
     id: string;
     approve: boolean;
     title: string;
@@ -177,7 +172,6 @@ export default function ShiftsPage() {
         ]);
         setAllShifts(shiftsRes.items);
         setPendingOverrides(pendingRes.overrides);
-        setPendingRefunds(pendingRes.refunds ?? []);
         setPendingCancellations(pendingRes.cancellations ?? []);
       } else {
         const [activeRes, listRes] = await Promise.all([
@@ -352,15 +346,7 @@ export default function ShiftsPage() {
       // paid-order guard, tenant/branch scope, admin password). No business
       // logic moves into React.
       let label: string;
-      if (kind === "refund") {
-        await shiftService.decideRefund(
-          id,
-          approve,
-          adminPassword,
-          decisionNote || undefined
-        );
-        label = "Refund";
-      } else if (kind === "cancellation") {
+      if (kind === "cancellation") {
         await shiftService.decideCancellation(
           id,
           approve,
@@ -702,81 +688,6 @@ export default function ShiftsPage() {
               </div>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Admin: pending refund approvals (PHASE 7B) */}
-      {isAdmin && pendingRefunds.length > 0 && (
-        <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
-          <h2 className="flex items-center gap-2 font-semibold text-red-900">
-            <AlertTriangle className="h-4 w-4" />
-            Permintaan Refund Menunggu ({pendingRefunds.length})
-          </h2>
-          {pendingRefunds.map((rf) => {
-            const orderLabel = rf.order?.orderNumber || rf.orderId;
-            const details = approvalDetails({
-              orderLabel,
-              requesterName: rf.requester?.name,
-              reason: rf.reason,
-              requestedAt: rf.requestedAt,
-              amount: rf.amount,
-            });
-            return (
-              <div
-                key={rf.id}
-                className="rounded-lg border border-red-200 bg-white p-3 text-sm"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-medium">
-                    <span className="font-mono">{orderLabel}</span>{" "}
-                    <span className="text-muted-foreground">
-                      oleh {rf.requester?.name || "kasir"}
-                    </span>
-                  </p>
-                  <span className="font-semibold tabular-nums text-red-700">
-                    {rupiah(rf.amount)}
-                  </span>
-                </div>
-                <p className="text-muted-foreground mt-0.5">{rf.reason}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Diajukan {fmtTime(rf.requestedAt)}
-                </p>
-                <div className="flex gap-2 mt-2">
-                  <Button
-                    size="sm"
-                    className="bg-green-600 hover:bg-green-700"
-                    onClick={() =>
-                      setApproveTarget({
-                        kind: "refund",
-                        id: rf.id,
-                        approve: true,
-                        title: `Setujui refund ${orderLabel}`,
-                        details,
-                      })
-                    }
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5 mr-1" /> Setujui
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="text-red-600"
-                    onClick={() =>
-                      setApproveTarget({
-                        kind: "refund",
-                        id: rf.id,
-                        approve: false,
-                        title: `Tolak refund ${orderLabel}`,
-                        details,
-                      })
-                    }
-                  >
-                    <XCircle className="h-3.5 w-3.5 mr-1" /> Tolak
-                  </Button>
-                </div>
-              </div>
-            );
-          })}
         </div>
       )}
 

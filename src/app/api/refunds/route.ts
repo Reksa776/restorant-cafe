@@ -5,16 +5,22 @@ import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-hel
 import { approvalService } from "@/services/approval/approval.service";
 
 /**
- * GET /api/refunds — pending refund requests (admin review queue).
+ * GET /api/refunds — admin review queue, or the cashier's own pending requests.
  */
 export async function GET(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireRoles(["ADMIN"], branchId);
-    const result = await approvalService.listPendingForRestaurant(
-      ctx.restaurantId,
-      authorizedBranches(ctx)
-    );
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
+    const result = ctx.role === "ADMIN"
+      ? await approvalService.listPendingForRestaurant(
+          ctx.restaurantId,
+          authorizedBranches(ctx)
+        )
+      : await approvalService.listPendingRefundsForCashier(
+          ctx.restaurantId,
+          ctx.userId,
+          authorizedBranches(ctx)
+        );
     return successResponse(result);
   } catch (error) {
     if (error instanceof AppError) {
@@ -26,13 +32,13 @@ export async function GET(request: NextRequest) {
 }
 
 /**
- * POST /api/refunds — cashier initiates a refund request for an order.
- * Body: { orderId, amount, reason }. Approval requires an ADMIN + password.
+ * POST /api/refunds — CASHIER only: initiates a refund request for an order.
+ * Approval/rejection is ADMIN only on /api/refunds/[refundId]/decide.
  */
 export async function POST(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
+    const ctx = await requireRoles(["CASHIER"], branchId);
     const body = await request.json();
 
     if (!body.orderId || typeof body.orderId !== "string") {

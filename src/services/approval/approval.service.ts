@@ -413,6 +413,11 @@ export class ApprovalService {
     if (!refund) {
       throw new NotFoundError("Permintaan refund tidak ditemukan");
     }
+    if (refund.requestedByCashierId === input.adminId) {
+      throw new ConflictError(
+        "Admin yang mengajukan refund tidak dapat memproses permintaannya sendiri"
+      );
+    }
 
     const decided = await prisma.$transaction(async (tx) => {
       const status: RequestStatus = input.approve ? "APPROVED" : "REJECTED";
@@ -1170,6 +1175,25 @@ export class ApprovalService {
       }),
     ]);
     return { refunds, cancellations, overrides };
+  }
+
+  async listPendingRefundsForCashier(
+    restaurantId: string,
+    userId: string,
+    branchFilters?: string[] | null
+  ) {
+    return prisma.refund.findMany({
+      where: {
+        restaurantId,
+        requestedByCashierId: userId,
+        status: "PENDING",
+        ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
+      },
+      include: {
+        order: { select: { id: true, orderNumber: true } },
+      },
+      orderBy: { requestedAt: "desc" },
+    });
   }
 }
 

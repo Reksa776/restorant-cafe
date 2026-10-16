@@ -212,6 +212,11 @@ export const shiftService = {
     const response = await api.get("/refunds");
     return response.data.data;
   },
+
+  async listMyPendingRefunds(): Promise<RefundRequest[]> {
+    const response = await api.get("/refunds");
+    return response.data.data;
+  },
 };
 
 export const userService = {
