@@ -1837,16 +1837,30 @@ export default function ReservationPage() {
                   </span>
                 </DetailRow>
               </dl>
-              {/* Cashier payment is completed by staff against this order. */}
+              {/* Cashier payment is completed by staff using the reservation QR
+                  already shown above. Keep the guest on this success screen so
+                  they can present that QR without losing the reservation flow. */}
               {created.order.paymentStatus !== "PAID" &&
-                created.order.status !== "CANCELLED" && (
+                created.order.status !== "CANCELLED" &&
+                created.order.paymentMethod === "KASIR" && (
+                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-sm font-semibold text-amber-900">Pembayaran di kasir</p>
+                    <p className="mt-1 text-xs leading-relaxed text-amber-800">
+                      Tunjukkan QR reservasi di atas kepada kasir. Kasir akan membuka pesanan ini dan memproses pembayaran tunai atau QRIS kasir. Tidak perlu membuka halaman pembayaran lain.
+                    </p>
+                    <p className="mt-2 text-xs font-medium text-amber-900">
+                      Selesaikan pembayaran dalam 15 menit agar reservasi tetap aktif.
+                    </p>
+                  </div>
+                )}
+              {created.order.paymentStatus !== "PAID" &&
+                created.order.status !== "CANCELLED" &&
+                created.order.paymentMethod !== "KASIR" && (
                   <Link
                     href={`/reservasi/${created.code}/payment`}
                     className="mt-3 w-full inline-flex items-center justify-center gap-2 rounded-xl bg-brand-primary text-brand-primary-foreground py-3 px-4 font-semibold hover:bg-brand-primary/90 transition-colors"
                   >
-                    {created.order.paymentMethod === "KASIR"
-                      ? "Lihat cara bayar di kasir"
-                      : "Bayar Sekarang dengan QRIS"}
+                    Bayar Sekarang dengan QRIS
                   </Link>
                 )}
             </div>
