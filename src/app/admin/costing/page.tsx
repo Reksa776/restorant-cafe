@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Loader2, Save, Search } from "lucide-react";
@@ -819,6 +819,20 @@ function WhatIfDialog({
 // Page — PRODUCT COSTING
 // ============================================================
 export default function CostingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-40 items-center justify-center text-sm text-gray-500">
+          <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Memuat HPP...
+        </div>
+      }
+    >
+      <CostingPageContent />
+    </Suspense>
+  );
+}
+
+function CostingPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { branchId: ctxBranchId, branches, session } = useBranchContext();

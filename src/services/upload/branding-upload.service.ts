@@ -97,14 +97,20 @@ export class BrandingUploadService {
     // Generate a safe, unique filename.
     const ext = BRANDING_LOGO_EXT_BY_MIME[mime as BrandingLogoMime];
     const filename = `${crypto.randomUUID()}.${ext}`;
-    const absoluteDir = path.join(BRANDING_UPLOAD_ROOT, restaurantId);
+    const absoluteDir = path.join(
+      /* turbopackIgnore: true */ BRANDING_UPLOAD_ROOT,
+      restaurantId
+    );
 
     try {
       await fs.mkdir(absoluteDir, { recursive: true });
       // Use a FileHandle for the runtime-generated filename. Turbopack treats
       // fs.writeFile(dynamicPath, ...) as a build-time file glob and can scan
       // the entire repository when tenant IDs/UUIDs are part of the path.
-      const handle = await fs.open(path.join(absoluteDir, filename), "wx");
+      const handle = await fs.open(
+        path.join(/* turbopackIgnore: true */ absoluteDir, filename),
+        "wx"
+      );
       try {
         await handle.writeFile(bytes);
       } finally {
