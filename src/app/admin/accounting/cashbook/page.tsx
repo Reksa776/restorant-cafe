@@ -131,16 +131,9 @@ export default function CashbookPage() {
   useEffect(() => {
     if (branchCtxLoading || roleLoading) return;
     if (!isAdmin) return;
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [branchCtxLoading, roleLoading, isAdmin]);
-
-  useEffect(() => {
-    if (branchCtxLoading || roleLoading) return;
-    if (!isAdmin) return;
     load(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, dateFrom, dateTo, typeFilter, methodFilter, search]);
+  }, [branchCtxLoading, roleLoading, isAdmin, page, dateFrom, dateTo, typeFilter, methodFilter, search]);
 
   const applySearch = () => {
     setSearch(searchInput.trim());

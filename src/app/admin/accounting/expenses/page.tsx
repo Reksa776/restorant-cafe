@@ -191,7 +191,6 @@ export default function ExpensesPage() {
     if (branchCtxLoading || roleLoading) return;
     if (!isAdmin) return;
     loadCategories();
-    loadExpenses();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [branchCtxLoading, roleLoading, isAdmin]);
 
@@ -200,7 +199,7 @@ export default function ExpensesPage() {
     if (!isAdmin) return;
     loadExpenses(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, dateFrom, dateTo, categoryFilter, methodFilter]);
+  }, [branchCtxLoading, roleLoading, isAdmin, page, dateFrom, dateTo, categoryFilter, methodFilter]);
 
   const openCreate = () => {
     setEditing(null);

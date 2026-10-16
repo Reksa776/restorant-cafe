@@ -87,7 +87,11 @@ export async function getPnlReport(
   //    NOT change any existing date basis.
   const expenseWhere = {
     restaurantId,
-    ...(branchFilters?.length ? { branchId: { in: branchFilters } } : {}),
+    ...(q.branchId
+      ? { branchId: q.branchId }
+      : branchFilters?.length
+        ? { branchId: { in: branchFilters } }
+        : {}),
     spentAt: { gte: startOfLocalDay(range.start), lte: endOfLocalDay(range.end) },
   };
 
