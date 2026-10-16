@@ -9,9 +9,9 @@
 | Last updated | 2026-10-15 |
 | Repository | `/home/reksa/restorant-cafe` |
 | Branch | `main` |
-| Last verified HEAD | `eb313bb13d2670b45a2aeb73a7b370d554931321` (C4) |
-| Index / stash | empty / empty (`git diff --check` exit 0) |
-| Worktree | **14 entries** = 6 HELD + 2 EXCLUDE + **6 intentionally-uncommitted post-C4 docs** (0 unclassified) |
+| Last verified HEAD | `4729a43ec09dc28d8425a5dfcbd713e1ebff24a8` (docs commit, parent `eb313bb`) |
+| Index / stash | empty / empty (`git diff --check` exit 0, `--cached --check` exit 0) |
+| Worktree | **12 entries** = 6 HELD + 2 EXCLUDE + **4 uncommitted docs** (`STEP-2C-7-LINT-READINESS.md`, `STEP-2C-7-FULL-EXECUTION.md`, and this `EXECUTION-STATE.md` + `ROADMAP.md` updated after the DOC-COMMIT) |
 
 ## Current checkpoint
 
@@ -23,7 +23,17 @@ static checksums 22/22 **0 mismatch**, `git diff --check` **0**, `--cached --che
 inventory); **A4 was not re-run**; C4 whitespace **waiver** + broken healthcheck recorded as exception/limitation; **no
 production-readiness claim**; no commit, no push.
 
-**NEXT CHECKPOINT: `STEP 2C.7 — CODE QUALITY / LINT TRIAGE`** (needs **AP-2C7**; **not started** in this session).
+**AP-DOC-COMMIT — DONE:** commit `4729a43ec09dc28d8425a5dfcbd713e1ebff24a8` (parent `eb313bb`), message
+`docs(accounting): close step 2c6 execution evidence` (verbatim, no footer), **exactly 6** paths (`4 A` + `2 M`),
+894 insertions / 62 deletions; index and stash empty; 22 historical reports byte-identical; HELD 6 / EXCLUDE 2 preserved.
+
+**STEP 2C.7 — BLOCKED. VERDICT: ❌ STEP 2C.7 BLOCKED — NO COMMIT.**
+`AP-2C7-READONLY` produced the triage ([`STEP-2C-7-LINT-READINESS.md`](./STEP-2C-7-LINT-READINESS.md): 106e/139w across
+534 files); `AP-2C7-FULL` then **stopped before the first edit** — **49** `react-hooks/set-state-in-effect` **errors** cannot
+be fixed within the engineering rules without behaviour drift or an architecture change
+([`STEP-2C-7-FULL-EXECUTION.md`](./STEP-2C-7-FULL-EXECUTION.md)). **No source file was modified** (source tree
+byte-identical to `4729a43`), **no commit**, no `--fix`, no rule/config change. An **owner decision A/B/C** is required
+before any further work.
 
 ## Resolved: C3 blocker (historical record)
 
@@ -35,7 +45,9 @@ production-readiness claim**; no commit, no push.
 Root cause (proven): a **run-date leak in the tests**, not a product/DB fault — cashbook test 3 kept a live-stamped
 `paidAt = now` movement that landed in test 10's hardcoded `2026-10-15` control window; the profitability suite had 10
 clock-derived fixture timestamps + 9 service-stamped `approvedAt` values. Fix = test-only (2 of 13 C3 paths): `D.oct3`/`T.oct3`
-+ per-test dedicated days + `pinRefundDay()`. `tests/fixtures/accounting.ts` was investigated and cleared (zero call sites).
++ per-test dedicated days + `pinRefundDay()`. `tests/fixtures/accounting.ts` was investigated and cleared of causing the
+failures — **correction (2C.7 audit): it IS imported by 6 suites** (`cashbook`, `revenue`, `refund-profitability`, `pnl`,
+`integrity`, `database-connection`), so it is not dead code; see `STEP-2C-7-LINT-READINESS.md` §3.
 C3 committed as `4550d28`; details in [`STEP-2C-6-C3-TEST-FIX-AND-COMMIT.md`](./STEP-2C-6-C3-TEST-FIX-AND-COMMIT.md).
 
 ## Completed checkpoints / phases
@@ -51,12 +63,15 @@ C3 committed as `4550d28`; details in [`STEP-2C-6-C3-TEST-FIX-AND-COMMIT.md`](./
 | C4 — documentation & reports (24) | ✅ **COMMITTED `eb313bb`** | `STEP-2C-6-C4-COMMIT-EXECUTION.md` |
 | A4 — committed-tree replay | ✅ **EXECUTED — REPLAY SUCCESS (exit 0)** | `STEP-2C-6-A4-EXECUTION.md` |
 | **2C.6 FINAL CLOSURE (AP-FINAL)** | ✅ **STEP 2C.6 CLOSED** — evidence verified, DB-free re-checks PASS | `STEP-2C-6-FINAL-CLOSURE.md` |
-| **STEP 2C.7 — CODE QUALITY / LINT TRIAGE** | ⏳ **NEXT — NOT STARTED** (needs **AP-2C7**) | — |
+| **2C.6 DOC-COMMIT (AP-DOC-COMMIT)** | ✅ **COMMITTED `4729a43`** — exactly 6 paths, verbatim message | `git show 4729a43` |
+| **STEP 2C.7 READ-ONLY LINT TRIAGE (AP-2C7-READONLY)** | ✅ **AUDIT DONE** — 106e/139w, 0 accounting-core errors, 27 findings C3-attributed | `STEP-2C-7-LINT-READINESS.md` |
+| **STEP 2C.7 — FULL LINT RESOLUTION (AP-2C7-FULL)** | ❌ **BLOCKED — NO COMMIT**: 49/245 findings unreachable within the rules → **no source edit, no commit**, source tree byte-identical to HEAD | `STEP-2C-7-FULL-EXECUTION.md` |
 | STEP 2C.8 / 2C.9 | ⏳ not started | — |
 
 ## Commit history (baseline)
 
 ```
+4729a43  docs(accounting): close step 2c6 execution evidence                                (DOC-COMMIT)
 eb313bb  docs(accounting): consolidate hardening evidence and roadmap                       (C4)
 4550d28  test(accounting): add isolated accounting regression coverage                       (C3)
 7dc2496  feat(accounting): correct F-2 credential parsing and canonical revenue predicates   (C2)
@@ -99,7 +114,15 @@ e8d4aa3  fix selesai orderan
 | `npx tsc --noEmit` | clean | **0** |
 | `npm run db:preflight` | PASS 22/22 | **0** |
 | `tests/migration-ordering.unit.test.ts` (C1B guard) | 23/23 | 0 |
+| `npx tsc --noEmit` (fresh, 2C.7) | clean | **0** |
+| `eslint .` — **full repo** (fresh, 2C.7) | **106 errors / 139 warnings / 8 autofixable** (534 files) | **1** |
 | `npm run build` | pass — **historical only** | — |
+
+> **Correction (2C.7).** The earlier “eslint **0 errors**, 2 pre-existing warnings” line in this file was a
+> **changed-files-scoped** observation inherited from C2 (the real *C2R-2* record), **not** a repo-wide run — C3's report
+> contains no eslint claim at all. The first **full-repo** inventory is the 2C.7 row above: repo-wide lint is **red at
+> exit 1**, and **27** of its findings (22e/5w) are attributable to C3's two added test files. See
+> [`STEP-2C-7-LINT-READINESS.md`](./STEP-2C-7-LINT-READINESS.md) §2–§3.
 
 **Accounting total 111/111 PASS.** Date-independence regression passed under a shifted local calendar day.
 
@@ -145,15 +168,57 @@ e8d4aa3  fix selesai orderan
 | AP-C4-COMMIT + the whitespace waiver | commit C4 (24 paths) | ✅ CLOSED — `eb313bb` |
 | **AP-3** | A4 committed-tree replay (new disposable `restaurant_app_test_v4`) | ✅ CLOSED (conditional) — replay **exit 0**, `STEP-2C-6-A4-EXECUTION.md` |
 | **AP-FINAL** | STEP 2C.6 final closure | ✅ **CLOSED** — `STEP-2C-6-FINAL-CLOSURE.md` |
-| **AP-DOC-COMMIT** | one follow-up commit for the **6** uncommitted post-C4 docs | ⏸ open (nothing staged) |
-| **AP-2C7** | authorise **STEP 2C.7 — CODE QUALITY / LINT TRIAGE** | ⏸ **OPEN — the current gate** |
+| **AP-DOC-COMMIT** | one follow-up commit for the **6** uncommitted post-C4 docs | ✅ **CLOSED** — `4729a43`, exactly 6 paths |
+| **AP-2C7-READONLY** | authorise the read-only 2C.7 lint audit | ✅ **CLOSED** — `STEP-2C-7-LINT-READINESS.md` (106e/139w) |
+| **AP-2C7-L1** | apply the **8** autofix-safe lint items (8 files, 1 line each) | ⏸ **OPEN — requested** |
+| **AP-2C7-L1+L2** | L1 + C3-introduced test-fixture cleanup (**27** findings) with the 111/111 gate | ⏸ OPEN — alternative |
+| **AP-2C7-L1+L2+L3** | also clean the dev-tooling `scripts/**` layer (**91** findings) | ⏸ OPEN — alternative |
 | AP-B2 / AP-B3 / AP-4 / AP-2 | `.kate-swp` · `next-env.d.ts` · collation follow-up · HELD | ⏸ open |
 
-## Next exact action
+## Lint state (2C.7 read-only baseline, 2026-10-15) — **superseded by “2C.7 resolution” below**
 
-1. **Owner grants AP-2C7** → open **`STEP 2C.7 — CODE QUALITY / LINT TRIAGE`**: start read-only (full eslint inventory +
-   `tsc --noEmit` + triage of the 2 known warnings), then propose a scoped fix plan for approval **before** any code change.
-2. **Optional, separate:** **AP-DOC-COMMIT** to version-control the **6** uncommitted post-C4 docs
-   (`C4-COMMIT-EXECUTION`, `A4-PRE-EXECUTION-READINESS`, `A4-EXECUTION`, `FINAL-CLOSURE`, `ROADMAP`, `EXECUTION-STATE`).
-3. Never `--amend` a closed boundary; keep the test target at v3 for suites; never contact 3306/3307; drop
+* **Full repo:** 534 files linted, **106 errors / 139 warnings / 8 autofixable**, `eslint .` **exit 1**; `tsc --noEmit` **exit 0**.
+* **Ownership:** shipped `src/**` 127 findings (65 files) · dev `scripts/**` 91 (36) · `tests/**` 27 (2). `tools/**`, `prisma/**`, root configs = **0**.
+* **Attribution:** **27 findings (22e/5w) blame to C3 `4550d28`** — `tests/fixtures/accounting.ts` (22 × `no-explicit-any`, 4 × `no-unused-vars`) and `tests/accounting/pnl.integration.test.ts` L1389. Derived pre-C3 level: **84e/134w** (arithmetic, not measured). The 2 `report.service.ts` warnings blame to `27cb467` (pre-existing, = C2R-2).
+* **Accounting core is error-free:** `src/services/accounting/*`, `src/lib/{prisma,database-url}.ts`, `tools/*`, `tests/setup.ts` and `tests/accounting/*` + `database-connection` → **0 errors** (3 warnings total).
+* **Autofix-safe:** 8 items only (4 `prefer-const`, 4 unused `eslint-disable`). Everything else needs manual review (notably 49 × `react-hooks/set-state-in-effect` in shipped UI).
+
+## Superseded — 2C.7 blocker (AP-2C7-FULL). The owner chose **option C**; the resolution section at the end of this file is the current state.
+
+**STEP 2C.7 BLOCKED — NO COMMIT.** Full-resolution attempt (`AP-2C7-FULL`) stopped **before the first edit** because
+**49 of 245** findings are `react-hooks/set-state-in-effect` **errors** (error-level in the Next 16 preset,
+`eslint-plugin-react-hooks@7.1.1`) raised against the app's pre-existing effect-driven data loading. Fixing them requires
+**behaviour drift** (spinner/error timing across 42 pages, unverifiable — the repo has no component test harness) or an
+**architecture change** (Server Components / data-fetching library across ~40 pages); suppressing them is forbidden by the
+engineering rules. All 49 are pre-existing (**0** from C1–C4) and **0** sit in `src/services/**` or `tests/**`.
+
+1. **Owner chooses a path** — **A** architecture phase (only route to a true 0/0; add a component test harness first),
+   **B** explicit owner lint-policy ruling for the React-Compiler hook rules, or **C** approve the **196** fixable/review
+   findings now with the 49 as an owner-accepted exception (commit gate must then be amended).
+2. Until then: **no source change, no commit**; the verified state is preserved (source tree byte-identical to
+   `4729a43`; lint 106e/139w; `tsc` 0; `db:preflight` 0).
+2. Never `--amend` a closed boundary; keep the test target at v3 for suites; never contact 3306/3307; never touch
+   `prisma/migrations/**` or `tools/migration-order.baseline.json` (that would invalidate the A4 evidence); drop
    `restaurant_app_test_v4` only on explicit owner instruction.
+
+## 2C.7 resolution (AP-2C7-RESOLUTION, owner option **C**, 2026-10-15) — CURRENT
+
+* **Result:** **196 / 196** non-exception findings resolved. `eslint .` baseline **245 (106e/139w)** → **49 (49e/0w)**,
+  still **exit 1** (by design); the 49 are `react-hooks/set-state-in-effect` only, in **42 files**, and the per-file
+  inventory is **byte-identical** to the baseline (no legacy location added, moved or removed; **0** new findings).
+* **Constraints honoured:** no ESLint config/severity/file-exclusion change, no rule disabled, no suppression added for
+  the 196, no dependency/engine addition, no schema/migration edit, no business-rule/assertion/functionality removal,
+  HELD/EXCLUDE and the uncommitted documentation untouched. Repo-wide **exit 1** is preserved — no `0/0` claim.
+* **Verification (fresh, exit codes captured):** `tsc --noEmit` **0** · `db:preflight` **PASS 22/22 exit 0** ·
+  `git diff --check` **0** (`--cached --check` **0**) · `npm run build` **exit 0** · F-2 unit **24/24** · M2 unit
+  **78/78** · menu-engineering unit **23/23** · F-2 live **4/4** · accounting **111/111** (cashbook 15, revenue 21,
+  refund-profitability 21, P&L 24, M2 integrity 30) — every command `exit 0`, all DB-backed suites on the approved
+  **`127.0.0.1:3308/restaurant_app_test_v3`** target only (no migration/reset/recreate; 3306/3307 never contacted).
+* **Commit:** `9666042a2185983e91f2d53e89e49de0cfe83f6e` — `refactor: resolve scoped step 2c7 lint debt`, staged path-explicitly (75
+  implementation paths under `src/`, `scripts/`, `tests/`); documentation/`.env*`/`next-env.d.ts` **not** staged;
+  secret scan clean; no push, no deploy, STEP 2C.8 not started.
+* **Known limitations carried forward:** the 49 legacy hook findings (unchanged, owner-accepted); 4 unused-but-exported
+  fixture helpers in `tests/fixtures/accounting.ts`; the `void <param>;` idiom at 5 parity-parameter sites; the dev
+  harnesses (need a live server + the protected app DB) and the UI browser pass were **not** re-executed — a browser
+  pass over the cashier QRIS/CASH, customer checkout→payment, tables-QR and WhatsApp-QR surfaces is the first task of
+  STEP 2C.8. Full detail: [`STEP-2C-7-RESOLUTION.md`](./STEP-2C-7-RESOLUTION.md).
