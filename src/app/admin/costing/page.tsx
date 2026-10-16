@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronLeft, ChevronRight, FlaskConical, Loader2, Save, Search } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -78,17 +79,15 @@ function StatusBadge({ status }: { status: CostStatus }) {
 // Detail dialog — product summary + recipe cost lines.
 // Never shows supplier / purchase / stock.
 // ============================================================
-function CostingDetailDialog({
-  open,
-  onOpenChange,
+function CostingDetailPage({
   productId,
   branchId,
+  onBack,
   onCostingSaved,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   productId: string | null;
   branchId: string | null;
+  onBack: () => void;
   /** Refreshes the list after the HPP method changed. */
   onCostingSaved?: () => void;
 }) {
@@ -102,7 +101,7 @@ function CostingDetailDialog({
   const [savingCosting, setSavingCosting] = useState(false);
 
   useEffect(() => {
-    if (!open || !productId || !branchId) {
+    if (!productId || !branchId) {
       setDetail(null);
       return;
     }
@@ -123,7 +122,7 @@ function CostingDetailDialog({
     return () => {
       alive = false;
     };
-  }, [open, productId, branchId]);
+  }, [productId, branchId]);
 
   // Keep the method draft in sync with the loaded detail.
   useEffect(() => {
@@ -192,10 +191,14 @@ function CostingDetailDialog({
   const components = detail ? [...detail.addons, ...detail.options] : [];
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-start gap-3">
+          <Button variant="outline" size="sm" onClick={onBack}>
+            <ChevronLeft className="mr-1 h-4 w-4" /> Kembali
+          </Button>
+          <div>
+          <h1 className="text-xl font-bold">
             {detail ? (
               <>
                 {detail.name}
@@ -206,11 +209,13 @@ function CostingDetailDialog({
             ) : (
               "Costing Detail"
             )}
-          </DialogTitle>
-          <DialogDescription>
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
             {detail ? detail.categoryName : "Memuat detail..."}
-          </DialogDescription>
-        </DialogHeader>
+          </p>
+          </div>
+        </div>
+      </div>
 
         {loading && (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-gray-500">
@@ -220,7 +225,7 @@ function CostingDetailDialog({
         )}
 
         {!loading && detail && (
-          <div>
+          <div className="space-y-4">
             <dl className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-lg border bg-muted/20 p-4 text-sm sm:grid-cols-3">
               {summary.map((row) => (
                 <div key={row.label}>
@@ -330,6 +335,7 @@ function CostingDetailDialog({
                 Produk tidak memiliki recipe aktif.
               </p>
             ) : (
+              <div className="overflow-x-auto rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -346,6 +352,7 @@ function CostingDetailDialog({
                   ))}
                 </TableBody>
               </Table>
+              </div>
             )}
 
             {/* H4.2 — addon/option mini-BOM costing (per 1 unit). */}
@@ -358,6 +365,7 @@ function CostingDetailDialog({
               </p>
             ) : (
               <>
+                <div className="overflow-x-auto rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -409,6 +417,7 @@ function CostingDetailDialog({
                     ))}
                   </TableBody>
                 </Table>
+                </div>
                 <p className="mt-2 text-xs text-gray-500">
                   HPP addon/option dihitung dari komposisi bahan × WAC bahan baku
                   cabang ini. Harga jual addon/option tidak pernah dipakai sebagai HPP.
@@ -428,8 +437,7 @@ function CostingDetailDialog({
           categoryName={detail?.categoryName ?? null}
           current={detail}
         />
-      </DialogContent>
-    </Dialog>
+    </div>
   );
 }
 
@@ -811,6 +819,8 @@ function WhatIfDialog({
 // Page — PRODUCT COSTING
 // ============================================================
 export default function CostingPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { branchId: ctxBranchId, branches, session } = useBranchContext();
 
   const workingBranchId = useMemo(() => {
@@ -843,8 +853,7 @@ export default function CostingPage() {
     return () => window.clearTimeout(timer);
   }, [search]);
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const selectedProductId = searchParams.get("productId");
 
   useEffect(() => {
     menuService
@@ -895,9 +904,19 @@ export default function CostingPage() {
   }, [categoryId, status, debouncedSearch, workingBranchId]);
 
   const openDetail = (productId: string) => {
-    setSelectedProductId(productId);
-    setDialogOpen(true);
+    router.push(`/admin/costing?productId=${encodeURIComponent(productId)}`);
   };
+
+  if (selectedProductId) {
+    return (
+      <CostingDetailPage
+        productId={selectedProductId}
+        branchId={workingBranchId}
+        onBack={() => router.push("/admin/costing")}
+        onCostingSaved={load}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -1087,13 +1106,6 @@ export default function CostingPage() {
         </CardContent>
       </Card>
 
-      <CostingDetailDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        productId={selectedProductId}
-        branchId={workingBranchId}
-        onCostingSaved={load}
-      />
     </div>
   );
 }
