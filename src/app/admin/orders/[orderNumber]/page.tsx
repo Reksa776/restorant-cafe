@@ -46,6 +46,7 @@ const PAYMENT_STATUS_META: Record<string, { label: string; cls: string }> = {
   PAID: { label: "Lunas", cls: "bg-green-100 text-green-700" },
   FAILED: { label: "Pembayaran Gagal", cls: "bg-red-100 text-red-700" },
   EXPIRED: { label: "Kedaluwarsa", cls: "bg-orange-100 text-orange-700" },
+  REFUNDED: { label: "Direfund", cls: "bg-red-100 text-red-700" },
 };
 
 const TYPE_META: Record<string, { label: string; Icon: typeof UtensilsCrossed }> = {
@@ -277,9 +278,7 @@ export default function AdminOrderByNumberPage({
               </div>
               {/* Refund / cancel with admin password — also here for direct
                   actions without opening the orders list. */}
-              {!["COMPLETED", "CANCELLED"].includes(order.status) && (
-                <ApprovalActions order={order} compact onDone={loadOrder} />
-              )}
+              <ApprovalActions order={order} compact onDone={loadOrder} />
             </div>
           ) : order.status === "CANCELLED" ? (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-sm text-red-700">

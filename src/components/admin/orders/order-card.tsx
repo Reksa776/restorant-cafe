@@ -112,6 +112,11 @@ const PAYMENT_STATUS_CONFIG: Record<
     color: "bg-orange-100 text-orange-700 border-orange-200",
     icon: CreditCard,
   },
+  REFUNDED: {
+    label: "Direfund",
+    color: "bg-red-100 text-red-700 border-red-200",
+    icon: CreditCard,
+  },
 };
 
 const MAX_VISIBLE_ITEMS = 3;

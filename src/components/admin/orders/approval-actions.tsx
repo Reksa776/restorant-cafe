@@ -55,12 +55,12 @@ export function ApprovalActions({
   const [adminPassword, setAdminPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Terminal states are immutable — no refund/cancel actions.
-  if (["COMPLETED", "CANCELLED"].includes(order.status)) return null;
-  // Refund needs collected money; cancel needs a non-terminal, non-paid order
-  // (a live PENDING intent can always be cancelled).
+  // A completed order may still need a refund. Cancel remains limited to
+  // active, unpaid orders; a paid order must use the refund workflow.
+  if (order.status === "CANCELLED") return null;
   const canRefund = order.paymentStatus === "PAID";
-  const canCancel = order.status !== "COMPLETED" && order.status !== "CANCELLED";
+  const canCancel =
+    order.status !== "COMPLETED" && order.paymentStatus !== "PAID";
   if (!canRefund && !canCancel) return null;
 
   const close = () => {

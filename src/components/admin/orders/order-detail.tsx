@@ -84,6 +84,7 @@ const PAYMENT_STATUS_LABELS: Record<string, { label: string; color: string }> = 
   PAID: { label: "Lunas", color: "bg-green-100 text-green-700" },
   FAILED: { label: "Pembayaran Gagal", color: "bg-red-100 text-red-700" },
   EXPIRED: { label: "Pembayaran Kedaluwarsa", color: "bg-orange-100 text-orange-700" },
+  REFUNDED: { label: "Direfund", color: "bg-red-100 text-red-700" },
 };
 
 // ============================================================
@@ -502,8 +503,7 @@ export function OrderDetail({
 
           {/* Refund / cancel approval actions (admins approve with password,
               cashiers submit requests) — only while money is in play. */}
-          {!["COMPLETED", "CANCELLED"].includes(order.status) &&
-            (order.paymentStatus === "PAID" || order.status === "PENDING") && (
+          {order.paymentStatus !== "PAID" && order.status === "PENDING" && (
             <>
               <Separator />
               <div className="flex flex-wrap items-center gap-2">
