@@ -46,7 +46,17 @@ export interface ReservationTableView {
     status: string;
     paymentStatus: string;
     paymentMethod: string | null;
+    subtotal: number;
+    discount: number;
+    tax: number;
+    serviceCharge: number;
     grandTotal: number;
+    items: Array<{
+      name: string;
+      quantity: number;
+      unitPrice: number;
+      totalPrice: number;
+    }>;
   } | null;
   /** Payment summary — null when the reservation has no linked order. */
   payment: ReservationPaymentView | null;

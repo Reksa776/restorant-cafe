@@ -1187,9 +1187,8 @@ export class ReservationService {
   /**
    * Guest lookup: `restaurantId` + `code` + `guestPhone`. The phone is
    * normalized (same canonical form every flow uses) and must MATCH the
-   * stored reservation. Returns an explicit public DTO only — it never
-   * exposes customer/order columns, phone is echoed back (it is the caller's
-   * own) but internal fields (orderId, customerId, source, notes) are not.
+   * stored reservation. The route applies an explicit public DTO; linked order
+   * details are limited to invoice fields and internal ids stay private.
    */
   async getReservationByCodeForGuest(
     restaurantId: string,
@@ -1203,57 +1202,14 @@ export class ReservationService {
 
     const reservation = await prisma.reservation.findFirst({
       where: { restaurantId, code },
-      // Explicit scalar allow-list — the Reservation model declares no
-      // relations, and nothing internal (orderId/customerId/source/notes) is
-      // ever selected for a guest.
-      select: {
-        id: true,
-        code: true,
-        status: true,
-        reservationDate: true,
-        startMinutes: true,
-        durationMinutes: true,
-        partySize: true,
-        guestName: true,
-        guestPhone: true,
-        branchId: true,
-        tableId: true,
-        createdAt: true,
-      },
     });
     if (!reservation || reservation.guestPhone !== normalized) {
       throw new NotFoundError("Reservasi tidak ditemukan");
     }
 
-    // Branch/table display names — separate batched lookup, never nested
-    // relation traversal.
-    const [branch, table] = await Promise.all([
-      prisma.branch.findFirst({
-        where: { id: reservation.branchId },
-        select: { code: true, name: true },
-      }),
-      reservation.tableId
-        ? prisma.table.findFirst({
-            where: { id: reservation.tableId },
-            select: { number: true, name: true },
-          })
-        : Promise.resolve(null),
-    ]);
-
-    return {
-      id: reservation.id,
-      code: reservation.code,
-      status: reservation.status,
-      reservationDate: dateOnlyFromDb(reservation.reservationDate),
-      startMinutes: reservation.startMinutes,
-      durationMinutes: reservation.durationMinutes,
-      partySize: reservation.partySize,
-      guestName: reservation.guestName,
-      guestPhone: reservation.guestPhone,
-      branch,
-      table,
-      createdAt: reservation.createdAt,
-    };
+    // Build the batched reservation/order view. The public route projects an
+    // allow-list and never returns notes, internal order ids, or references.
+    return (await reservationViews([reservation]))[0];
   }
 
   // ============================================================

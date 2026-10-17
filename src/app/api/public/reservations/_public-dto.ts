@@ -46,5 +46,13 @@ export function toPublicReservationDto(view: ReservationView) {
           })),
         }
       : null,
+    payment: view.payment
+      ? {
+          status: view.payment.status,
+          method: view.payment.method,
+          amount: view.payment.amount,
+          paidAt: view.payment.paidAt?.toISOString() ?? null,
+        }
+      : null,
   };
 }

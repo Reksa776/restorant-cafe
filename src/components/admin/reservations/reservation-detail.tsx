@@ -13,6 +13,7 @@ import type { ReservationTableView } from "@/services/reservation.service";
 import { reservationService } from "@/services/reservation.service";
 import { BarcodePaymentFlow } from "@/components/admin/barcode-payment-flow";
 import { Button } from "@/components/ui/button";
+import { ReservationInvoice } from "@/components/customer/reservation-invoice";
 import { ReservationStatusBadge } from "./reservation-status-badge";
 import { ReservationPaymentStatusBadge } from "./reservation-payment-status-badge";
 import {
@@ -230,6 +231,14 @@ export function ReservationDetail({
                     Proses Pembayaran di Kasir
                   </Button>
                 )}
+              {reservation.order && (
+                <div className="mt-3 flex justify-end">
+                  <ReservationInvoice
+                    reservation={{ ...reservation, payment: reservation.payment }}
+                    siteName={reservation.branch?.name ?? "Restoran"}
+                  />
+                </div>
+              )}
             </div>
 
             {hasTimeline && (

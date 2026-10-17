@@ -74,6 +74,7 @@ import type {
 } from "./reservation-flow";
 import { ReservationProductPicker } from "@/components/customer/reservation/reservation-product-picker";
 import { QrCodeDisplay } from "@/components/qr-code-display";
+import { ReservationInvoice } from "@/components/customer/reservation-invoice";
 
 // ============================================================
 // /reservasi — CUSTOMER RESERVATION WIZARD (PHASE R5).
@@ -265,7 +266,7 @@ export default function ReservationPage() {
     restaurantId: cartRestaurantId,
   } = useCart();
   const { customer, isHydrated: authHydrated } = useCustomerAuth();
-  const { applyBranding } = useBranding();
+  const { branding, applyBranding } = useBranding();
 
   const [step, setStep] = useState<Step>("branch");
 
@@ -910,6 +911,14 @@ export default function ReservationPage() {
           ))}
         </div>
         <p className="mt-2 text-sm text-gray-500">{RESERVATION_STEP_LABELS[step]}</p>
+        {step === "branch" && (
+          <p className="mt-2 text-xs text-gray-500">
+            Sudah punya reservasi?{" "}
+            <Link href="/reservasi/cari" className="font-semibold text-brand-primary underline">
+              Cari kode dan buka invoice
+            </Link>
+          </p>
+        )}
       </div>
 
       {canGoBack && (
@@ -1738,6 +1747,16 @@ export default function ReservationPage() {
               Tunjukkan QR ini ke kasir saat datang
             </p>
           </div>
+
+          <div className="flex justify-center">
+            <ReservationInvoice reservation={created} siteName={branding.siteName || "Restoran"} />
+          </div>
+          <p className="text-center text-xs text-gray-500">
+            Tutup halaman? Buka kembali invoice dari kode reservasi dan nomor WhatsApp di{" "}
+            <Link href="/reservasi/cari" className="font-semibold text-brand-primary underline">
+              Cari Reservasi
+            </Link>.
+          </p>
 
           <div className="rounded-xl border border-gray-200 bg-white p-4">
             <dl>

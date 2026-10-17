@@ -41,6 +41,7 @@ import {
   reservationQrPayload,
 } from "@/app/(customer)/reservasi/reservation-flow";
 import { QrCodeDisplay } from "@/components/qr-code-display";
+import { ReservationInvoice } from "@/components/customer/reservation-invoice";
 
 // ============================================================
 // /account/reservasi/[code] — ONE of the customer's own reservations.
@@ -70,6 +71,19 @@ interface ReservationDetail {
   completedAt: string | null;
   cancelledAt: string | null;
   cancelReason: string | null;
+  order: {
+    orderNumber: string;
+    status: string;
+    paymentStatus: string;
+    paymentMethod: string | null;
+    subtotal: number;
+    discount: number;
+    tax: number;
+    serviceCharge: number;
+    grandTotal: number;
+    items: Array<{ name: string; quantity: number; unitPrice: number; totalPrice: number }>;
+  } | null;
+  payment: { status: string; method: string | null; amount: number; paidAt: string | null } | null;
 }
 
 const CANCELABLE_STATUSES = new Set(["PENDING", "CONFIRMED"]);
@@ -366,6 +380,10 @@ export default function AccountReservationDetailPage() {
         <p className="mt-3 text-xs text-gray-500">
           Tunjukkan QR ini ke kasir saat datang
         </p>
+      </div>
+
+      <div className="flex justify-center">
+        <ReservationInvoice reservation={reservation} siteName={branding.siteName || "Restoran"} />
       </div>
 
       {/* Reservation info */}
