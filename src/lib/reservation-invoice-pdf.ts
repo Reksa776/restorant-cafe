@@ -3,7 +3,9 @@ import {
   formatRupiah,
   formatTimeSlot,
   RESERVATION_STATUS_LABELS,
+  reservationQrPayload,
 } from "@/app/(customer)/reservasi/reservation-flow";
+import QRCode from "qrcode";
 
 export interface ReservationInvoiceData {
   code: string;
@@ -46,6 +48,7 @@ type PdfLine = {
   align?: "left" | "center" | "right";
   rule?: boolean;
   gap?: number;
+  qrSize?: number;
 };
 
 const PAYMENT_LABELS: Record<string, string> = {
@@ -115,6 +118,7 @@ function buildInvoiceLines(
     { text: siteName || "Restoran", bold: true, size: 13, align: "center", gap: 2 },
     { text: "INVOICE RESERVASI", bold: true, size: 11, align: "center", gap: 2 },
     { text: reservation.code, bold: true, size: 12, align: "center" },
+    { qrSize: 84, gap: 4 },
     { rule: true, gap: 3 },
     { text: `Nama: ${reservation.guestName}` },
   ];
@@ -165,11 +169,29 @@ export function createReservationInvoicePdf(
   const margin = 14;
   const lines = buildInvoiceLines(reservation, siteName);
   const lineHeight = 12;
-  const pageHeight = Math.max(300, 24 + lines.reduce((sum, line) => sum + (line.rule ? 5 : line.gap ?? 0) + lineHeight * (line.text ? wrap(line.text).length : 0), 0));
+  const pageHeight = Math.max(300, 24 + lines.reduce((sum, line) => sum + (line.qrSize ?? 0) + (line.rule ? 5 : line.gap ?? 0) + lineHeight * (line.text ? wrap(line.text).length : 0), 0));
   let top = 14;
   const commands: string[] = [];
+  const qr = QRCode.create(reservationQrPayload(reservation.code), {
+    errorCorrectionLevel: "M",
+  }).modules;
 
   for (const line of lines) {
+    if (line.qrSize) {
+      top += line.gap ?? 0;
+      const moduleSize = line.qrSize / qr.size;
+      const left = (pageWidth - line.qrSize) / 2;
+      for (let row = 0; row < qr.size; row += 1) {
+        for (let column = 0; column < qr.size; column += 1) {
+          if (!qr.get(row, column)) continue;
+          const x = left + column * moduleSize;
+          const y = pageHeight - top - line.qrSize + (qr.size - row - 1) * moduleSize;
+          commands.push(`${x.toFixed(2)} ${y.toFixed(2)} ${moduleSize.toFixed(2)} ${moduleSize.toFixed(2)} re f`);
+        }
+      }
+      top += line.qrSize;
+      continue;
+    }
     if (line.rule) {
       top += line.gap ?? 0;
       const y = pageHeight - top;
