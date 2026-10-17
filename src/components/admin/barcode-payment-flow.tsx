@@ -68,6 +68,9 @@ interface BarcodePaymentFlowProps {
    * number never bypasses authorization (foreign order → 404/403).
    */
   initialOrderNumber?: string | null;
+  /** Optional copy for payment launched from a reservation detail. */
+  title?: string;
+  description?: string;
 }
 
 // Polling cadence matches the customer payment page (4s). Same infrastructure
@@ -79,6 +82,8 @@ export function BarcodePaymentFlow({
   open,
   onOpenChange,
   initialOrderNumber,
+  title,
+  description,
 }: BarcodePaymentFlowProps) {
   const [internalOpen, setInternalOpen] = useState(false);
   const dialogOpen = open !== undefined ? open : internalOpen;
@@ -597,10 +602,10 @@ export function BarcodePaymentFlow({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <ScanLine className="h-4 w-4" />
-            Pembayaran dari Scan Barcode
+            {title ?? "Pembayaran dari Scan Barcode"}
           </DialogTitle>
           <DialogDescription>
-            Scan QR pesanan, lalu pilih metode pembayaran.
+            {description ?? "Scan QR pesanan, lalu pilih metode pembayaran."}
           </DialogDescription>
         </DialogHeader>
 

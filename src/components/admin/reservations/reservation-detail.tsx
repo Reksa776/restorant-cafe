@@ -11,6 +11,8 @@ import {
 import { formatPhoneDisplay } from "@/lib/phone";
 import type { ReservationTableView } from "@/services/reservation.service";
 import { reservationService } from "@/services/reservation.service";
+import { BarcodePaymentFlow } from "@/components/admin/barcode-payment-flow";
+import { Button } from "@/components/ui/button";
 import { ReservationStatusBadge } from "./reservation-status-badge";
 import { ReservationPaymentStatusBadge } from "./reservation-payment-status-badge";
 import {
@@ -61,6 +63,7 @@ export function ReservationDetail({
   // refetch; until it resolves the board's row data (`initial`) is shown, so
   // there is never a blank window.
   const [live, setLive] = useState<ReservationTableView | null>(null);
+  const [paymentOpen, setPaymentOpen] = useState(false);
   const reservation =
     live && live.id === initial?.id ? live : initial;
 
@@ -84,8 +87,21 @@ export function ReservationDetail({
   // Clear the fetched copy when closing so a stale row never leaks into the
   // next open (reset happens in the handler, not an effect).
   const handleOpenChange = (next: boolean) => {
-    if (!next) setLive(null);
+    if (!next) {
+      setLive(null);
+      setPaymentOpen(false);
+    }
     onOpenChange(next);
+  };
+
+  const refreshAfterPayment = async () => {
+    if (!reservation) return;
+    try {
+      setLive(await reservationService.getById(reservation.id));
+    } catch {
+      // Payment flow has its own confirmation; keep the current detail visible
+      // if this follow-up refresh briefly fails.
+    }
   };
 
   const hasTimeline =
@@ -203,6 +219,17 @@ export function ReservationDetail({
                   Belum ada pembayaran
                 </p>
               )}
+              {reservation.order?.orderNumber &&
+                reservation.payment?.status !== "PAID" &&
+                reservation.payment?.status !== "REFUNDED" &&
+                reservation.order.status !== "CANCELLED" && (
+                  <Button
+                    className="mt-3 w-full"
+                    onClick={() => setPaymentOpen(true)}
+                  >
+                    Proses Pembayaran di Kasir
+                  </Button>
+                )}
             </div>
 
             {hasTimeline && (
@@ -241,6 +268,16 @@ export function ReservationDetail({
           </div>
         ) : null}
       </DialogContent>
+      {reservation?.order?.orderNumber && (
+        <BarcodePaymentFlow
+          open={paymentOpen}
+          onOpenChange={setPaymentOpen}
+          initialOrderNumber={reservation.order.orderNumber}
+          title="Pembayaran Reservasi"
+          description="Pilih tunai atau QRIS kasir untuk menyelesaikan pembayaran reservasi ini."
+          onPaymentCompleted={() => void refreshAfterPayment()}
+        />
+      )}
     </Dialog>
   );
 }

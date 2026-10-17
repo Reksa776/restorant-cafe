@@ -40,6 +40,14 @@ export interface ReservationTableView {
   table: { id: string; number: number; name: string; capacity: number } | null;
   branch: { id: string; code: string; name: string } | null;
   customer: { id: string; name: string; phone: string | null } | null;
+  /** Linked preorder details; present for public reservations with a purchase. */
+  order?: {
+    orderNumber: string;
+    status: string;
+    paymentStatus: string;
+    paymentMethod: string | null;
+    grandTotal: number;
+  } | null;
   /** Payment summary — null when the reservation has no linked order. */
   payment: ReservationPaymentView | null;
 }
