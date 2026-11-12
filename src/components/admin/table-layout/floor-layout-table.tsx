@@ -123,13 +123,25 @@ export function FloorLayoutTable({
   };
 
   const compact = item.width < 60 || item.height < 44;
+  const areaLabel =
+    item.areaType === "SMOKING"
+      ? "Merokok"
+      : item.areaType === "NON_SMOKING"
+        ? "Bebas asap rokok"
+        : null;
+  const areaStyle =
+    item.areaType === "SMOKING"
+      ? "border-orange-300 bg-orange-50/90"
+      : item.areaType === "NON_SMOKING"
+        ? "border-emerald-300 bg-emerald-50/90"
+        : "border-slate-300 bg-white/85";
 
   return (
     <div
       ref={rootRef}
       data-table-id={item.tableId}
       role={interactive ? "button" : undefined}
-      aria-label={`Meja ${table.number}${table.name ? ` ${table.name}` : ""}`}
+      aria-label={`Meja ${table.number}${table.name ? ` ${table.name}` : ""}${areaLabel ? `, ${areaLabel}` : ""}`}
       aria-selected={selected}
       title={interactive ? `Meja ${table.number} — seret untuk memindahkan` : `Meja ${table.number} (nonaktif)`}
       onPointerDown={interactive ? handleBodyPointerDown : undefined}
@@ -146,7 +158,8 @@ export function FloorLayoutTable({
         touchAction: "none",
       }}
       className={cn(
-        "absolute flex items-center justify-center select-none border-2 border-slate-300 bg-white/85 shadow-sm",
+        "absolute flex items-center justify-center select-none border-2 shadow-sm",
+        areaStyle,
         // Visual layer only — geometry is driven by the draft item, never by status.
         interactive
           ? cn("cursor-grab active:cursor-grabbing", selected ? "cursor-move" : "hover:brightness-95")
@@ -173,6 +186,11 @@ export function FloorLayoutTable({
         {table.name && !compact && (
           <span className="max-w-full truncate text-[10px] font-medium text-gray-600">
             {table.name}
+          </span>
+        )}
+        {areaLabel && !compact && (
+          <span className="max-w-full truncate rounded-full bg-white/90 px-1.5 py-0.5 text-[8px] font-semibold text-gray-700">
+            {areaLabel}
           </span>
         )}
         {!compact && (

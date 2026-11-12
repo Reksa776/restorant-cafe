@@ -137,6 +137,11 @@ enum TableShape {
   CIRCLE
 }
 
+enum TableAreaType {
+  SMOKING
+  NON_SMOKING
+}
+
 // ============================================================
 // PHASE R1 — TABLE RESERVATION lifecycle.
 //
@@ -588,9 +593,9 @@ model Table {
 // TableLayout  — the floor board of one branch (branchId @unique ⇒ one
 //                layout per branch). Stores only restaurant/branch scope
 //                plus a naive optimistic `version` for later save-guards.
-// TableLayoutItem — one row per positioned table holding ONLY the visual
-//                geometry (x/y/width/height/rotation/shape) in a fixed
-//                logical canvas (900 × 600). Number/name/capacity/status
+// TableLayoutItem — one row per positioned table holding visual geometry
+//                plus an optional smoking-area classification. Number/name/
+//                capacity/status
 //                stay on Table; availability is the reservation engine's
 //                concern, never stored here.
 //
@@ -625,6 +630,7 @@ model TableLayoutItem {
   height    Float
   rotation  Float      @default(0)
   shape     TableShape @default(RECTANGLE)
+  areaType  TableAreaType?
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 

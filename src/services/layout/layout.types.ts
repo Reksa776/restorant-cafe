@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import type { TableShape } from "@prisma/client";
+import type { TableAreaType, TableShape } from "@prisma/client";
 
 // ============================================================
 // FLOOR LAYOUT — validation schemas (Zod v4).
@@ -35,6 +35,12 @@ export const TABLE_SHAPES = [
 ] as const satisfies readonly TableShape[];
 
 export type TableShapeValue = (typeof TABLE_SHAPES)[number];
+
+export const TABLE_AREA_TYPES = [
+  "SMOKING",
+  "NON_SMOKING",
+] as const satisfies readonly TableAreaType[];
+export type TableAreaTypeValue = (typeof TABLE_AREA_TYPES)[number];
 
 /** Wrap any finite degree value into [0, 360). */
 export function normalizeLayoutRotation(degrees: number): number {
@@ -72,6 +78,7 @@ export const LayoutItemSchema = z
       .max(LAYOUT_MAX_TABLE_DIMENSION, "Meja terlalu besar"),
     rotation: z.number().finite("Rotasi tidak valid"),
     shape: z.enum(TABLE_SHAPES),
+    areaType: z.enum(TABLE_AREA_TYPES).nullable().optional(),
   })
   .superRefine((item, ctx) => {
     if (item.x + item.width > LAYOUT_CANVAS_WIDTH) {

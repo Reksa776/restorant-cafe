@@ -5,12 +5,12 @@
   "prismaVersion": "7.10.0",
   "generatedBy": "tools/preflight-migrations.mjs --update",
   "capturedWith": {
-    "node": "v24.21.0",
+    "node": "v24.20.0",
     "icu": "78.3",
     "unicode": "17.0",
     "icuSmall": false,
     "i18nSupport": 1,
-    "defaultLocale": "en-US"
+    "defaultLocale": "en-NZ"
   },
   "order": [
     "0000_init_schema",
@@ -34,7 +34,8 @@
     "20260913_add_refund_item_allocation",
     "20260915_add_reservation",
     "20260920_add_floor_layout",
-    "20261009_add_expense_management"
+    "20261009_add_expense_management",
+    "20261112000000_add_table_area_type"
   ],
   "checksums": {
     "0000_init_schema": "6788090d6cf15380a77819e0ac0d6975d47edf0f01a45fd33ae829dd367322ee",
@@ -58,6 +59,7 @@
     "20260913_add_refund_item_allocation": "74f676da361b787db085e17178e6728db21d2a4ed356d0121489222b05f6edf9",
     "20260915_add_reservation": "0b33ba057de665abdb97f46449f642ddd48d842a25a1fcae186c1bf2042596f8",
     "20260920_add_floor_layout": "194edac1b88193ca26f926c21395fc98d8632f8e731bc249c1acc5f1fd1504f7",
-    "20261009_add_expense_management": "a9ef70832f6aae116b6587aa0b604828bb7064bc8b8b88dc5a088c810001b4cf"
+    "20261009_add_expense_management": "a9ef70832f6aae116b6587aa0b604828bb7064bc8b8b88dc5a088c810001b4cf",
+    "20261112000000_add_table_area_type": "4f3d317dca53a9277e077e373157c3ea991c9aa9b778fbbeadc19a0ce0b80f8b"
   }
 }

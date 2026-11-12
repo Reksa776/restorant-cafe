@@ -70,6 +70,11 @@ function TableCard({
     table.name ? `, ${table.name}` : "",
     `, kapasitas ${table.capacity} orang`,
     `, ${statusLabel}`,
+    table.areaType === "SMOKING"
+      ? ", area merokok"
+      : table.areaType === "NON_SMOKING"
+        ? ", area bebas asap rokok"
+        : "",
   ].join("");
 
   const shapeClasses =
@@ -100,6 +105,11 @@ function TableCard({
         <span className="mt-0.5 block max-w-full truncate text-[10px] font-medium leading-none opacity-80">
           {table.capacity} org
         </span>
+        {table.areaType && (
+          <span className="mt-1 block max-w-full truncate rounded-full bg-white/80 px-1.5 py-0.5 text-[9px] font-semibold leading-none">
+            {table.areaType === "SMOKING" ? "Merokok" : "Bebas asap rokok"}
+          </span>
+        )}
         <span
           className={`mt-1 block max-w-full truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none ${
             selected

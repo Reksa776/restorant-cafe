@@ -20,6 +20,7 @@ export const EDITOR_MIN_DIMENSION = 20;
 export const EDITOR_MAX_DIMENSION = 400;
 
 export type EditorShape = "RECTANGLE" | "CIRCLE";
+export type EditorAreaType = "SMOKING" | "NON_SMOKING";
 
 /** The editable geometry of one placed table (the layout item, not the table). */
 export interface DraftTableItem {
@@ -30,6 +31,7 @@ export interface DraftTableItem {
   height: number;
   rotation: number;
   shape: EditorShape;
+  areaType?: EditorAreaType | null;
 }
 
 export type ResizeCorner = "nw" | "ne" | "sw" | "se";
@@ -191,7 +193,8 @@ export function itemListsEqual(a: DraftTableItem[], b: DraftTableItem[]): boolea
       Math.abs(other.width - item.width) < 1e-6 &&
       Math.abs(other.height - item.height) < 1e-6 &&
       Math.abs(other.rotation - item.rotation) < 1e-6 &&
-      other.shape === item.shape
+      other.shape === item.shape &&
+      (other.areaType ?? null) === (item.areaType ?? null)
     );
   });
 }

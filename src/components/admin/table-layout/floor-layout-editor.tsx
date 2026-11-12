@@ -40,6 +40,7 @@ function toDraftItem(item: {
   height: number;
   rotation: number;
   shape: "RECTANGLE" | "CIRCLE";
+  areaType?: "SMOKING" | "NON_SMOKING" | null;
 }): DraftTableItem {
   return {
     tableId: item.tableId,
@@ -49,6 +50,7 @@ function toDraftItem(item: {
     height: item.height,
     rotation: normalizeRotation(item.rotation),
     shape: item.shape as EditorShape,
+    areaType: item.areaType ?? null,
   };
 }
 
@@ -219,6 +221,7 @@ export function FloorLayoutEditor({
           height: DEFAULT_PLACED_SIZE.height,
           rotation: 0,
           shape: "RECTANGLE",
+          areaType: null,
         },
       ]);
       setSelectedId(table.id);
@@ -263,6 +266,15 @@ export function FloorLayoutEditor({
     );
   }, []);
 
+  const handleAreaTypeChange = useCallback(
+    (tableId: string, areaType: DraftTableItem["areaType"]) => {
+      setDraft((prev) =>
+        prev.map((item) => (item.tableId === tableId ? { ...item, areaType } : item))
+      );
+    },
+    []
+  );
+
   // ----------------------------------------------------------
   // Save / reload / reset / conflict
   // ----------------------------------------------------------
@@ -289,7 +301,7 @@ export function FloorLayoutEditor({
       // never sent; the server re-validates every tableId.
       const result = await layoutService.saveAdminBranchLayout(branchId, {
         version,
-        items: draft.map(({ tableId, x, y, width, height, rotation, shape }) => ({
+        items: draft.map(({ tableId, x, y, width, height, rotation, shape, areaType }) => ({
           tableId,
           x,
           y,
@@ -297,6 +309,7 @@ export function FloorLayoutEditor({
           height,
           rotation,
           shape,
+          areaType: areaType ?? null,
         })),
       });
       applyServerLayout(result, tablesMap);
@@ -455,6 +468,7 @@ export function FloorLayoutEditor({
             onPlace={handlePlace}
             onUnplace={handleUnplace}
             onShapeChange={handleShapeChange}
+            onAreaTypeChange={handleAreaTypeChange}
             onRotate={handleRotate}
           />}
         </div>

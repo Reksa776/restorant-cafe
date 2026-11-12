@@ -7,6 +7,7 @@
 // ============================================================
 import api from "@/lib/axios";
 import type { SaveBranchLayoutInput } from "./layout/layout.types";
+import type { TableAreaType } from "@prisma/client";
 
 /** One placed table as returned by the layout endpoints (allow-listed). */
 export interface BranchLayoutItemView {
@@ -15,6 +16,7 @@ export interface BranchLayoutItemView {
   name: string;
   capacity: number;
   shape: "RECTANGLE" | "CIRCLE";
+  areaType?: TableAreaType | null;
   x: number;
   y: number;
   width: number;

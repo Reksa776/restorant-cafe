@@ -38,6 +38,7 @@ interface FloorLayoutSidebarProps {
   onPlace: (table: RestaurantTable) => void;
   onUnplace: (tableId: string) => void;
   onShapeChange: (tableId: string, shape: EditorShape) => void;
+  onAreaTypeChange: (tableId: string, areaType: DraftTableItem["areaType"]) => void;
   onRotate: (tableId: string, angle: number) => void;
 }
 
@@ -95,6 +96,7 @@ export function FloorLayoutSidebar({
   onPlace,
   onUnplace,
   onShapeChange,
+  onAreaTypeChange,
   onRotate,
 }: FloorLayoutSidebarProps) {
   const placedIds = new Set(activeItems.map((item) => item.tableId));
@@ -138,6 +140,32 @@ export function FloorLayoutSidebar({
                 Kapasitas {selectedTable.capacity} org ·{" "}
                 {statusLabels[selectedTable.status]}
               </p>
+            </div>
+
+            <div>
+              <label
+                htmlFor="layout-area-type"
+                className="mb-1 block text-xs font-medium text-gray-600"
+              >
+                Area meja
+              </label>
+              <select
+                id="layout-area-type"
+                value={selectedItem.areaType ?? ""}
+                onChange={(e) =>
+                  onAreaTypeChange(
+                    selectedItem.tableId,
+                    e.target.value === ""
+                      ? null
+                      : (e.target.value as NonNullable<DraftTableItem["areaType"]>)
+                  )
+                }
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Belum dipilih</option>
+                <option value="SMOKING">Area merokok</option>
+                <option value="NON_SMOKING">Area bebas asap rokok</option>
+              </select>
             </div>
 
             <div>

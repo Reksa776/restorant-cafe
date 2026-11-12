@@ -39,6 +39,7 @@ export interface FloorMapLayoutItem {
   width: number;
   height: number;
   rotation: number;
+  areaType?: "SMOKING" | "NON_SMOKING" | null;
 }
 
 /** One branch table as returned by the existing availability endpoint. */
@@ -107,6 +108,7 @@ export function mergeFloorMap(
       width: item.width,
       height: item.height,
       rotation: item.rotation,
+      ...(item.areaType ? { areaType: item.areaType } : {}),
       remainingSeats: avail?.remainingSeats ?? 0,
       available: avail?.available === true,
       status: normalizeStatus(avail?.status),

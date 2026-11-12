@@ -99,6 +99,11 @@ function TableNode({
     `Meja ${table.number}`,
     table.name ? `, ${table.name}` : "",
     `, kapasitas ${table.capacity} orang`,
+    table.areaType === "SMOKING"
+      ? ", area merokok"
+      : table.areaType === "NON_SMOKING"
+        ? ", area bebas asap rokok"
+        : "",
     `, status ${styleDef.label}`,
     selectable ? ", dapat dipilih" : ", tidak dapat dipilih",
   ].join("");
@@ -125,6 +130,11 @@ function TableNode({
       <span className="block max-w-full truncate px-1 text-[9px] leading-none opacity-80">
         {table.capacity} org
       </span>
+      {table.areaType && (
+        <span className="mt-0.5 block max-w-full truncate rounded-full bg-white/90 px-1.5 py-px text-[8px] font-semibold leading-none text-gray-800">
+          {table.areaType === "SMOKING" ? "Area merokok" : "Bebas asap rokok"}
+        </span>
+      )}
       <span
         className={`mt-0.5 block max-w-full truncate rounded-full px-1.5 py-px text-[8px] font-semibold leading-none text-white ${statusLabelClass(
           table

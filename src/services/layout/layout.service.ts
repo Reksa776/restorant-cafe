@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import type { TableShape } from "@prisma/client";
+import type { TableAreaType, TableShape } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   ConflictError,
@@ -52,6 +52,7 @@ import {
 interface LayoutItemValue {
   tableId: string;
   shape: TableShape;
+  areaType: TableAreaType | null;
   x: number;
   y: number;
   width: number;
@@ -98,6 +99,7 @@ export class LayoutService {
           name: table.name,
           capacity: table.capacity,
           shape: item.shape,
+          ...(item.areaType ? { areaType: item.areaType } : {}),
           x: item.x,
           y: item.y,
           width: item.width,
@@ -249,6 +251,7 @@ export class LayoutService {
       const items: LayoutItemValue[] = submitted.map((item) => ({
         tableId: item.tableId,
         shape: item.shape,
+        areaType: item.areaType ?? null,
         x: item.x,
         y: item.y,
         width: item.width,

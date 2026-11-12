@@ -23,7 +23,7 @@ type Params = { params: Promise<{ branchCode: string }> };
  *
  * Response is a strict allow-list DTO:
  *   { branchCode, branchId, version, canvas, items[] } where each item is
- *   { tableId, number, name, capacity, shape, x, y, width, height, rotation }
+ *   { tableId, number, name, capacity, shape, areaType, x, y, width, height, rotation }
  * Only PLACED + ACTIVE tables are returned (a placed table deactivated after
  * the save is dropped here — the floor map never advertises a table that
  * cannot be booked). No restaurantId / layoutId / audit / payment / customer /

@@ -35,6 +35,7 @@ export interface CashierTable {
 export interface CashierLayoutItem {
   tableId: string;
   shape: "RECTANGLE" | "CIRCLE";
+  areaType?: "SMOKING" | "NON_SMOKING" | null;
 }
 
 /** One rendered table card: server metadata + layout shape (if any). */
@@ -45,6 +46,7 @@ export interface CashierMapTable {
   capacity: number;
   status: string;
   shape: "RECTANGLE" | "CIRCLE";
+  areaType?: "SMOKING" | "NON_SMOKING" | null;
 }
 
 /**
@@ -58,16 +60,20 @@ export function mergeCashierTables(
   layoutItems: readonly CashierLayoutItem[]
 ): CashierMapTable[] {
   const shapeByTableId = new Map(
-    layoutItems.map((item) => [item.tableId, item.shape])
+    layoutItems.map((item) => [item.tableId, item])
   );
-  return tables.map((table) => ({
-    tableId: table.id,
-    number: table.number,
-    name: table.name,
-    capacity: table.capacity,
-    status: table.status,
-    shape: shapeByTableId.get(table.id) ?? "RECTANGLE",
-  }));
+  return tables.map((table) => {
+    const layout = shapeByTableId.get(table.id);
+    return {
+      tableId: table.id,
+      number: table.number,
+      name: table.name,
+      capacity: table.capacity,
+      status: table.status,
+      shape: layout?.shape ?? "RECTANGLE",
+      ...(layout?.areaType ? { areaType: layout.areaType } : {}),
+    };
+  });
 }
 
 /** A table is pickable unless it is under maintenance (old <select> rule). */

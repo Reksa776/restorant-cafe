@@ -34,7 +34,7 @@ export default function TableLayoutPage() {
         <p className="text-gray-500">
           {isAdminReview
             ? "Review layout meja per cabang. Perubahan layout dilakukan kasir di lokasi cabang."
-            : "Susun meja secara visual di canvas. Meja tetap dikelola lewat halaman Meja."}
+            : "Susun meja di denah. Pilih meja untuk menandai area merokok atau bebas asap rokok. Pengaturan meja tetap tersedia di halaman Meja."}
         </p>
       </div>
 
