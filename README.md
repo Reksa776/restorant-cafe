@@ -51,6 +51,23 @@ npm run dev          # Next.js dev server (default :3000)
 npm run worker:dev   # WhatsApp BullMQ worker (tsx)
 ```
 
+To run the full local stack with Docker (MySQL, Redis, app, WhatsApp worker,
+and the migration runner), copy the example environment file, replace every
+`change-this-...` value, then run:
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+The `migrate` service runs `npm run db:deploy` after MySQL is healthy. Both
+the app and worker wait for it to finish successfully, so they do not start
+against an outdated schema. To re-run only migrations after pulling code:
+
+```bash
+docker compose run --rm migrate
+```
+
 Note: the seed creates `admin@restobahagia.com` / `admin123` and
 `kasir@restobahagia.com` / `kasir123` — change these immediately in any
 environment that is not a throwaway local database.

@@ -10,6 +10,11 @@ RUN npm ci
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# `next build` imports route modules while collecting route metadata. It needs
+# a syntactically valid URL for Prisma client construction, but never uses this
+# build-only value at runtime; Compose injects the real DATABASE_URL then.
+ENV DATABASE_URL="mysql://prisma_build:prisma_build@127.0.0.1:9/prisma_build"
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
@@ -18,6 +23,21 @@ RUN npx prisma generate
 
 # Build the application
 RUN npm run build
+
+# Migration runner
+#
+# Kept separate from the web image so Compose can apply the checked-in Prisma
+# migrations once, before either long-running process starts.  It deliberately
+# uses `db:deploy` (rather than raw `prisma migrate deploy`) so the repository's
+# fail-closed migration-order preflight is always enforced.
+FROM deps AS migrate
+WORKDIR /app
+
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+COPY tools ./tools
+
+CMD ["npm", "run", "db:deploy"]
 
 # Stage 3: Runner — Next.js App
 FROM node:20-alpine AS runner

@@ -22,6 +22,22 @@ services:
       timeout: 5s
       retries: 5
 
+  # Applies Prisma migrations once per `docker compose up`.  The app and
+  # worker wait for this service, so a failed migration never starts a new
+  # application version against an old database schema.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migrate
+    container_name: restaurant-migrate
+    restart: "no"
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-restaurant}:${MYSQL_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-restaurant_app}
+    depends_on:
+      mysql:
+        condition: service_healthy
+
   # Redis
   redis:
     image: redis:7-alpine
@@ -47,16 +63,16 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=mysql://restaurant:password@mysql:3306/restaurant_app
-      - REDIS_URL=redis://redis:6379
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-your-secret-here-change-in-production}
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-      - IPAYMU_VA=${IPAYMU_VA}
-      - IPAYMU_API_KEY=${IPAYMU_API_KEY}
-      - IPAYMU_ENVIRONMENT=${IPAYMU_ENVIRONMENT:-sandbox}
-      - IPAYMU_ENV=${IPAYMU_ENV:-${IPAYMU_ENVIRONMENT:-sandbox}}
-      - WHATSAPP_SESSION_DIR=/app/whatsapp-session
+      DATABASE_URL: mysql://${MYSQL_USER:-restaurant}:${MYSQL_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-restaurant_app}
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      IPAYMU_VA: ${IPAYMU_VA:-}
+      IPAYMU_API_KEY: ${IPAYMU_API_KEY:-}
+      IPAYMU_ENVIRONMENT: ${IPAYMU_ENVIRONMENT:-sandbox}
+      IPAYMU_ENV: ${IPAYMU_ENV:-sandbox}
+      WHATSAPP_SESSION_DIR: /app/whatsapp-session
     volumes:
       - whatsapp_data:/app/whatsapp-session
       # Runtime product image uploads — persists across recreate/rebuild.
@@ -65,6 +81,8 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -76,21 +94,23 @@ services:
     container_name: restaurant-worker
     restart: unless-stopped
     environment:
-      - DATABASE_URL=mysql://restaurant:password@mysql:3306/restaurant_app
-      - REDIS_URL=redis://redis:6379
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-your-secret-here-change-in-production}
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
-      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-      - IPAYMU_VA=${IPAYMU_VA}
-      - IPAYMU_API_KEY=${IPAYMU_API_KEY}
-      - IPAYMU_ENVIRONMENT=${IPAYMU_ENVIRONMENT:-sandbox}
-      - IPAYMU_ENV=${IPAYMU_ENV:-${IPAYMU_ENVIRONMENT:-sandbox}}
-      - WHATSAPP_SESSION_DIR=/app/whatsapp-session
+      DATABASE_URL: mysql://${MYSQL_USER:-restaurant}:${MYSQL_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-restaurant_app}
+      REDIS_URL: redis://redis:6379
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
+      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      IPAYMU_VA: ${IPAYMU_VA:-}
+      IPAYMU_API_KEY: ${IPAYMU_API_KEY:-}
+      IPAYMU_ENVIRONMENT: ${IPAYMU_ENVIRONMENT:-sandbox}
+      IPAYMU_ENV: ${IPAYMU_ENV:-sandbox}
+      WHATSAPP_SESSION_DIR: /app/whatsapp-session
     volumes:
       - whatsapp_data:/app/whatsapp-session
     depends_on:
       mysql:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 

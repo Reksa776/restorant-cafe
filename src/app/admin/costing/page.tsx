@@ -114,7 +114,7 @@ function CostingDetailPage({
       })
       .catch((err) => {
         console.error("Failed to load costing detail:", err);
-        toast.error("Gagal memuat detail costing");
+        toast.error("Gagal memuat rincian HPP");
       })
       .finally(() => {
         if (alive) setLoading(false);
@@ -142,7 +142,7 @@ function CostingDetailPage({
     if (modeDraft === "MANUAL") {
       const v = parseFloat(manualDraft);
       if (Number.isNaN(v) || !Number.isFinite(v) || v < 0) {
-        toast.error("HPP manual harus berupa angka >= 0");
+        toast.error("HPP manual harus berupa angka nol atau lebih");
         return;
       }
     }
@@ -154,12 +154,12 @@ function CostingDetailPage({
           ? { manualHpp: parseFloat(manualDraft) }
           : {}),
       });
-      toast.success("Metode HPP diperbarui");
+      toast.success("Pengaturan HPP berhasil diperbarui");
       await reloadDetail();
       onCostingSaved?.();
     } catch (error) {
       console.error("Failed to save costing method:", error);
-      toast.error(apiErrorMessage(error, "Gagal menyimpan metode HPP"));
+      toast.error(apiErrorMessage(error, "Gagal menyimpan pengaturan HPP"));
     } finally {
       setSavingCosting(false);
     }
@@ -171,19 +171,18 @@ function CostingDetailPage({
     return n == null ? "—" : formatRupiah(n);
   };
 
-  // H4.2 — HPP breakdown. Addon/Option HPP is 0 here because the product-level
-  // view has no customization selection (the catalog below shows each
-  // component's cost per 1 unit).
+  // HPP pilihan tambahan ditampilkan terpisah karena belum ada pilihan order
+  // pada ringkasan produk.
   const summary: Array<{ label: string; value: string }> = detail
     ? [
-        { label: "Selling Price", value: rupiah(detail.sellingPrice) },
-        { label: "Base HPP", value: rupiah(detail.baseHpp) },
-        { label: "Addon HPP", value: rupiah(detail.addonHpp) },
-        { label: "Option HPP", value: rupiah(detail.optionHpp) },
+        { label: "Harga jual", value: rupiah(detail.sellingPrice) },
+        { label: "HPP dasar", value: rupiah(detail.baseHpp) },
+        { label: "Biaya tambahan", value: rupiah(detail.addonHpp) },
+        { label: "Biaya pilihan menu", value: rupiah(detail.optionHpp) },
         { label: "Total HPP", value: rupiah(detail.totalHpp) },
-        { label: "Gross Profit", value: rupiah(detail.grossProfit) },
-        { label: "Gross Margin", value: formatPct(detail.grossMarginPct) },
-        { label: "Food Cost", value: formatPct(detail.foodCostPct) },
+        { label: "Laba kotor", value: rupiah(detail.grossProfit) },
+        { label: "Margin laba", value: formatPct(detail.grossMarginPct) },
+        { label: "Biaya bahan dari harga jual", value: formatPct(detail.foodCostPct) },
       ]
     : [];
 
@@ -207,7 +206,7 @@ function CostingDetailPage({
                 </span>
               </>
             ) : (
-              "Costing Detail"
+              "Rincian HPP"
             )}
           </h1>
           <p className="mt-1 text-sm text-gray-500">
@@ -238,7 +237,7 @@ function CostingDetailPage({
             {/* G.1 — HPP method: automatic from ingredients, or manual. */}
             <div className="mt-4 rounded-lg border p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                Metode HPP (Cabang Ini)
+                Cara menghitung HPP di cabang ini
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button
@@ -261,7 +260,7 @@ function CostingDetailPage({
                 <div className="mt-3 space-y-2">
                   <div className="flex flex-wrap items-end gap-2">
                     <div className="space-y-1">
-                      <label className="text-xs text-gray-500">HPP Manual (Rp)</label>
+                      <label className="text-xs text-gray-500">HPP dasar per porsi (Rp)</label>
                       <Input
                         type="number"
                         min={0}
@@ -288,13 +287,13 @@ function CostingDetailPage({
                     </Button>
                   </div>
                   <p className="text-xs text-amber-600">
-                    Isi HPP per porsi secara manual. Nilai ini dapat mencakup kemasan, tenaga kerja, waste, atau biaya lain yang ingin dihitung. Resep dan WAC tidak digunakan selama mode manual aktif.
+                    Masukkan biaya dasar untuk satu porsi. Nilai ini bisa mencakup bahan, kemasan, tenaga kerja, dan biaya lain. Pilihan tambahan seperti ukuran atau sambal tetap menambahkan biayanya sendiri saat dipesan.
                   </p>
                 </div>
               ) : (
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs text-gray-500">
-                    HPP dihitung otomatis dari Recipe × WAC bahan baku cabang ini.
+                    HPP dasar dihitung dari jumlah bahan dalam resep dikalikan biaya rata-rata bahan di cabang ini.
                   </p>
                   {modeDraft !== detail.costingMode && (
                     <Button
@@ -320,19 +319,18 @@ function CostingDetailPage({
                 onClick={() => setSimulationOpen(true)}
               >
                 <FlaskConical className="mr-2 h-4 w-4" />
-                Simulasi perubahan harga/HPP
+                Coba perubahan harga dan biaya
               </Button>
             </div>
 
-            <h4 className="mt-5 mb-2 text-sm font-semibold">Rincian biaya resep</h4>
+            <h4 className="mt-5 mb-2 text-sm font-semibold">Rincian biaya bahan dasar</h4>
             {detail.costingMode === "MANUAL" ? (
               <p className="rounded-lg border border-dashed p-4 text-sm text-gray-500">
-                Metode Manual — HPP memakai nilai manual per cabang; Recipe/WAC
-                tidak digunakan.
+                HPP dasar menggunakan angka yang dimasukkan secara manual. Biaya pilihan tambahan dihitung terpisah saat pilihan itu dipesan.
               </p>
             ) : detail.items.length === 0 ? (
               <p className="rounded-lg border border-dashed p-4 text-sm text-gray-500">
-                Produk tidak memiliki recipe aktif.
+                Resep bahan untuk produk ini belum diisi.
               </p>
             ) : (
               <div className="overflow-x-auto rounded-md border">
@@ -340,9 +338,9 @@ function CostingDetailPage({
                 <TableHeader>
                   <TableRow>
                 <TableHead>Bahan baku</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">Jumlah</TableHead>
                 <TableHead>Satuan</TableHead>
-                <TableHead className="text-right">WAC</TableHead>
+                <TableHead className="text-right">Biaya rata-rata</TableHead>
                 <TableHead className="text-right">Biaya</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -357,11 +355,11 @@ function CostingDetailPage({
 
             {/* H4.2 — addon/option mini-BOM costing (per 1 unit). */}
             <h4 className="mt-6 mb-2 text-sm font-semibold">
-              KOMPONEN KUSTOMISASI (per 1 unit)
+              PILIHAN TAMBAHAN (biaya per pilihan)
             </h4>
             {components.length === 0 ? (
               <p className="rounded-lg border border-dashed p-4 text-sm text-gray-500">
-                Produk ini belum memiliki addon/option aktif.
+              Produk ini belum memiliki pilihan tambahan.
               </p>
             ) : (
               <>
@@ -369,9 +367,9 @@ function CostingDetailPage({
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Komponen</TableHead>
-                      <TableHead className="text-right">Harga Jual</TableHead>
-                      <TableHead className="text-right">HPP</TableHead>
+                      <TableHead>Pilihan</TableHead>
+                      <TableHead className="text-right">Tambahan harga</TableHead>
+                      <TableHead className="text-right">Biaya pilihan</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -381,7 +379,7 @@ function CostingDetailPage({
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className="text-[10px]">
-                              {component.kind === "ADDON" ? "Addon" : "Option"}
+                              {component.kind === "ADDON" ? "Tambahan" : "Pilihan menu"}
                             </Badge>
                             <span>{component.name}</span>
                           </div>
@@ -409,8 +407,8 @@ function CostingDetailPage({
                             }
                           >
                             {component.status === "COMPLETE"
-                              ? "Complete"
-                              : "Incomplete"}
+                              ? "Biaya lengkap"
+                              : "Biaya belum lengkap"}
                           </Badge>
                         </TableCell>
                       </TableRow>
@@ -419,9 +417,7 @@ function CostingDetailPage({
                 </Table>
                 </div>
                 <p className="mt-2 text-xs text-gray-500">
-                  HPP addon/option dihitung dari komposisi bahan × WAC bahan baku
-                  cabang ini. Harga jual addon/option tidak pernah dipakai sebagai HPP.
-                  &quot;Incomplete&quot; berarti komposisi atau WAC belum lengkap — bukan Rp 0.
+                  Biaya pilihan dihitung dari bahan yang dipakai dan biaya rata-rata bahan di cabang ini. Harga jual pilihan tidak digunakan sebagai biaya. Jika tertulis belum lengkap, komposisi atau biaya rata-rata bahannya perlu dilengkapi.
                 </p>
               </>
             )}
@@ -445,10 +441,10 @@ function CostingDetailPage({
 function componentReasonLabel(reasons: string[]): string {
   const map: Record<string, string> = {
     NO_BOM: "Komposisi bahan belum diisi",
-    MISSING_WAC: "WAC bahan belum tersedia",
+    MISSING_WAC: "Biaya rata-rata bahan belum diisi",
     INACTIVE_INGREDIENT: "Bahan baku tidak aktif",
-    INACTIVE_COMPONENT: "Addon/option tidak aktif",
-    NOT_FOUND: "Addon/option tidak ditemukan",
+    INACTIVE_COMPONENT: "Pilihan menu sudah dinonaktifkan",
+    NOT_FOUND: "Pilihan menu tidak ditemukan",
     INVALID_QUANTITY: "Jumlah pilihan tidak valid",
     INVALID_UNIT: "Satuan bahan tidak sesuai",
     MALFORMED_CUSTOMIZATION: "Data pilihan tidak dapat dibaca",
@@ -460,11 +456,11 @@ function componentReasonLabel(reasons: string[]): string {
 function CostingItemRow({ item }: { item: CostingItem }) {
   const missing =
     item.missingReason === "MISSING_WAC"
-      ? "WAC belum tersedia"
+      ? "Biaya rata-rata belum diisi"
       : item.missingReason === "INACTIVE_INGREDIENT"
-        ? "Ingredient tidak aktif"
+        ? "Bahan baku tidak aktif"
         : item.missingReason === "INVALID_UNIT"
-          ? "Satuan tidak cocok"
+          ? "Satuan bahan tidak cocok"
         : null;
 
   return (
@@ -491,13 +487,13 @@ function CostingItemRow({ item }: { item: CostingItem }) {
 }
 
 // ============================================================
-// What-If Simulation dialog — opened from CostingDetailDialog.
+// Dialog simulasi perubahan harga dan biaya.
 // ============================================================
 
 const simModeLabels = [
   { value: "price" as const, label: "Harga" },
   { value: "hpp" as const, label: "HPP" },
-  { value: "target_margin" as const, label: "Target Margin" },
+  { value: "target_margin" as const, label: "Atur margin laba" },
   { value: "combined" as const, label: "Kombinasi" },
 ];
 
@@ -600,9 +596,9 @@ function WhatIfDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>What-If Simulation</DialogTitle>
+          <DialogTitle>Simulasi perubahan harga dan biaya</DialogTitle>
           <DialogDescription>
-            {name ? `${name} — ${categoryName ?? "Tanpa kategori"}` : "Hitung simulasi what-if"}
+            {name ? `${name} — ${categoryName ?? "Tanpa kategori"}` : "Lihat perkiraan dampak perubahan"}
           </DialogDescription>
         </DialogHeader>
 
@@ -617,7 +613,7 @@ function WhatIfDialog({
               <h4 className="mb-2 text-xs font-semibold uppercase text-gray-500">Saat Ini</h4>
               <dl className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg border bg-muted/20 p-3 text-sm sm:grid-cols-3">
                 <div>
-                  <dt className="text-xs text-gray-500">Selling Price</dt>
+                  <dt className="text-xs text-gray-500">Harga jual</dt>
                   <dd className="mt-0.5 font-medium">{formatRupiah(Number(current.sellingPrice))}</dd>
                 </div>
                 <div>
@@ -625,15 +621,15 @@ function WhatIfDialog({
                   <dd className="mt-0.5 font-medium">{current.hpp == null ? "—" : formatRupiah(Number(current.hpp))}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-gray-500">Gross Profit</dt>
+                  <dt className="text-xs text-gray-500">Laba kotor</dt>
                   <dd className="mt-0.5 font-medium">{current.grossProfit == null ? "—" : formatRupiah(Number(current.grossProfit))}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-gray-500">Gross Margin</dt>
+                  <dt className="text-xs text-gray-500">Margin laba</dt>
                   <dd className="mt-0.5 font-medium">{formatPct(current.grossMarginPct)}</dd>
                 </div>
                 <div>
-                  <dt className="text-xs text-gray-500">Food Cost</dt>
+                  <dt className="text-xs text-gray-500">Biaya bahan dari harga jual</dt>
                   <dd className="mt-0.5 font-medium">{formatPct(current.foodCostPct)}</dd>
                 </div>
                 <div>
@@ -668,7 +664,7 @@ function WhatIfDialog({
                 {(mode === "price" || mode === "combined") && (
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-700">
-                      Harga Jual (% perubahan)
+                      Perubahan harga jual (%)
                     </label>
                     <Input
                       type="number"
@@ -684,7 +680,7 @@ function WhatIfDialog({
                 {(mode === "hpp" || mode === "combined") && (
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-700">
-                      HPP (% perubahan)
+                      Perubahan biaya per porsi (%)
                     </label>
                     <Input
                       type="number"
@@ -700,7 +696,7 @@ function WhatIfDialog({
                 {mode === "target_margin" && (
                   <div>
                     <label className="mb-1 block text-xs font-medium text-gray-700">
-                      Target Margin (%)
+                      Margin laba yang diinginkan (%)
                     </label>
                     <Input
                       type="number"
@@ -760,7 +756,7 @@ function WhatIfDialog({
                   <h4 className="mb-2 text-xs font-semibold uppercase text-gray-500">Hasil Proyeksi</h4>
                   <dl className="grid grid-cols-2 gap-x-6 gap-y-2 rounded-lg border bg-muted/20 p-3 text-sm sm:grid-cols-3">
                     <div>
-                      <dt className="text-xs text-gray-500">Selling Price</dt>
+                      <dt className="text-xs text-gray-500">Harga jual</dt>
                       <dd className="mt-0.5 font-medium">
                         {result.projected.price == null ? "—" : formatRupiah(Number(result.projected.price))}
                       </dd>
@@ -772,17 +768,17 @@ function WhatIfDialog({
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-xs text-gray-500">Gross Profit</dt>
+                      <dt className="text-xs text-gray-500">Laba kotor</dt>
                       <dd className="mt-0.5 font-medium">
                         {result.projected.grossProfit == null ? "—" : formatRupiah(Number(result.projected.grossProfit))}
                       </dd>
                     </div>
                     <div>
-                      <dt className="text-xs text-gray-500">Gross Margin</dt>
+                      <dt className="text-xs text-gray-500">Margin laba</dt>
                       <dd className="mt-0.5 font-medium">{formatPct(result.projected.marginPct)}</dd>
                     </div>
                     <div>
-                      <dt className="text-xs text-gray-500">Food Cost</dt>
+                      <dt className="text-xs text-gray-500">Biaya bahan dari harga jual</dt>
                       <dd className="mt-0.5 font-medium">{formatPct(result.projected.foodCostPct)}</dd>
                     </div>
                   </dl>
@@ -791,7 +787,7 @@ function WhatIfDialog({
                 {/* Impact */}
                 {result.impact.profitPerUnit != null && (
                   <div>
-                    <h4 className="mb-2 text-xs font-semibold uppercase text-gray-500">Gross Profit Impact / Unit</h4>
+                    <h4 className="mb-2 text-xs font-semibold uppercase text-gray-500">Perubahan laba kotor per porsi</h4>
                     <div className="flex items-baseline gap-3">
                       <span className="text-lg font-semibold">
                         {impactSign(result.impact.profitPerUnit)}
@@ -900,7 +896,7 @@ function CostingPageContent() {
       setTotalPages(result.totalPages);
     } catch (err) {
       console.error("Failed to load costing:", err);
-      setError("Gagal memuat data costing. Silakan coba lagi.");
+      setError("Gagal memuat data HPP. Silakan coba lagi.");
       setItems([]);
       setTotal(0);
       setTotalPages(1);
@@ -935,18 +931,18 @@ function CostingPageContent() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-bold">HPP Produk</h1>
+      <h1 className="text-xl font-bold">HPP Menu</h1>
         <p className="text-sm text-gray-500">
-          HPP dihitung per cabang dari resep dan biaya rata-rata bahan (WAC). Pengaturan HPP bersifat opsional untuk order dan checkout.
+          Lihat perkiraan biaya membuat satu porsi menu di cabang yang dipilih. HPP tidak wajib diisi agar menu bisa dipesan.
         </p>
       </div>
 
       <Card className="border-blue-100 bg-blue-50/50">
         <CardContent className="grid gap-3 p-4 text-sm md:grid-cols-3">
-          <div><p className="font-semibold">1. Siapkan bahan baku</p><p className="text-gray-600">Buat bahan dan satuan dasarnya.</p><a className="text-blue-700 underline" href="/admin/ingredients">Kelola bahan baku</a></div>
-          <div><p className="font-semibold">2. Isi biaya bahan per cabang</p><p className="text-gray-600">Terima pembelian atau atur biaya stok awal.</p><a className="text-blue-700 underline" href="/admin/purchasing/purchases/new">Buat pembelian</a></div>
-          <div><p className="font-semibold">3. Hubungkan resep ke menu</p><p className="text-gray-600">Edit produk menu, lalu tambah komposisi bahan.</p><a className="text-blue-700 underline" href="/admin/menu">Kelola menu</a></div>
-          <p className="text-xs text-gray-500 md:col-span-3">Jika HPP tidak disiapkan atau dinonaktifkan, customer tetap dapat memesan dan checkout. Stok produk menu tetap dikelola terpisah oleh kasir.</p>
+          <div><p className="font-semibold">1. Catat bahan baku</p><p className="text-gray-600">Tambahkan nama bahan dan satuan yang dipakai.</p><a className="text-blue-700 underline" href="/admin/ingredients">Buka daftar bahan baku</a></div>
+          <div><p className="font-semibold">2. Masukkan biaya bahan</p><p className="text-gray-600">Catat pembelian atau isi biaya stok awal di cabang.</p><a className="text-blue-700 underline" href="/admin/purchasing/purchases/new">Catat pembelian</a></div>
+          <div><p className="font-semibold">3. Isi bahan dalam menu</p><p className="text-gray-600">Pilih menu, lalu tulis bahan dan jumlah yang dipakai.</p><a className="text-blue-700 underline" href="/admin/menu">Buka daftar menu</a></div>
+          <p className="text-xs text-gray-500 md:col-span-3">Menu tetap bisa dipesan meski HPP belum diisi. Stok menu dan stok bahan baku dicatat terpisah.</p>
         </CardContent>
       </Card>
 
@@ -954,7 +950,7 @@ function CostingPageContent() {
         <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
-            Menampilkan costing untuk cabang default:{" "}
+            Menampilkan HPP untuk cabang utama:{" "}
             <strong>
               {workingBranch?.name} ({workingBranch?.code})
             </strong>
@@ -1031,10 +1027,10 @@ function CostingPageContent() {
                 <TableRow>
                   <TableHead>Produk</TableHead>
                   <TableHead className="text-right">Harga jual</TableHead>
-                  <TableHead className="text-right">HPP</TableHead>
-                  <TableHead className="text-right">Margin</TableHead>
-                  <TableHead className="text-right">Food Cost</TableHead>
-                  <TableHead>Metode</TableHead>
+                  <TableHead className="text-right">HPP dasar</TableHead>
+                  <TableHead className="text-right">Margin laba</TableHead>
+                  <TableHead className="text-right">Biaya bahan</TableHead>
+                  <TableHead>Cara hitung</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1050,10 +1046,10 @@ function CostingPageContent() {
                   <TableRow>
                     <TableCell colSpan={7} className="h-24 text-center text-sm text-gray-500">
                       {!workingBranch
-                        ? "Pilih cabang untuk melihat data costing."
+                        ? "Pilih cabang untuk melihat HPP."
                         : error
                           ? "Terjadi kesalahan saat memuat data."
-                          : "Belum ada data costing untuk cabang ini."}
+                          : "Belum ada data HPP untuk cabang ini."}
                     </TableCell>
                   </TableRow>
                 ) : (
@@ -1076,7 +1072,7 @@ function CostingPageContent() {
                       <TableCell>
                         {/* G.1 — which method produced this HPP. */}
                         <Badge variant={item.costingMode === "MANUAL" ? "secondary" : "outline"}>
-                          {item.costingMode === "MANUAL" ? "Manual" : "Bahan Baku"}
+                          {item.costingMode === "MANUAL" ? "Diisi manual" : "Dari bahan baku"}
                         </Badge>
                       </TableCell>
                       <TableCell>
