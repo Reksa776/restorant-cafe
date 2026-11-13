@@ -27,6 +27,7 @@ export interface ReservationPaymentContext {
 }
 
 const PREFIX = "reservation_payment_ctx:";
+const WIZARD_DRAFT_KEY = "customer-reservation-wizard-draft-v1";
 
 function key(code: string): string {
   return `${PREFIX}${code}`;
@@ -55,5 +56,38 @@ export function readReservationPaymentContext(
     return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Keep the reservation wizard's success screen in sync after the authoritative
+ * payment endpoint confirms a QRIS payment. Returns false when this browser
+ * session has no matching wizard draft (for example, a direct link opened in
+ * another browser), so callers can keep the self-contained payment result.
+ */
+export function markReservationWizardPaymentComplete(
+  code: string,
+  reservationStatus: string
+): boolean {
+  if (typeof window === "undefined" || !code) return false;
+  try {
+    const raw = window.sessionStorage.getItem(WIZARD_DRAFT_KEY);
+    if (!raw) return false;
+    const draft = JSON.parse(raw) as {
+      created?: {
+        code?: string;
+        status?: string;
+        order?: { paymentStatus?: string } | null;
+      } | null;
+    };
+    if (!draft.created || draft.created.code !== code || !draft.created.order) {
+      return false;
+    }
+    draft.created.status = reservationStatus;
+    draft.created.order.paymentStatus = "PAID";
+    window.sessionStorage.setItem(WIZARD_DRAFT_KEY, JSON.stringify(draft));
+    return true;
+  } catch {
+    return false;
   }
 }

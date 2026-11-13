@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import {
   CheckCircle2,
@@ -31,7 +32,11 @@ import {
   formatRupiah,
   formatTimeSlot,
 } from "../../reservation-flow";
-import { readReservationPaymentContext, saveReservationPaymentContext } from "../../reservation-payment-storage";
+import {
+  markReservationWizardPaymentComplete,
+  readReservationPaymentContext,
+  saveReservationPaymentContext,
+} from "../../reservation-payment-storage";
 import {
   effectivePaymentStatus,
   formatCountdown,
@@ -139,7 +144,9 @@ export default function ReservationPaymentPage({
   const [countdown, setCountdown] = useState<string | null>(null);
 
   const { customer, isHydrated: authHydrated } = useCustomerAuth();
+  const router = useRouter();
   const mountedRef = useRef(true);
+  const successRedirectedRef = useRef(false);
   const autoRefreshedRef = useRef(false);
   // True when a create-time snapshot was found in sessionStorage — then the
   // (thinner) public lookup is skipped and live state comes from the payment
@@ -254,6 +261,26 @@ export default function ReservationPaymentPage({
 
   const status = effectivePaymentStatus(data);
   const reservationCancelled = data?.reservationStatus === "CANCELLED";
+
+  // The wizard success page is the final destination after a successful
+  // reservation QRIS payment. Update its persisted snapshot first so it shows
+  // the confirmed/paid state instead of the pre-payment draft. A separately
+  // opened payment link has no matching draft and stays on this page's own
+  // success state.
+  useEffect(() => {
+    if (
+      successRedirectedRef.current ||
+      status !== "PAID" ||
+      data?.reservationStatus !== "CONFIRMED" ||
+      !code
+    ) {
+      return;
+    }
+    if (markReservationWizardPaymentComplete(code, data.reservationStatus)) {
+      successRedirectedRef.current = true;
+      router.replace("/reservasi/success");
+    }
+  }, [code, data?.reservationStatus, router, status]);
 
   // Poll ONLY while PENDING (never POSTs); stops on any terminal status.
   useEffect(() => {
