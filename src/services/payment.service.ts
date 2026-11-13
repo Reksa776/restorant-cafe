@@ -31,6 +31,7 @@ export interface Payment {
   method?: string | null;
   provider?: string | null;
   providerRef?: string | null;
+  gatewayTransactionId?: string | null;
   paymentUrl?: string | null;
   /** Gateway QR image — either a direct image URL or an already-resolved data URI. */
   qrImage?: string | null;

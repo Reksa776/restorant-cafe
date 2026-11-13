@@ -27,6 +27,7 @@ export interface CreatePaymentInput {
 
 export interface PaymentResult {
   reference: string;
+  transactionId?: string | null;
   paymentUrl: string;
   /**
    * QR image for QRIS payments — either a direct image URL or a data URI

@@ -412,27 +412,28 @@ export function KasirQrisScreen({
         </div>
       </div>
 
-      {payment?.providerRef && (
+      {payment?.gatewayTransactionId && (
         <div className="rounded-xl border bg-muted/30 p-3 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <p className="text-xs text-muted-foreground">Transaction ID / Ref ID</p>
-              <p className="truncate font-mono text-sm font-medium">{payment.providerRef}</p>
+              <p className="text-xs text-muted-foreground">Transaction ID iPaymu</p>
+              <p className="truncate font-mono text-sm font-medium">{payment.gatewayTransactionId}</p>
             </div>
             <Button type="button" variant="outline" size="sm" onClick={async () => {
-              try { await navigator.clipboard.writeText(payment.providerRef!); toast.success("Transaction ID berhasil disalin."); }
+              try { await navigator.clipboard.writeText(payment.gatewayTransactionId!); toast.success("Transaction ID berhasil disalin."); }
               catch { toast.error("Tidak bisa menyalin Transaction ID."); }
             }}>
               <Copy className="mr-1 h-3.5 w-3.5" /> Salin
             </Button>
           </div>
           {sandboxMode && (
-            <a href="https://sandbox.ipaymu.com/notify" target="_blank" rel="noopener noreferrer" className="inline-flex text-xs font-medium text-primary underline underline-offset-4">
+            <a href="https://sandbox.ipaymu.com/send-notify" target="_blank" rel="noopener noreferrer" className="inline-flex text-xs font-medium text-primary underline underline-offset-4">
               Kirim notifikasi simulasi ke iPaymu Sandbox
             </a>
           )}
         </div>
       )}
+      {!payment?.gatewayTransactionId && <p className="text-center text-xs text-muted-foreground">Transaction ID iPaymu belum tersedia.</p>}
 
       {/* QR */}
       <div className="bg-white rounded-xl border border-gray-200 p-4">

@@ -294,6 +294,8 @@ export class IpaymuProvider implements PaymentProvider {
         reference:
           (typeof data?.Reference === "string" && data.Reference) ||
           input.orderNumber,
+        transactionId:
+          data?.TransactionId != null ? String(data.TransactionId) : null,
         paymentUrl:
           (typeof data?.PaymentUrl === "string" && data.PaymentUrl) ||
           (isQris && qrImageRaw ? qrImageRaw : ""),

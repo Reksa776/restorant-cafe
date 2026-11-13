@@ -115,6 +115,7 @@ function toReservationPaymentDto(input: {
     amount: unknown;
     provider: string | null;
     providerRef: string | null;
+    gatewayTransactionId: string | null;
     qrImage: string | null;
     qrString: string | null;
     paymentUrl: string | null;
@@ -138,6 +139,7 @@ function toReservationPaymentDto(input: {
           amount: Number(input.payment.amount),
           provider: input.payment.provider ?? null,
           reference: input.payment.providerRef ?? null,
+          transactionId: input.payment.gatewayTransactionId ?? null,
           qrImage: input.payment.qrImage ?? null,
           qrString: input.payment.qrString ?? null,
           paymentUrl: input.payment.paymentUrl ?? null,
@@ -263,6 +265,7 @@ export async function POST(
           amount: payment.amount,
           provider: payment.provider,
           providerRef: payment.providerRef,
+          gatewayTransactionId: payment.gatewayTransactionId,
           qrImage: payment.qrImage,
           qrString: payment.qrString,
           paymentUrl: payment.paymentUrl,
@@ -341,6 +344,7 @@ export async function GET(
         amount: true,
         provider: true,
         providerRef: true,
+        gatewayTransactionId: true,
         qrImage: true,
         qrString: true,
         paymentUrl: true,

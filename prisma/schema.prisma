@@ -1111,6 +1111,8 @@ model Payment {
   method       String?
   provider     String?
   providerRef  String?
+  // Unique iPaymu transaction ID (not the merchant/order reference).
+  gatewayTransactionId String?
   paymentUrl   String?       @db.Text
   // Raw QR data returned by the gateway at payment-creation time (QRIS
   // channel). qrImage is the QR image (URL or data URI) from iPaymu;

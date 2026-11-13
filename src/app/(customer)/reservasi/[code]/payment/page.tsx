@@ -95,6 +95,7 @@ interface ReservationPaymentData {
     amount: number;
     provider: string | null;
     reference: string | null;
+    transactionId: string | null;
     qrImage: string | null;
     qrString: string | null;
     paymentUrl: string | null;
@@ -717,20 +718,21 @@ export default function ReservationPaymentPage({
                         </div>
                       )}
 
-                      {data?.payment?.reference && (
+                      {data?.payment?.transactionId && (
                           <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border bg-gray-50 px-3 py-2 text-left">
                             <div className="min-w-0">
-                              <p className="text-xs text-gray-500">Transaction ID / Ref ID</p>
-                              <p className="truncate font-mono text-sm text-gray-800">{data.payment.reference}</p>
+                              <p className="text-xs text-gray-500">Transaction ID iPaymu</p>
+                              <p className="truncate font-mono text-sm text-gray-800">{data.payment.transactionId}</p>
                             </div>
                             <button type="button" className="inline-flex shrink-0 items-center gap-1 rounded-md border bg-white px-2.5 py-1.5 text-xs font-medium hover:bg-gray-100" onClick={async () => {
-                              try { await navigator.clipboard.writeText(data.payment!.reference!); toast.success("Transaction ID berhasil disalin."); }
+                              try { await navigator.clipboard.writeText(data.payment!.transactionId!); toast.success("Transaction ID berhasil disalin."); }
                               catch { toast.error("Tidak bisa menyalin Transaction ID."); }
                             }}>
                               <Copy className="h-3.5 w-3.5" /> Salin
                             </button>
                           </div>
                       )}
+                      {data?.payment && !data.payment.transactionId && <p className="text-center text-xs text-gray-500">Transaction ID iPaymu belum tersedia.</p>}
 
                       <button
                         type="button"

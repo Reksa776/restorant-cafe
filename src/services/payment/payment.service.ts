@@ -392,6 +392,7 @@ customer: { select: { id: true, name: true, phone: true } },
         where: { id: intent.payment.id },
         data: {
           providerRef: paymentResult.reference,
+          gatewayTransactionId: paymentResult.transactionId || null,
           paymentUrl: paymentResult.paymentUrl,
           qrImage: paymentResult.qrImage || null,
           qrString: paymentResult.qrString || null,
@@ -1155,6 +1156,7 @@ customer: { select: { id: true, name: true, phone: true } },
             | "EXPIRED"
             | "CANCELLED",
           ...(webhookData.status === "PAID" ? { paidAt: new Date() } : {}),
+          ...(payload.trx_id != null ? { gatewayTransactionId: String(payload.trx_id) } : {}),
         },
       });
 
