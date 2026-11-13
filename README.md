@@ -28,8 +28,12 @@ Copy `.env.example` to `.env` and fill in the values (never commit `.env`):
 - `NEXTAUTH_SECRET`, `NEXTAUTH_URL` (or `AUTH_URL`), `AUTH_TRUST_HOST`
 - `NEXT_PUBLIC_APP_URL` — public HTTPS origin (used for the iPaymu webhook /
   return URLs — MUST be the real domain in production)
-- `IPAYMU_ENV` (`sandbox` | `production`), `IPAYMU_VA`, `IPAYMU_API_KEY`,
-  optional `IPAYMU_BASE_URL`
+- `IPAYMU_ENV` (`sandbox` | `production`) selects the gateway for this app
+  instance. Configure `IPAYMU_SANDBOX_VA` / `IPAYMU_SANDBOX_API_KEY` and
+  `IPAYMU_PRODUCTION_VA` / `IPAYMU_PRODUCTION_API_KEY` separately so local
+  sandbox testing does not replace the live credentials. The old
+  `IPAYMU_VA` / `IPAYMU_API_KEY` and `IPAYMU_BASE_URL` remain supported as
+  compatibility fallbacks.
 - `REDIS_URL` — BullMQ/WhatsApp queue backend
 - `WHATSAPP_SESSION_DIR` — Baileys session storage (legacy
   `WHATSAPP_SESSION_PATH` is honored as an alias)

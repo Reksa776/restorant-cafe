@@ -13,22 +13,35 @@ export class IpaymuProvider implements PaymentProvider {
   private baseUrl: string;
 
   constructor() {
-    this.va = process.env.IPAYMU_VA || "";
-    this.apiKey = process.env.IPAYMU_API_KEY || "";
+    const configuredEnvironment = (
+      process.env.IPAYMU_ENV || process.env.IPAYMU_ENVIRONMENT || ""
+    ).trim().toLowerCase();
+    const environment = configuredEnvironment === "production" ? "production" : "sandbox";
+    if (environment === "production") {
+      // Mode-specific values take precedence. The legacy pair remains a
+      // fallback so existing production deployments continue to work.
+      this.va = process.env.IPAYMU_PRODUCTION_VA || process.env.IPAYMU_VA || "";
+      this.apiKey = process.env.IPAYMU_PRODUCTION_API_KEY || process.env.IPAYMU_API_KEY || "";
+    } else {
+      // Sandbox credentials are kept separate from live credentials. Legacy
+      // IPAYMU_VA/API_KEY remain supported for existing sandbox setups.
+      this.va = process.env.IPAYMU_SANDBOX_VA || process.env.IPAYMU_VA || "";
+      this.apiKey = process.env.IPAYMU_SANDBOX_API_KEY || process.env.IPAYMU_API_KEY || "";
+    }
     this.baseUrl = this.resolveBaseUrl();
   }
 
   /**
    * Endpoint selection (configuration only — never business logic).
    *
-   * Production is only ever selected EXPLICITLY, so a leftover sandbox
-   * IPAYMU_BASE_URL can never silently disable it:
+   * Production is only ever selected EXPLICITLY, so a sandbox endpoint
+   * override can never silently disable live payments:
    * 1. IPAYMU_ENV or IPAYMU_ENVIRONMENT equal to "production" →
    *    https://my.ipaymu.com/api/v2 (docker-compose historically exports
    *    IPAYMU_ENVIRONMENT, so both names are honored).
-   * 2. IPAYMU_BASE_URL set → used verbatim as an override (trailing "/"
-   *    stripped). Production value: https://my.ipaymu.com/api/v2 — Sandbox
-   *    value: https://sandbox.ipaymu.com/api/v2.
+   * 2. Mode-specific base URL override, if set. Production uses
+   *    IPAYMU_PRODUCTION_BASE_URL; sandbox uses IPAYMU_SANDBOX_BASE_URL
+   *    (or the legacy IPAYMU_BASE_URL).
    * 3. Anything else defaults to the sandbox endpoint.
    */
   private resolveBaseUrl(): string {
@@ -36,11 +49,16 @@ export class IpaymuProvider implements PaymentProvider {
       process.env.IPAYMU_ENV ||
       process.env.IPAYMU_ENVIRONMENT ||
       ""
-    ).toLowerCase();
+    ).trim().toLowerCase();
     if (envName === "production") {
-      return "https://my.ipaymu.com/api/v2";
+      const productionOverride = (process.env.IPAYMU_PRODUCTION_BASE_URL || "")
+        .trim()
+        .replace(/\/+$/, "");
+      return productionOverride || "https://my.ipaymu.com/api/v2";
     }
-    const override = (process.env.IPAYMU_BASE_URL || "")
+    const override = (
+      process.env.IPAYMU_SANDBOX_BASE_URL || process.env.IPAYMU_BASE_URL || ""
+    )
       .trim()
       .replace(/\/+$/, "");
     if (override) {
