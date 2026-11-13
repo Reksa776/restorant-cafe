@@ -577,9 +577,9 @@ describe("reservation.service — statuses that hold/release the slot", () => {
     );
   });
 
-  it("12. duplicate guest reservation is rejected (across different tables)", async () => {
+  it("12. same guest may reserve different tables at the same time", async () => {
     const phone = "081200000009";
-    await reservationService.createAdminReservation(
+    const first = await reservationService.createAdminReservation(
       restAId,
       adminInput({
         branchId: branchMain,
@@ -591,20 +591,18 @@ describe("reservation.service — statuses that hold/release the slot", () => {
       { now: NOW }
     );
 
-    await assert.rejects(
-      reservationService.createAdminReservation(
-        restAId,
-        adminInput({
-          branchId: branchMain,
-          tableId: tDupB,
-          startMinutes: SLOT_18,
-          partySize: 2,
-          guestPhone: phone,
-        }),
-        { now: NOW }
-      ),
-      ConflictError
+    const second = await reservationService.createAdminReservation(
+      restAId,
+      adminInput({
+        branchId: branchMain,
+        tableId: tDupB,
+        startMinutes: SLOT_18,
+        partySize: 2,
+        guestPhone: phone,
+      }),
+      { now: NOW }
     );
+    assert.notEqual(second.id, first.id);
   });
 
   it("12b. duplicate applies to table-less bookings too", async () => {

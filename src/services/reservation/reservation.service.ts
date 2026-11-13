@@ -1011,7 +1011,11 @@ export class ReservationService {
         }
 
         // Duplicate booking protection — race-safe because every create in
-        // this branch is serialized by the branch row lock above.
+        // this branch is serialized by the branch row lock above. A guest may
+        // reserve multiple distinct tables for the same time; a selected table
+        // is already protected by the table-overlap gate above. Keep blocking
+        // a second unassigned booking, and don't let an unassigned booking
+        // duplicate any existing table booking for that guest/time.
         // Active statuses only: a previously CANCELLED/NO_SHOW booking with
         // the same keys does NOT block a fresh attempt.
         const dupWhere: Prisma.ReservationWhereInput = {
@@ -1025,6 +1029,9 @@ export class ReservationService {
           dupWhere.customerId = data.customerId;
         } else {
           dupWhere.guestPhone = data.guestPhone;
+        }
+        if (data.tableId) {
+          dupWhere.OR = [{ tableId: null }, { tableId: data.tableId }];
         }
         const duplicate = await tx.reservation.findFirst({
           where: dupWhere,
