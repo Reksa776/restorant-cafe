@@ -67,17 +67,17 @@ const ORDER_TYPE_CONFIG: Record<
   { label: string; icon: typeof UtensilsCrossed; color: string }
 > = {
   DINE_IN: {
-    label: "Dine In",
+    label: "Makan di Tempat",
     icon: UtensilsCrossed,
     color: "text-brand-primary",
   },
   TAKEAWAY: {
-    label: "Takeaway",
+    label: "Bawa Pulang",
     icon: ShoppingBag,
     color: "text-amber-600",
   },
   DELIVERY: {
-    label: "Delivery",
+    label: "Diantar",
     icon: Truck,
     color: "text-green-600",
   },
@@ -252,7 +252,7 @@ export function OrderCard({
         {/* Customer Info */}
         <div className="space-y-0.5">
           <p className="text-sm font-medium">
-            {order.customer.name || "Guest"}
+            {order.customer.name || "Tamu"}
           </p>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {hasPhone ? (
@@ -371,7 +371,7 @@ export function OrderCard({
             <>
               <Button
                 size="sm"
-                onClick={() => onStatusChange(order.id, "CONFIRMED")}
+                onClick={() => onStatusChange(order.id, "Dikonfirmasi")}
                 disabled={isUpdating}
                 className="flex-1"
               >
@@ -381,7 +381,7 @@ export function OrderCard({
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={() => onStatusChange(order.id, "CANCELLED")}
+                onClick={() => onStatusChange(order.id, "Dibatalkan")}
                 disabled={isUpdating || isPaid}
                 title={
                   isPaid
@@ -397,7 +397,7 @@ export function OrderCard({
           {isConfirmed && (
             <Button
               size="sm"
-              onClick={() => onStatusChange(order.id, "PROCESSING")}
+              onClick={() => onStatusChange(order.id, "Sedang Diproses")}
               disabled={isUpdating}
               className="flex-1"
             >
@@ -409,7 +409,7 @@ export function OrderCard({
           {isProcessing && (
             <Button
               size="sm"
-              onClick={() => onStatusChange(order.id, "READY")}
+              onClick={() => onStatusChange(order.id, "Siap")}
               disabled={isUpdating}
               className="flex-1 bg-orange-500 hover:bg-orange-600"
             >
@@ -421,7 +421,7 @@ export function OrderCard({
           {isReady && (
             <Button
               size="sm"
-              onClick={() => onStatusChange(order.id, "COMPLETED")}
+              onClick={() => onStatusChange(order.id, "Selesai")}
               disabled={isUpdating}
               className="flex-1 bg-green-500 hover:bg-green-600"
             >
@@ -446,7 +446,7 @@ export function OrderCard({
             </Button>
             <Button
               size="sm"
-              onClick={() => onStatusChange(order.id, "COMPLETED")}
+              onClick={() => onStatusChange(order.id, "Selesai")}
               disabled={isUpdating}
               className="flex-1 bg-brand-primary hover:bg-brand-primary/90 text-brand-primary-foreground"
             >

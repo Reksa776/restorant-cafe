@@ -19,9 +19,9 @@ import { KasirQrisScreen } from "@/components/admin/orders/kasir-qris-screen";
 import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
 
 const TYPE_META: Record<string, { label: string; Icon: typeof UtensilsCrossed }> = {
-  DINE_IN: { label: "Dine In", Icon: UtensilsCrossed },
-  TAKEAWAY: { label: "Takeaway", Icon: ShoppingBag },
-  DELIVERY: { label: "Delivery", Icon: Truck },
+  DINE_IN: { label: "Makan di Tempat", Icon: UtensilsCrossed },
+  TAKEAWAY: { label: "Bawa Pulang", Icon: ShoppingBag },
+  DELIVERY: { label: "Diantar", Icon: Truck },
 };
 
 /**
@@ -109,7 +109,7 @@ export default function AdminPaymentQrisPage({
           Tidak ada pesanan {orderNumber} pada cabang/restoran Anda.
         </p>
         <Link href="/admin/payments">
-          <Button variant="outline">Kembali ke Payment Dashboard</Button>
+          <Button variant="outline">Kembali ke daftar pembayaran</Button>
         </Link>
       </div>
     );
@@ -152,7 +152,7 @@ export default function AdminPaymentQrisPage({
             <div className="min-w-0">
               <p className="font-mono font-semibold">{order.orderNumber}</p>
               <p className="text-sm text-muted-foreground">
-                {order.customer?.name || "Guest"}
+                {order.customer?.name || "Tamu"}
                 {order.table ? ` • Meja ${order.table.number}` : ""}
               </p>
             </div>
@@ -174,7 +174,7 @@ export default function AdminPaymentQrisPage({
             orderNumber={order.orderNumber}
             amount={order.grandTotal}
             backHref="/admin/payments"
-            backLabel="Kembali ke Payment Dashboard"
+            backLabel="Kembali ke daftar pembayaran"
             onPaid={async () => {
               try {
                 const fresh = await orderService.getOrderByNumberScoped(order.orderNumber);

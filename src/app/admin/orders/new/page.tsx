@@ -1446,7 +1446,7 @@ export default function KasirManualOrderPage() {
                 </>
               )}
               <div className="flex justify-between font-bold text-base pt-1">
-                <span>Grand Total</span>
+                <span>Total Tagihan</span>
                 <span className="tabular-nums">{rupiah(grandTotal)}</span>
               </div>
             </div>
@@ -1506,9 +1506,9 @@ export default function KasirManualOrderPage() {
             <div className="grid grid-cols-3 gap-2">
               {(
                 [
-                  { value: "DINE_IN" as const, label: "Dine In", icon: UtensilsCrossed },
-                  { value: "TAKEAWAY" as const, label: "Takeaway", icon: ShoppingBag },
-                  { value: "DELIVERY" as const, label: "Delivery", icon: Truck },
+                  { value: "DINE_IN" as const, label: "Makan di Tempat", icon: UtensilsCrossed },
+                  { value: "TAKEAWAY" as const, label: "Bawa Pulang", icon: ShoppingBag },
+                  { value: "DELIVERY" as const, label: "Diantar", icon: Truck },
                 ]
               ).map((opt) => {
                 const Icon = opt.icon;

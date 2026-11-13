@@ -154,7 +154,7 @@ export function ApprovalActions({
           onClick={() => setAction({ kind: "refund-request", orderId: order.id })}
         >
           <RotateCcw className="h-4 w-4 mr-1 text-red-600" />
-          Refund
+          Pengembalian Dana
         </Button>
       )}
       {canCancel && (

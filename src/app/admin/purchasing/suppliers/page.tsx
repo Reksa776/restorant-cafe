@@ -166,13 +166,13 @@ export default function SuppliersPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Supplier</h1>
+          <h1 className="text-3xl font-bold">Pemasok</h1>
           <p className="text-gray-500">Kelola pemasok bahan baku restoran</p>
         </div>
         {isAdmin && (
           <Button onClick={openCreate}>
             <Plus className="mr-1 h-4 w-4" />
-            Tambah Supplier
+            Tambah Pemasok
           </Button>
         )}
       </div>
@@ -180,13 +180,13 @@ export default function SuppliersPage() {
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle className="text-base">Daftar Supplier</CardTitle>
+            <CardTitle className="text-base">Daftar Pemasok</CardTitle>
             <div className="relative w-full sm:max-w-xs">
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Cari nama supplier..."
+                placeholder="Cari nama pemasok…"
                 className="pl-9"
               />
             </div>
@@ -282,7 +282,7 @@ export default function SuppliersPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? "Edit Supplier" : "Tambah Supplier"}</DialogTitle>
+            <DialogTitle>{editing ? "Ubah Pemasok" : "Tambah Pemasok"}</DialogTitle>
             <DialogDescription>
               {editing ? "Perbarui informasi pemasok" : "Tambahkan pemasok baru"}
             </DialogDescription>
@@ -294,7 +294,7 @@ export default function SuppliersPage() {
                 id="supName"
                 value={form.name}
                 onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="Nama supplier"
+                placeholder="Nama pemasok"
               />
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -324,7 +324,7 @@ export default function SuppliersPage() {
                 id="supAddress"
                 value={form.address}
                 onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
-                placeholder="Alamat supplier"
+                placeholder="Alamat pemasok"
                 rows={2}
               />
             </div>

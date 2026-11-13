@@ -158,7 +158,7 @@ export function SalesTrendChart({ data }: { data: SalesTrendPoint[] }) {
           yAxisId="orders"
           type="monotone"
           dataKey="orders"
-          name="Order"
+          name="Pesanan"
           stroke="#2563eb"
           strokeWidth={2}
           dot={false}
@@ -432,14 +432,14 @@ export function PeakHoursChart({
             `Pukul ${String(label).padStart(2, "0")}:00`
           }
           formatter={(value, name) =>
-            String(name) === "Order" ? `${Number(value)} order` : RUPIAH(value)
+            String(name) === "Pesanan" ? `${Number(value)} order` : RUPIAH(value)
           }
         />
         <Legend wrapperStyle={{ fontSize: 12, paddingTop: 4 }} />
         <Bar
           yAxisId="orders"
           dataKey="orders"
-          name="Order"
+          name="Pesanan"
           fill="#2563eb"
           radius={[4, 4, 0, 0]}
           maxBarSize={34}

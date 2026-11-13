@@ -53,9 +53,9 @@ const PAYMENT_STATUS_META: Record<string, { label: string; cls: string }> = {
 };
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
-  DINE_IN: "Dine In",
-  TAKEAWAY: "Takeaway",
-  DELIVERY: "Delivery",
+  DINE_IN: "Makan di Tempat",
+  TAKEAWAY: "Bawa Pulang",
+  DELIVERY: "Diantar",
 };
 
 const PERIOD_PRESETS = [
@@ -435,9 +435,9 @@ export default function CashierSalesPage() {
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
           >
             <option value="">Semua Tipe</option>
-            <option value="DINE_IN">Dine In</option>
-            <option value="TAKEAWAY">Takeaway</option>
-            <option value="DELIVERY">Delivery</option>
+            <option value="DINE_IN">Makan di Tempat</option>
+            <option value="TAKEAWAY">Bawa Pulang</option>
+            <option value="DELIVERY">Diantar</option>
           </select>
 
           <Button
@@ -469,14 +469,14 @@ export default function CashierSalesPage() {
           <thead>
             <tr className="text-left text-xs text-muted-foreground border-b">
               <th className="px-3 py-2">Waktu</th>
-              <th className="px-3 py-2">Order</th>
+              <th className="px-3 py-2">Pesanan</th>
               {isAdmin && <th className="px-3 py-2">Kasir</th>}
-              <th className="px-3 py-2">Customer</th>
+              <th className="px-3 py-2">Pelanggan</th>
               <th className="px-3 py-2">Tipe</th>
               <th className="px-3 py-2">Pembayaran</th>
               <th className="px-3 py-2 text-right">Total</th>
               <th className="px-3 py-2">Status</th>
-              <th className="px-3 py-2">Shift</th>
+              <th className="px-3 py-2">Sesi Kasir</th>
               <th className="px-3 py-2 text-right">Aksi</th>
             </tr>
           </thead>
@@ -618,7 +618,7 @@ export default function CashierSalesPage() {
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <p className="text-xs text-muted-foreground">Order</p>
+                      <p className="text-xs text-muted-foreground">Pesanan</p>
                       <p className="font-mono font-medium">
                         {detailOrder.orderNumber}
                       </p>
@@ -628,7 +628,7 @@ export default function CashierSalesPage() {
                       <p>{fmtTime(detailOrder.createdAt)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Customer</p>
+                      <p className="text-xs text-muted-foreground">Pelanggan</p>
                       <p>{detailOrder.customer?.name || "—"}</p>
                     </div>
                     <div>
@@ -638,7 +638,7 @@ export default function CashierSalesPage() {
                     <div>
                       <p className="text-xs text-muted-foreground">Status</p>
                       <Badge className={PAYMENT_STATUS_META[detailOrder.status]?.cls || ""}>
-                        {detailOrder.status}
+                        {PAYMENT_STATUS_META[detailOrder.status]?.label ?? detailOrder.status}
                       </Badge>
                     </div>
                     <div>
@@ -695,12 +695,12 @@ export default function CashierSalesPage() {
                     )}
                     {Number(detailOrder.serviceCharge) > 0 && (
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Service Charge</span>
+                        <span className="text-muted-foreground">Biaya Layanan</span>
                         <span className="tabular-nums">{rupiah(detailOrder.serviceCharge)}</span>
                       </div>
                     )}
                     <div className="flex justify-between font-bold border-t pt-1">
-                      <span>Grand Total</span>
+                      <span>Total Tagihan</span>
                       <span className="tabular-nums">{rupiah(detailOrder.grandTotal)}</span>
                     </div>
                   </div>

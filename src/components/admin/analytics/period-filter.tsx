@@ -73,7 +73,7 @@ export function AnalyticsPeriodFilter({
               <RefreshCw
                 className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`}
               />
-              Refresh
+              Muat Ulang
             </Button>
           </div>
         </div>
@@ -106,7 +106,7 @@ export function AnalyticsPeriodFilter({
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 pt-3">
           <ReportBranchFilter />
           {rangeLabel && (
-            <p className="text-xs text-muted-foreground">Periode: {rangeLabel}</p>
+            <p className="text-xs text-muted-foreground">Tanggal: {rangeLabel}</p>
           )}
         </div>
       </CardContent>

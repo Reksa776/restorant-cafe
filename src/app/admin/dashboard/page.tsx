@@ -39,6 +39,15 @@ interface DashboardStats {
   paidOrders: number;
 }
 
+const ORDER_STATUS_LABEL: Record<string, string> = {
+  PENDING: "Menunggu",
+  CONFIRMED: "Dikonfirmasi",
+  PROCESSING: "Sedang dibuat",
+  READY: "Siap diambil",
+  COMPLETED: "Selesai",
+  CANCELLED: "Dibatalkan",
+};
+
 export default function DashboardPage() {
   const router = useRouter();
   const { isLoading: branchCtxLoading } = useBranchContext();
@@ -113,7 +122,7 @@ export default function DashboardPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-gray-500">Loading...</p>
+        <p className="text-gray-500">Sedang memuat…</p>
       </div>
     );
   }
@@ -122,8 +131,8 @@ export default function DashboardPage() {
     <div className="space-y-8">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold">Dashboard</h1>
-          <p className="text-gray-500">Selamat datang di admin dashboard</p>
+          <h1 className="text-3xl font-bold">Ringkasan</h1>
+          <p className="text-gray-500">Pantau pesanan, penjualan, dan kegiatan restoran</p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
           <OrderScanner
@@ -161,7 +170,7 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Menunggu Konfirmasi</CardTitle>
+            <CardTitle className="text-sm font-medium">Perlu Dikonfirmasi</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -171,7 +180,7 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Sedang Diproses</CardTitle>
+            <CardTitle className="text-sm font-medium">Sedang Disiapkan</CardTitle>
             <ChefHat className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -216,7 +225,7 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Pembayaran Tertunda</CardTitle>
+            <CardTitle className="text-sm font-medium">Belum Dibayar</CardTitle>
             <CreditCard className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -271,7 +280,7 @@ export default function DashboardPage() {
                   <div>
                     <p className="font-medium">{order.orderNumber}</p>
                     <p className="text-sm text-gray-500">
-                      {order.customer.name || "Guest"}
+                      {order.customer.name || "Tamu"}
                       {order.table && ` • Meja ${order.table.number}`}
                       {order.branch &&
                         ` • ${order.branch.name || order.branch.code}`}
@@ -281,7 +290,9 @@ export default function DashboardPage() {
                     <p className="font-medium">
                       Rp{Number(order.grandTotal).toLocaleString("id-ID")}
                     </p>
-                    <p className="text-sm text-gray-500">{order.status}</p>
+                    <p className="text-sm text-gray-500">
+                      {ORDER_STATUS_LABEL[order.status] ?? order.status}
+                    </p>
                   </div>
                 </div>
               ))}

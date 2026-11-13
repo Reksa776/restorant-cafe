@@ -267,7 +267,7 @@ export default function PurchasesReportPage() {
             <ReportBranchFilter />
 
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Supplier</span>
+              <span className="text-xs text-gray-500">Pemasok</span>
               <Select
                 value={supplierFilter}
                 onValueChange={(v) => {
@@ -382,7 +382,7 @@ export default function PurchasesReportPage() {
                       <tr className="border-b text-left text-gray-500">
                         <th className="pb-2 font-medium">Pembelian</th>
                         <th className="pb-2 font-medium">Tanggal</th>
-                        <th className="pb-2 font-medium">Supplier</th>
+                        <th className="pb-2 font-medium">Pemasok</th>
                         <th className="pb-2 font-medium">Cabang</th>
                         <th className="pb-2 font-medium">Status</th>
                         <th className="pb-2 font-medium text-right">Item</th>
@@ -515,7 +515,7 @@ export default function PurchasesReportPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Truck className="h-5 w-5 text-gray-400" />
-                Breakdown Supplier
+                Rincian Pemasok
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -528,7 +528,7 @@ export default function PurchasesReportPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left text-gray-500">
-                        <th className="pb-2 font-medium">Supplier</th>
+                        <th className="pb-2 font-medium">Pemasok</th>
                         <th className="pb-2 font-medium text-right">Jumlah Pembelian</th>
                         <th className="pb-2 font-medium text-right">Jumlah</th>
                         <th className="pb-2 font-medium text-right">Total Nilai</th>

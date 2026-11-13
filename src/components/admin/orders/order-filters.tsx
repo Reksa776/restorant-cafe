@@ -77,9 +77,9 @@ export function OrderFilters({
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Semua Tipe</SelectItem>
-          <SelectItem value="DINE_IN">🍽️ Dine In</SelectItem>
-          <SelectItem value="TAKEAWAY">🥡 Takeaway</SelectItem>
-          <SelectItem value="DELIVERY">🚚 Delivery</SelectItem>
+          <SelectItem value="DINE_IN">🍽️ Makan di tempat</SelectItem>
+          <SelectItem value="TAKEAWAY">🥡 Bawa pulang</SelectItem>
+          <SelectItem value="DELIVERY">🚚 Diantar</SelectItem>
         </SelectContent>
       </Select>
     </div>

@@ -16,8 +16,8 @@ import type { Order } from "@/services/order.service";
 // (admin endpoints are tenant-scoped server-side).
 //
 // Two print modes:
-//   1. "Print All"       — one full bill (items, totals, payment, audit).
-//   2. "Print Per Product" — one TICKET per product UNIT (quantity 3 →
+//   1. "Cetak Semua"       — one full bill (items, totals, payment, audit).
+//   2. "Cetak per Produk" — one TICKET per product UNIT (quantity 3 →
 //      3 individual tickets, each "Qty: 1"), for sticking onto the
 //      finished physical product. Each ticket is forced onto its own
 //      printed page via break-after: page.
@@ -32,16 +32,16 @@ import type { Order } from "@/services/order.service";
 type PrintMode = "all" | "perProduct";
 
 const MODE_OPTIONS: Array<{ value: PrintMode; label: string }> = [
-  { value: "all", label: "Print All" },
-  { value: "perProduct", label: "Print Per Product" },
+  { value: "all", label: "Cetak Semua" },
+  { value: "perProduct", label: "Cetak per Produk" },
 ];
 
 const rupiah = (v: string | number) => `Rp${Number(v).toLocaleString("id-ID")}`;
 
 const ORDER_TYPE_LABEL: Record<string, string> = {
-  DINE_IN: "Dine In",
-  TAKEAWAY: "Takeaway",
-  DELIVERY: "Delivery",
+  DINE_IN: "Makan di Tempat",
+  TAKEAWAY: "Bawa Pulang",
+  DELIVERY: "Diantar",
 };
 
 const PAYMENT_STATUS_LABEL: Record<string, string> = {
@@ -221,8 +221,8 @@ function ProductTicket({
           </div>
         )}
         <div className="flex justify-between gap-2">
-          <span className="text-gray-500">Customer</span>
-          <span>{order.customer?.name || "Guest"}</span>
+          <span className="text-gray-500">Pelanggan</span>
+          <span>{order.customer?.name || "Tamu"}</span>
         </div>
       </div>
 
@@ -277,7 +277,7 @@ function ProductTicket({
 }
 
 // ============================================================
-// Full bill ("Print All") — unchanged behavior.
+// Full bill ("Cetak Semua") — unchanged behavior.
 // ============================================================
 
 function FullBill({
@@ -354,8 +354,8 @@ function FullBill({
           </div>
         )}
         <div className="flex justify-between gap-2">
-          <span className="text-gray-500">Customer</span>
-          <span>{order.customer?.name || "Guest"}</span>
+          <span className="text-gray-500">Pelanggan</span>
+          <span>{order.customer?.name || "Tamu"}</span>
         </div>
         {/* Customer phone — only when the order actually carries one (the
             admin payload includes Customer.phone; guests without a phone
@@ -472,7 +472,7 @@ function FullBill({
         )}
         {Number(order.serviceCharge) > 0 && (
           <div className="flex justify-between gap-2">
-            <span className="text-gray-500">Service Charge</span>
+            <span className="text-gray-500">Biaya Layanan</span>
             <span className="tabular-nums">{rupiah(order.serviceCharge)}</span>
           </div>
         )}

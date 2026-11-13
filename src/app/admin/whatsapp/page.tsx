@@ -550,7 +550,7 @@ export default function WhatsAppPage() {
       {status?.queue && (
         <Card>
           <CardHeader>
-            <CardTitle>Queue Status</CardTitle>
+            <CardTitle>Status Antrean</CardTitle>
             <CardDescription>
               Status antrian pesan WhatsApp
             </CardDescription>

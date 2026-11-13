@@ -51,9 +51,9 @@ const PAYMENT_STATUS_META: Record<string, { label: string; cls: string }> = {
 };
 
 const TYPE_META: Record<string, { label: string; Icon: typeof UtensilsCrossed }> = {
-  DINE_IN: { label: "Dine In", Icon: UtensilsCrossed },
-  TAKEAWAY: { label: "Takeaway", Icon: ShoppingBag },
-  DELIVERY: { label: "Delivery", Icon: Truck },
+  DINE_IN: { label: "Makan di Tempat", Icon: UtensilsCrossed },
+  TAKEAWAY: { label: "Bawa Pulang", Icon: ShoppingBag },
+  DELIVERY: { label: "Diantar", Icon: Truck },
 };
 
 /**
@@ -264,7 +264,7 @@ export default function AdminOrderByNumberPage({
               <User className="h-4 w-4 text-muted-foreground" />
               <div className="min-w-0">
                 <p className="text-sm font-medium">
-                  {order.customer?.name || "Guest"}
+                  {order.customer?.name || "Tamu"}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {new Date(order.createdAt).toLocaleString("id-ID")}
@@ -272,7 +272,7 @@ export default function AdminOrderByNumberPage({
               </div>
             </div>
             <div className="text-right">
-              <p className="text-xs text-muted-foreground">Grand Total</p>
+              <p className="text-xs text-muted-foreground">Total Tagihan</p>
               <p className="text-2xl font-bold tabular-nums">
                 {rupiah(order.grandTotal)}
               </p>
@@ -480,7 +480,7 @@ export default function AdminOrderByNumberPage({
             )}
             {Number(order.serviceCharge) > 0 && (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Service Charge</span>
+                <span className="text-muted-foreground">Biaya Layanan</span>
                 <span className="tabular-nums">
                   {rupiah(order.serviceCharge)}
                 </span>
@@ -498,7 +498,7 @@ export default function AdminOrderByNumberPage({
       {order.statusHistory && order.statusHistory.length > 0 && (
         <Card>
           <CardContent className="p-4 space-y-2">
-            <h2 className="font-medium">Status Timeline</h2>
+            <h2 className="font-medium">Riwayat Status</h2>
             <div className="space-y-1">
               {order.statusHistory.map((h, i) => {
                 const m = ORDER_STATUS_META[h.status];

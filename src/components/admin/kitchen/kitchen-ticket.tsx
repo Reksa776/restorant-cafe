@@ -74,17 +74,17 @@ const TYPE_META: Record<
   { label: string; Icon: typeof UtensilsCrossed; cls: string }
 > = {
   DINE_IN: {
-    label: "Dine In",
+    label: "Makan di Tempat",
     Icon: UtensilsCrossed,
     cls: "bg-blue-50 text-blue-700",
   },
   TAKEAWAY: {
-    label: "Takeaway",
+    label: "Bawa Pulang",
     Icon: ShoppingBag,
     cls: "bg-amber-50 text-amber-700",
   },
   DELIVERY: {
-    label: "Delivery",
+    label: "Diantar",
     Icon: Truck,
     cls: "bg-purple-50 text-purple-700",
   },

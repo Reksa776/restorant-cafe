@@ -246,7 +246,7 @@ export default function ShiftSalesReportPage() {
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {[
               { label: "Total Sales", value: rupiah(report.summary.totalSales), icon: TrendingUp },
-              { label: "Cash (Kasir)", value: rupiah(report.summary.cash), icon: Banknote },
+              { label: "Tunai (Kasir)", value: rupiah(report.summary.cash), icon: Banknote },
               { label: "QRIS", value: rupiah(report.summary.qris), icon: Banknote },
               { label: "Total Uang Dikembalikan", value: rupiah(report.summary.refund), icon: Undo2 },
             ].map((c) => (

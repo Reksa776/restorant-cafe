@@ -95,7 +95,7 @@ export function CashierPayDialog({
           paymentId: unpaid.id,
           orderId: order.id,
           orderNumber: order.orderNumber,
-          customerName: order.customer?.name || "Guest",
+          customerName: order.customer?.name || "Tamu",
           amountDue: Math.round(Number(unpaid.amount) * 100) / 100,
         });
       } else {
@@ -135,7 +135,7 @@ export function CashierPayDialog({
         received
       );
       if (result.alreadyPaid) {
-        toast.error("Payment already completed");
+        toast.error("Pembayaran sudah selesai");
         onOpenChange(false);
         return;
       }
@@ -167,7 +167,7 @@ export function CashierPayDialog({
             typeof msg === "string" ? msg : ""
           ))
       ) {
-        toast.error("Payment already completed");
+        toast.error("Pembayaran sudah selesai");
         onOpenChange(false);
         return;
       }
@@ -258,7 +258,7 @@ export function CashierPayDialog({
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Status</span>
-                <span className="font-medium">UNPAID</span>
+                <span className="font-medium">Belum Dibayar</span>
               </div>
             </div>
 

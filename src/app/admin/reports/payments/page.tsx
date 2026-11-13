@@ -42,20 +42,30 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
 
 const METHOD_OPTIONS = [
   { value: "all", label: "Semua Metode" },
-  { value: "KASIR", label: "Cash (Kasir)" },
+  { value: "KASIR", label: "Tunai (Kasir)" },
   { value: "QRIS", label: "QRIS" },
 ];
 
 const STATUS_OPTIONS = [
   { value: "all", label: "Semua Status" },
   { value: "PAID", label: "Lunas" },
-  { value: "PENDING", label: "Pending" },
+  { value: "PENDING", label: "Menunggu" },
   { value: "FAILED", label: "Gagal" },
   { value: "EXPIRED", label: "Kedaluwarsa" },
   { value: "UNPAID", label: "Belum Dibayar" },
   { value: "REFUNDED", label: "Uang Dikembalikan" },
   { value: "CANCELLED", label: "Dibatalkan" },
 ];
+
+const STATUS_LABEL: Record<string, string> = {
+  PAID: "Lunas",
+  PENDING: "Menunggu",
+  FAILED: "Gagal",
+  EXPIRED: "Kedaluwarsa",
+  UNPAID: "Belum dibayar",
+  REFUNDED: "Uang dikembalikan",
+  CANCELLED: "Dibatalkan",
+};
 
 const STATUS_BADGE: Record<string, string> = {
   PAID: "bg-green-100 text-green-800",
@@ -320,14 +330,14 @@ export default function PaymentsReportPage() {
           {report.statusBreakdown.length > 0 && (
             <Card>
               <CardHeader>
-                <CardTitle>Breakdown Status</CardTitle>
+                <CardTitle>Rincian Status</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 {report.statusBreakdown.map((s) => (
                   <div key={s.status} className="flex items-center justify-between gap-3 py-1.5">
                     <div className="flex items-center gap-2">
                       <Badge className={STATUS_BADGE[s.status] ?? "bg-gray-100"}>
-                        {s.status}
+                        {STATUS_LABEL[s.status] ?? s.status}
                       </Badge>
                       <span className="text-sm text-gray-500">{s.count} transaksi</span>
                     </div>
@@ -381,7 +391,7 @@ export default function PaymentsReportPage() {
                           <td className="py-2">{p.method ?? "—"}</td>
                           <td className="py-2">
                             <Badge className={STATUS_BADGE[p.status] ?? "bg-gray-100"}>
-                              {p.status}
+                              {STATUS_LABEL[p.status] ?? p.status}
                             </Badge>
                           </td>
                           <td className="py-2 text-right tabular-nums font-medium">

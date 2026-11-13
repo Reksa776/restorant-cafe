@@ -73,9 +73,9 @@ const STATUS_CONFIG: Record<
 };
 
 const ORDER_TYPE_LABELS: Record<string, { label: string; icon: typeof UtensilsCrossed }> = {
-  DINE_IN: { label: "Dine In", icon: UtensilsCrossed },
-  TAKEAWAY: { label: "Takeaway", icon: ShoppingBag },
-  DELIVERY: { label: "Delivery", icon: Truck },
+  DINE_IN: { label: "Makan di Tempat", icon: UtensilsCrossed },
+  TAKEAWAY: { label: "Bawa Pulang", icon: ShoppingBag },
+  DELIVERY: { label: "Diantar", icon: Truck },
 };
 
 const PAYMENT_STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -160,17 +160,17 @@ export function OrderDetail({
     {
       status: "CONFIRMED",
       label: "Pesanan dikonfirmasi",
-      done: ["CONFIRMED", "PROCESSING", "READY", "COMPLETED"].includes(order.status),
+      done: ["Dikonfirmasi", "Sedang Diproses", "Siap", "Selesai"].includes(order.status),
     },
     {
       status: "PROCESSING",
       label: "Pesanan sedang diproses",
-      done: ["PROCESSING", "READY", "COMPLETED"].includes(order.status),
+      done: ["Sedang Diproses", "Siap", "Selesai"].includes(order.status),
     },
     {
       status: "READY",
       label: "Pesanan siap",
-      done: ["READY", "COMPLETED"].includes(order.status),
+      done: ["Siap", "Selesai"].includes(order.status),
     },
     {
       status: "COMPLETED",
@@ -250,7 +250,7 @@ export function OrderDetail({
             <div className="flex items-center gap-2 text-sm">
               <User className="h-4 w-4 text-muted-foreground" />
               <span className="font-medium">
-                {order.customer.name || "Guest"}
+                {order.customer.name || "Tamu"}
               </span>
             </div>
             <div className="flex items-center gap-2 text-sm">
@@ -578,7 +578,7 @@ export function OrderDetail({
           <Separator />
           <div className="space-y-3">
             <h3 className="text-sm font-medium text-muted-foreground">
-              Status Timeline
+              Riwayat Status
             </h3>
             <div className="space-y-0">
               {statusHistory.map((step, index) => {

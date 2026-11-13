@@ -843,7 +843,7 @@ export default function MenuPage() {
               </CardHeader>
               <CardContent>
                 {isLoading ? (
-                  <p className="text-center text-gray-500 py-8">Loading...</p>
+                  <p className="text-center text-gray-500 py-8">Sedang memuat…</p>
                 ) : categories.length === 0 ? (
                   <p className="text-center text-gray-500 py-8">Belum ada kategori</p>
                 ) : (
@@ -881,7 +881,7 @@ export default function MenuPage() {
               </CardHeader>
               <CardContent>
                 {isLoading ? (
-                  <p className="text-center text-gray-500 py-8">Loading...</p>
+                  <p className="text-center text-gray-500 py-8">Sedang memuat…</p>
                 ) : products.length === 0 ? (
                   <p className="text-center text-gray-500 py-8">Belum ada produk</p>
                 ) : (
@@ -1542,7 +1542,7 @@ function CustomizationView({
                         </button>
                         <span className="font-medium text-sm">{group.name}</span>
                         <Badge variant={group.isActive ? "default" : "secondary"} className="text-[10px]">
-                          {group.isActive ? "Active" : "Inactive"}
+                          {group.isActive ? "Aktif" : "Tidak Aktif"}
                         </Badge>
                         <Badge variant="outline" className="text-[10px]">{group.type}</Badge>
                         {group.isRequired && <Badge variant="outline" className="text-[10px]">Wajib</Badge>}

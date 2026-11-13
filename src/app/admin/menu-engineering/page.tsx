@@ -423,7 +423,7 @@ export default function MenuEngineeringPage() {
               <CardHeader><CardTitle>Perbandingan Cabang</CardTitle></CardHeader>
               <CardContent className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead><tr className="border-b text-left text-gray-500"><th className="py-2">Cabang</th><th className="py-2 text-right">Order</th><th className="py-2 text-right">Terjual</th><th className="py-2 text-right">Penjualan bersih</th><th className="py-2 text-right">Laba kotor</th></tr></thead>
+                  <thead><tr className="border-b text-left text-gray-500"><th className="py-2">Cabang</th><th className="py-2 text-right">Pesanan</th><th className="py-2 text-right">Terjual</th><th className="py-2 text-right">Penjualan bersih</th><th className="py-2 text-right">Laba kotor</th></tr></thead>
                   <tbody>{report.branches.map((row) => <tr key={row.branchId} className="border-b last:border-0"><td className="py-2">{row.branchName}</td><td className="py-2 text-right">{row.orders}</td><td className="py-2 text-right">{row.qtySold}</td><td className="py-2 text-right">{rupiah(row.netSales)}</td><td className="py-2 text-right">{rupiah(row.grossProfit)}</td></tr>)}</tbody>
                 </table>
               </CardContent>

@@ -183,7 +183,7 @@ export default function RefundsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">Refund</h1>
+        <h1 className="text-3xl font-bold">Pengembalian Dana</h1>
         <p className="text-muted-foreground">
           {isAdmin
             ? "Tinjau permintaan refund dari kasir dan putuskan dengan konfirmasi password admin."
@@ -206,13 +206,13 @@ export default function RefundsPage() {
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Cari nomor order atau nama customer"
-            aria-label="Cari nomor order atau nama customer"
+            placeholder="Cari nomor pesanan atau nama pelanggan"
+            aria-label="Cari nomor pesanan atau nama pelanggan"
           />
           <Button type="submit" disabled={loading || refreshing}>
             <Search className="mr-2 h-4 w-4" /> Cari
           </Button>
-          <Button type="button" variant="outline" onClick={refresh} disabled={loading || refreshing} aria-label="Refresh daftar order">
+          <Button type="button" variant="outline" onClick={refresh} disabled={loading || refreshing} aria-label="Muat ulang daftar pesanan">
             <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
           </Button>
         </form>
@@ -293,7 +293,7 @@ export default function RefundsPage() {
                     </Badge>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    {order.customer?.name || "Guest"} · {new Date(order.createdAt).toLocaleString("id-ID")}
+                    {order.customer?.name || "Tamu"} · {new Date(order.createdAt).toLocaleString("id-ID")}
                   </p>
                   <p className="text-sm font-medium">Total {rupiah(order.grandTotal)}</p>
                 </div>

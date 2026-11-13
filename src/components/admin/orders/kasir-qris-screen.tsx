@@ -154,7 +154,7 @@ export function KasirQrisScreen({
     if (!payment) return null;
     if (payment.status === "PENDING" && pendingExpiresAt) {
       const exp = new Date(pendingExpiresAt).getTime();
-      if (!Number.isNaN(exp) && nowMs > exp) return "EXPIRED";
+      if (!Number.isNaN(exp) && nowMs > exp) return "Kedaluwarsa";
     }
     return payment.status;
   }, [payment, pendingExpiresAt, nowMs]);

@@ -80,13 +80,13 @@ const percent = (v: number | null | undefined) =>
   v === null || v === undefined ? "—" : `${Number(v).toFixed(1)}%`;
 
 const PAYMENT_LABELS: Record<string, string> = {
-  cash: "Cash (Kasir)",
+  cash: "Tunai (Kasir)",
   qris: "QRIS",
-  va: "VA / Gateway",
+  va: "Transfer virtual",
   other: "Lainnya",
   unpaid: "Belum Dibayar",
-  failed: "Gagal / Kedaluwarsa",
-  refunded: "Refund",
+  failed: "Gagal atau kedaluwarsa",
+  refunded: "Pengembalian Dana",
   cancelled: "Dibatalkan",
 };
 
@@ -101,9 +101,9 @@ const ACTIVITY_BUCKET_KEYS = [
 ] as const;
 
 const ORDER_TYPE_LABELS: Record<string, string> = {
-  DINE_IN: "Dine In",
-  TAKEAWAY: "Takeaway",
-  DELIVERY: "Delivery",
+  DINE_IN: "Makan di Tempat",
+  TAKEAWAY: "Bawa Pulang",
+  DELIVERY: "Diantar",
 };
 
 const PAYMENT_STATUS_BADGE: Record<string, string> = {
@@ -275,11 +275,11 @@ export function DashboardAnalytics() {
     <section className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-xl font-bold">Analitik</h2>
+          <h2 className="text-xl font-bold">Ringkasan Usaha</h2>
           <p className="text-sm text-muted-foreground">
             {isAdmin
-              ? "Ringkasan penjualan, pembelian, dan profitabilitas"
-              : "Ringkasan penjualan dan performa produk"}
+              ? "Lihat penjualan, pembelian, dan keuntungan restoran"
+              : "Lihat penjualan dan produk yang paling laku"}
           </p>
         </div>
       </div>
@@ -298,8 +298,8 @@ export function DashboardAnalytics() {
 
       {/* ===== SALES OVERVIEW ===== */}
       <ChartFrame
-        title="Sales Overview"
-        subtitle="Metrik penjualan mengikuti semantik laporan penjualan (hanya pembayaran PAID yang dihitung sebagai penjualan)"
+        title="Angka Penjualan"
+        subtitle="Yang dihitung hanya pesanan yang sudah dibayar."
         state={salesError ? "error" : loading && !sales ? "loading" : "ready"}
         errorMessage={salesError?.message}
         retryable={salesError?.retryable}
@@ -313,13 +313,13 @@ export function DashboardAnalytics() {
             <MetricTile
               label="Total Penjualan"
               value={rupiah(summary.totalSales)}
-              hint={`Gross revenue ${rupiah(summary.grossRevenue)}`}
+              hint={`Sebelum pengembalian dana: ${rupiah(summary.grossRevenue)}`}
               icon={TrendingUp}
             />
             <MetricTile
-              label="Total Order"
+              label="Total Pesanan"
               value={String(summary.totalOrders)}
-              hint={`${summary.paidOrders} lunas`}
+              hint={`${summary.paidOrders} sudah dibayar`}
               icon={ShoppingCart}
             />
             <MetricTile
@@ -328,9 +328,9 @@ export function DashboardAnalytics() {
               icon={Package}
             />
             <MetricTile
-              label="Rata-rata Order"
+              label="Rata-rata Pesanan"
               value={rupiah(summary.averageOrderValue)}
-              hint="Per order lunas"
+              hint="Untuk pesanan yang sudah dibayar"
               icon={Banknote}
             />
             <MetricTile
@@ -340,21 +340,21 @@ export function DashboardAnalytics() {
             />
             <MetricTile label="Total Pajak" value={rupiah(summary.totalTax)} icon={Landmark} />
             <MetricTile
-              label="Service Charge"
+              label="Biaya Layanan"
               value={rupiah(summary.totalServiceCharge)}
               icon={Landmark}
             />
             <MetricTile
-              label="Refund"
+              label="Pengembalian Dana"
               value={rupiah(summary.totalRefund)}
-              hint={`Reversal ${rupiah(summary.refundReversal)}`}
+              hint={`Dana refund yang dikembalikan: ${rupiah(summary.refundReversal)}`}
               icon={Undo2}
               tone="negative"
             />
             <MetricTile
-              label="Net Sales"
+              label="Penjualan Bersih"
               value={rupiah(summary.netSales)}
-              hint="Setelah refund, basis product revenue"
+              hint="Setelah dikurangi pengembalian dana"
               icon={TrendingUp}
               tone="positive"
             />
@@ -380,7 +380,7 @@ export function DashboardAnalytics() {
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartFrame
           title="Produk Terlaris"
-          subtitle="Quantity sold & revenue per produk"
+          subtitle="Jumlah terjual dan pendapatan per produk"
           state={salesError ? "error" : loading && !sales ? "loading" : "ready"}
           errorMessage={salesError?.message}
           retryable={salesError?.retryable}
@@ -394,8 +394,8 @@ export function DashboardAnalytics() {
               <TableRow>
                 <TableHead className="w-8">#</TableHead>
                 <TableHead>Produk</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-                <TableHead className="text-right">Revenue</TableHead>
+                <TableHead className="text-right">Jumlah</TableHead>
+                <TableHead className="text-right">Pendapatan</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -422,7 +422,7 @@ export function DashboardAnalytics() {
 
         <ChartFrame
           title="Kategori Terlaris"
-          subtitle="Quantity sold & revenue per kategori"
+          subtitle="Jumlah terjual dan pendapatan per kategori"
           state={salesError ? "error" : loading && !sales ? "loading" : "ready"}
           errorMessage={salesError?.message}
           retryable={salesError?.retryable}
@@ -436,8 +436,8 @@ export function DashboardAnalytics() {
               <TableRow>
                 <TableHead className="w-8">#</TableHead>
                 <TableHead>Kategori</TableHead>
-                <TableHead className="text-right">Qty</TableHead>
-                <TableHead className="text-right">Revenue</TableHead>
+                <TableHead className="text-right">Jumlah</TableHead>
+                <TableHead className="text-right">Pendapatan</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -461,8 +461,8 @@ export function DashboardAnalytics() {
       {/* ===== PAYMENT + ORDER TYPE ===== */}
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartFrame
-          title="Payment Breakdown"
-          subtitle="Hanya pembayaran berstatus PAID yang dihitung sebagai penjualan"
+          title="Rincian Pembayaran"
+          subtitle="Hanya pembayaran yang sudah lunas yang dihitung sebagai penjualan."
           state={salesError ? "error" : loading && !sales ? "loading" : "ready"}
           errorMessage={salesError?.message}
           retryable={salesError?.retryable}
@@ -474,7 +474,7 @@ export function DashboardAnalytics() {
           {paymentActivity.length > 0 && (
             <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
               <p className="text-xs text-muted-foreground">
-                Bukan penjualan (aktivitas saja):
+                Belum termasuk penjualan:
               </p>
               <div className="flex flex-wrap gap-2">
                 {paymentActivity.map((a) => (
@@ -491,8 +491,8 @@ export function DashboardAnalytics() {
         </ChartFrame>
 
         <ChartFrame
-          title="Order Type Breakdown"
-          subtitle="Nilai dan jumlah order per tipe"
+          title="Rincian Jenis Pesanan"
+          subtitle="Nilai dan jumlah pesanan menurut jenisnya"
           state={salesError ? "error" : loading && !sales ? "loading" : "ready"}
           errorMessage={salesError?.message}
           retryable={salesError?.retryable}
@@ -506,7 +506,7 @@ export function DashboardAnalytics() {
               <div key={t.name} className="text-center">
                 <p className="text-xs text-muted-foreground">{t.name}</p>
                 <p className="text-sm font-semibold tabular-nums">
-                  {t.count} order
+                  {t.count} pesanan
                 </p>
               </div>
             ))}
@@ -517,7 +517,7 @@ export function DashboardAnalytics() {
       {/* ===== PEAK HOURS ===== */}
       <ChartFrame
         title="Jam Tersibuk"
-        subtitle="Order dan penjualan berdasarkan jam order"
+        subtitle="Pesanan dan penjualan berdasarkan waktu"
         state={salesError ? "error" : loading && !sales ? "loading" : "ready"}
         errorMessage={salesError?.message}
         retryable={salesError?.retryable}
@@ -532,8 +532,8 @@ export function DashboardAnalytics() {
       {isAdmin && (
         <>
           <ChartFrame
-            title="Purchasing Overview"
-            subtitle="Nilai pembelian (Purchase.total). Purchase tidak menyimpan status pembayaran, jadi Paid/Unpaid tidak tersedia."
+            title="Ringkasan Pembelian"
+            subtitle="Total nilai pembelian bahan dan barang."
             state={
               purchasesError
                 ? "error"
@@ -552,36 +552,33 @@ export function DashboardAnalytics() {
               <div className="space-y-4">
                 <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
                   <MetricTile
-                    label="Total Purchase"
+                    label="Total Pembelian"
                     value={rupiah(purchases.summary.totalValue)}
                     hint={`${purchases.summary.totalPurchases} pembelian`}
                     icon={Wallet}
                   />
                   <MetricTile
-                    label="Purchase Count"
+                    label="Jumlah Pembelian"
                     value={String(purchases.summary.totalPurchases)}
                     icon={Boxes}
                   />
                   <MetricTile
-                    label="Received"
+                    label="Sudah Diterima"
                     value={String(purchases.summary.totalReceived)}
                     hint="Barang sudah diterima"
                     icon={Package}
                     tone="positive"
                   />
                   <MetricTile
-                    label="Cancelled"
+                    label="Dibatalkan"
                     value={String(purchases.summary.totalCancelled)}
                     icon={TrendingDown}
                     tone="negative"
                   />
                 </div>
                 <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs text-muted-foreground">
-                  Rincian per bahan baku belum tersedia: agregasi item pada
-                  laporan pembelian masih berbasis produk legacy
-                  (PurchaseItem), sedangkan pembelian baru memakai
-                  PurchaseIngredient. Total nilai di atas sudah mencakup
-                  keduanya.
+                  Rincian pembelian per bahan belum tersedia. Namun, total di
+                  atas sudah mencakup semua pembelian.
                 </p>
               </div>
             )}
@@ -608,7 +605,7 @@ export function DashboardAnalytics() {
 
           <ChartFrame
             title="Profitabilitas"
-            subtitle="Revenue, COGS historis (snapshot F.5), dan gross profit"
+            subtitle="Pendapatan dikurangi harga pokok penjualan untuk melihat laba kotor."
             state={profitError ? "error" : loading && !profit ? "loading" : "ready"}
             errorMessage={profitError?.message}
             retryable={profitError?.retryable}
@@ -621,20 +618,20 @@ export function DashboardAnalytics() {
               <div className="space-y-4">
                 <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
                   <MetricTile
-                    label="Revenue"
+                    label="Pendapatan"
                     value={rupiah(profit.summary.totalSales)}
-                    hint={`Net sales ${rupiah(profit.summary.netSales)}`}
+                    hint={`Setelah pengembalian dana: ${rupiah(profit.summary.netSales)}`}
                     icon={TrendingUp}
                   />
                   <MetricTile
-                    label="COGS"
+                    label="HPP"
                     value={rupiah(profit.summary.cogs)}
-                    hint="HPP historis tersnapshot"
+                    hint="HPP berdasarkan catatan saat pesanan dibuat"
                     icon={Boxes}
                     tone="muted"
                   />
                   <MetricTile
-                    label="Gross Profit"
+                    label="Laba Kotor"
                     value={
                       profit.summary.grossProfit === null
                         ? "—"
@@ -644,24 +641,24 @@ export function DashboardAnalytics() {
                     tone="positive"
                   />
                   <MetricTile
-                    label="Gross Margin"
+                    label="Margin Laba Kotor"
                     value={percent(profit.summary.grossMarginPct)}
                     hint={
                       profit.summary.foodCostPct === null
                         ? undefined
-                        : `Food cost ${percent(profit.summary.foodCostPct)}`
+                        : `Biaya bahan ${percent(profit.summary.foodCostPct)}`
                     }
                     icon={Percent}
                   />
                 </div>
                 {!profit.summary.coverageComplete && (
                   <p className="rounded-lg bg-yellow-50 px-3 py-2 text-xs text-yellow-800">
-                    COGS belum lengkap untuk periode ini
+                    Data HPP belum lengkap untuk periode ini
                     {profit.summary.cogsState
-                      ? ` (status: ${profit.summary.cogsState})`
+                      ? ` (${profit.summary.cogsState})`
                       : ""}
-                    . Gross profit &amp; margin hanya mencerminkan item yang
-                    biayanya sudah tersnapshot.
+                    . Laba dan margin hanya menghitung menu yang data biayanya
+                    sudah tersedia.
                   </p>
                 )}
               </div>

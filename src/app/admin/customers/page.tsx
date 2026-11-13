@@ -102,7 +102,7 @@ export default function CustomersPage() {
         </CardHeader>
         <CardContent>
           {isLoading ? (
-            <p className="text-center text-gray-500 py-8">Loading...</p>
+            <p className="text-center text-gray-500 py-8">Sedang memuat…</p>
           ) : customers.length === 0 ? (
             <p className="text-center text-gray-500 py-8">
               Tidak ada pelanggan ditemukan

@@ -155,7 +155,7 @@ export default function PurchasesPage() {
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label className="text-xs text-gray-500">Supplier</Label>
+                <Label className="text-xs text-gray-500">Pemasok</Label>
                 <Select value={supplierId} onValueChange={(v) => setSupplierId(v || "all")}>
                   <SelectTrigger size="sm" className="w-full lg:w-44">
                     <SelectValue>
@@ -199,7 +199,7 @@ export default function PurchasesPage() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Pembelian</TableHead>
-                    <TableHead>Supplier</TableHead>
+                    <TableHead>Pemasok</TableHead>
                     <TableHead>Cabang</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Total</TableHead>

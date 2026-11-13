@@ -15,13 +15,13 @@ const REPORTS = [
   { href: "/admin/reports", label: "Penjualan" },
   { href: "/admin/reports/products", label: "Produk" },
   { href: "/admin/reports/purchases", label: "Pembelian" },
-  { href: "/admin/reports/inventory", label: "Inventory" },
-  { href: "/admin/reports/shift-sales", label: "Per Shift" },
+  { href: "/admin/reports/inventory", label: "Persediaan" },
+  { href: "/admin/reports/shift-sales", label: "Penjualan per Shift" },
   { href: "/admin/reports/payments", label: "Pembayaran" },
   // PHASE 9B (C13) — customer & reservation reports are ADMIN-only.
-  { href: "/admin/reports/customers", label: "Customers", adminOnly: true },
+  { href: "/admin/reports/customers", label: "Pelanggan", adminOnly: true },
   { href: "/admin/reports/reservations", label: "Reservations", adminOnly: true },
-  { href: "/admin/reports/multi-outlet", label: "Multi Outlet", adminOnly: true },
+  { href: "/admin/reports/multi-outlet", label: "Antarcabang", adminOnly: true },
   { href: "/admin/profitability", label: "Untung Produk", adminOnly: true },
   { href: "/admin/menu-engineering", label: "Analisis Performa Menu", adminOnly: true },
 ] as const;

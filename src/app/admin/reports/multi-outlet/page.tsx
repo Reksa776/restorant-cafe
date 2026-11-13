@@ -310,9 +310,9 @@ export default function MultiOutletReportPage() {
 
                       <div className="flex items-center justify-between text-xs pt-2 border-t">
                         <span className="text-gray-400">
-                          Dine In: {o.orderType.DINE_IN?.count ?? 0} ·
-                          Takeaway: {o.orderType.TAKEAWAY?.count ?? 0} ·
-                          Delivery: {o.orderType.DELIVERY?.count ?? 0}
+                          Makan di tempat: {o.orderType.DINE_IN?.count ?? 0} ·
+                          Bawa pulang: {o.orderType.TAKEAWAY?.count ?? 0} ·
+                          Diantar: {o.orderType.DELIVERY?.count ?? 0}
                         </span>
                       </div>
                     </CardContent>

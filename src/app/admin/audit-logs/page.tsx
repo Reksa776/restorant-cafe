@@ -227,7 +227,7 @@ export default function AuditLogsPage() {
         <div>
           <h1 className="text-3xl font-bold flex items-center gap-2">
             <ClipboardList className="h-7 w-7 text-brand-primary" />
-            Audit Logs
+            Riwayat Aktivitas
           </h1>
           <p className="text-gray-500">
             Riwayat aktivitas sensitif — hanya dapat dilihat oleh Admin

@@ -399,7 +399,7 @@ export default function ShiftsPage() {
       <div className="space-y-6">
         <div>
           <h1 className="text-3xl font-bold">
-            {isAdmin ? "Monitoring Shift" : "Shift Saya"}
+            {isAdmin ? "Pantau Shift Kasir" : "Sesi Kasir Saya"}
           </h1>
         </div>
         <div className="flex flex-col items-center justify-center py-16 space-y-3 text-center">
@@ -428,7 +428,7 @@ export default function ShiftsPage() {
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold">
-          {isAdmin ? "Monitoring Shift" : "Shift Saya"}
+          {isAdmin ? "Pantau Shift Kasir" : "Sesi Kasir Saya"}
         </h1>
         <p className="text-muted-foreground">
           {isAdmin
@@ -441,7 +441,7 @@ export default function ShiftsPage() {
       {isAdmin && (
         <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
           <div className="rounded-xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">Shift Aktif</p>
+            <p className="text-xs text-muted-foreground">Sesi Kasir Aktif</p>
             <p className="text-2xl font-bold">{summary.openCount}</p>
           </div>
           <div className="rounded-xl border bg-card p-4">
@@ -453,7 +453,7 @@ export default function ShiftsPage() {
             <p className="text-2xl font-bold">{summary.todayTransactions}</p>
           </div>
           <div className="rounded-xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">Revenue Hari Ini</p>
+            <p className="text-xs text-muted-foreground">Pendapatan Hari Ini</p>
             <p className="text-2xl font-bold">{rupiah(summary.todayRevenue)}</p>
             <div className="flex gap-2 mt-1 text-xs text-muted-foreground">
               <span className="flex items-center gap-1">
@@ -511,8 +511,8 @@ export default function ShiftsPage() {
                 className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
               >
                 <option value="">Semua</option>
-                <option value="OPEN">OPEN</option>
-                <option value="CLOSED">CLOSED</option>
+                <option value="OPEN">Dibuka</option>
+                <option value="CLOSED">Ditutup</option>
               </select>
             </div>
             <div className="space-y-1">
@@ -547,14 +547,14 @@ export default function ShiftsPage() {
         <div className="rounded-xl border bg-green-50 border-green-200 p-4">
           <div className="flex items-center gap-2 mb-3">
             <Wallet className="h-4 w-4 text-green-600" />
-            <span className="font-semibold text-green-900">Shift Aktif</span>
+            <span className="font-semibold text-green-900">Sesi Kasir Aktif</span>
             <Badge className="bg-green-100 text-green-700 border-green-200">
               Buka
             </Badge>
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-3">
             <div>
-              <p className="text-xs text-green-700">Shift</p>
+              <p className="text-xs text-green-700">Sesi Kasir</p>
               <p className="font-mono font-semibold text-sm">
                 {activeShift.shiftNumber}
               </p>
@@ -615,14 +615,14 @@ export default function ShiftsPage() {
             <div className="space-y-1">
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-muted-foreground" />
-                <span className="font-medium">Belum ada shift aktif</span>
+                <span className="font-medium">Belum ada sesi kasir yang dibuka</span>
               </div>
               <p className="text-sm text-muted-foreground">
-                Buka shift sebelum menerima pembayaran kasir.
+                Buka sesi kasir sebelum menerima pembayaran.
               </p>
             </div>
             <Button onClick={() => setOpenDialog(true)} disabled={submitting}>
-              Buka Shift
+              Buka Sesi Kasir
             </Button>
           </div>
         </div>
@@ -770,7 +770,7 @@ export default function ShiftsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-muted-foreground border-b">
-              <th className="px-3 py-2">Shift</th>
+              <th className="px-3 py-2">Sesi Kasir</th>
               {isAdmin && <th className="px-3 py-2">Cabang</th>}
               {isAdmin && <th className="px-3 py-2">Kasir</th>}
               <th className="px-3 py-2">Status</th>
@@ -991,7 +991,7 @@ export default function ShiftsPage() {
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Ajukan Koreksi Shift</DialogTitle>
+            <DialogTitle>Ajukan Perubahan Sesi Kasir</DialogTitle>
             <DialogDescription>
               {overrideTarget?.shiftNumber} sudah ditutup dan terkunci. Ajukan
               koreksi — admin harus menyetujui dengan password.

@@ -36,6 +36,16 @@ const statusColors: Record<string, string> = {
   EXPIRED: "bg-orange-100 text-orange-800",
 };
 
+const statusLabels: Record<string, string> = {
+  UNPAID: "Belum dibayar",
+  PENDING: "Menunggu pembayaran",
+  PAID: "Lunas",
+  FAILED: "Gagal",
+  EXPIRED: "Kedaluwarsa",
+  CANCELLED: "Dibatalkan",
+  REFUNDED: "Uang dikembalikan",
+};
+
 export default function PaymentsPage() {
   const { isLoading: branchCtxLoading } = useBranchContext();
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -183,7 +193,7 @@ export default function PaymentsPage() {
               )}
             </div>
           ) : isLoading ? (
-            <p className="text-center text-gray-500 py-8">Loading...</p>
+            <p className="text-center text-gray-500 py-8">Sedang memuat…</p>
           ) : payments.length === 0 ? (
             <p className="text-center text-gray-500 py-8">
               Tidak ada pembayaran ditemukan
@@ -201,7 +211,7 @@ export default function PaymentsPage() {
                         {payment.order.orderNumber}
                       </p>
                       <Badge className={statusColors[payment.status]}>
-                        {payment.status}
+                        {statusLabels[payment.status] ?? payment.status}
                       </Badge>
                     </div>
                     <p className="text-sm text-gray-500 truncate">

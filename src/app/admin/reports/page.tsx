@@ -61,9 +61,9 @@ const PAYMENT_META: Record<
   string,
   { label: string; color: string; icon?: typeof Banknote }
 > = {
-  cash: { label: "Cash (Kasir)", color: "bg-green-100 text-green-800" },
+  cash: { label: "Tunai (Kasir)", color: "bg-green-100 text-green-800" },
   qris: { label: "QRIS", color: "bg-blue-100 text-blue-800" },
-  va: { label: "VA / Gateway", color: "bg-purple-100 text-purple-800" },
+  va: { label: "Virtual Account", color: "bg-purple-100 text-purple-800" },
   other: { label: "Lainnya", color: "bg-gray-100 text-gray-700" },
   unpaid: { label: "Belum Dibayar", color: "bg-yellow-100 text-yellow-800" },
   failed: { label: "Gagal / Kedaluwarsa", color: "bg-red-100 text-red-800" },
@@ -72,21 +72,21 @@ const PAYMENT_META: Record<
 };
 
 const TYPE_LABEL: Record<string, string> = {
-  DINE_IN: "Dine In",
-  TAKEAWAY: "Takeaway",
-  DELIVERY: "Delivery",
+  DINE_IN: "Makan di Tempat",
+  TAKEAWAY: "Bawa Pulang",
+  DELIVERY: "Diantar",
 };
 
 const ORDER_TYPE_OPTIONS = [
   { value: "all", label: "Semua Tipe" },
-  { value: "DINE_IN", label: "Dine In" },
-  { value: "TAKEAWAY", label: "Takeaway" },
-  { value: "DELIVERY", label: "Delivery" },
+  { value: "DINE_IN", label: "Makan di Tempat" },
+  { value: "TAKEAWAY", label: "Bawa Pulang" },
+  { value: "DELIVERY", label: "Diantar" },
 ];
 
 const PAYMENT_METHOD_OPTIONS = [
   { value: "all", label: "Semua Metode" },
-  { value: "KASIR", label: "Cash (Kasir)" },
+  { value: "KASIR", label: "Tunai (Kasir)" },
   { value: "QRIS", label: "QRIS" },
 ];
 
@@ -203,7 +203,7 @@ export default function ReportsPage() {
       // the proportional product-revenue reversal applied inside `netSales`.
       { label: "Total Uang Dikembalikan", value: rupiah(s.totalRefund), icon: Undo2, hint: "Total pengembalian uang yang disetujui" },
       { label: "Total Pajak", value: rupiah(s.totalTax), icon: Landmark },
-      { label: "Service Charge", value: rupiah(s.totalServiceCharge), icon: Landmark },
+      { label: "Biaya Layanan", value: rupiah(s.totalServiceCharge), icon: Landmark },
       { label: "Penjualan Setelah Pengembalian", value: rupiah(s.netSales), icon: TrendingUp, hint: "Penjualan setelah uang yang dikembalikan dikurangi" },
     ];
   }, [report]);
@@ -216,7 +216,7 @@ export default function ReportsPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold">Reports</h1>
+          <h1 className="text-3xl font-bold">Laporan</h1>
           <p className="text-gray-500">Rekapitulasi penjualan restoran</p>
         </div>
         <div className="flex gap-2">

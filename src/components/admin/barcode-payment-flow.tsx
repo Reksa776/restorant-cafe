@@ -470,7 +470,7 @@ export function BarcodePaymentFlow({
     if (!pendingPayment) return null;
     if (pendingPayment.status === "PENDING" && pendingExpiresAt) {
       const exp = new Date(pendingExpiresAt).getTime();
-      if (!Number.isNaN(exp) && nowMs > exp) return "EXPIRED";
+      if (!Number.isNaN(exp) && nowMs > exp) return "Kedaluwarsa";
     }
     return pendingPayment.status;
   })();
@@ -636,7 +636,7 @@ export function BarcodePaymentFlow({
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Pelanggan</span>
                   <span className="font-medium">
-                    {order.customer?.name || "Guest"}
+                    {order.customer?.name || "Tamu"}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -724,7 +724,7 @@ export function BarcodePaymentFlow({
                       <div className="min-w-0">
                         <p className="font-semibold text-sm">QRIS</p>
                         <p className="text-xs text-muted-foreground">
-                          Scan oleh customer
+                          Dipindai oleh pelanggan
                         </p>
                       </div>
                       {paymentMethod === "QRIS" && (

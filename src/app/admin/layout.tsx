@@ -90,18 +90,18 @@ function isNavGroup(entry: NavEntry): entry is NavGroup {
  * authorization boundary.
  */
 const navigation: NavEntry[] = [
-  { name: "Dashboard", href: "/admin/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "CASHIER"] },
+  { name: "Ringkasan", href: "/admin/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "CASHIER"] },
   {
     name: "Operasional",
     icon: ClipboardList,
     children: [
-      { name: "Orders", href: "/admin/orders", icon: ShoppingCart, roles: ["ADMIN", "CASHIER"] },
-      { name: "Kitchen", href: "/admin/kitchen", icon: ChefHat, roles: ["ADMIN", "CASHIER"] },
-      { name: "Tables", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN", "CASHIER"], exact: true },
+      { name: "Pesanan", href: "/admin/orders", icon: ShoppingCart, roles: ["ADMIN", "CASHIER"] },
+      { name: "Dapur", href: "/admin/kitchen", icon: ChefHat, roles: ["ADMIN", "CASHIER"] },
+      { name: "Meja", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN", "CASHIER"], exact: true },
       { name: "Layout Cafe", href: "/admin/tables/layout", icon: LayoutGrid, roles: ["ADMIN", "CASHIER"] },
       { name: "Reservasi", href: "/admin/reservations", icon: CalendarDays, roles: ["ADMIN", "CASHIER"] },
-      { name: "Customers", href: "/admin/customers", icon: Users, roles: ["ADMIN"] },
-      { name: "Shifts", href: "/admin/shifts", icon: Clock, roles: ["ADMIN", "CASHIER"] },
+      { name: "Pelanggan", href: "/admin/customers", icon: Users, roles: ["ADMIN"] },
+      { name: "Shift Kasir", href: "/admin/shifts", icon: Clock, roles: ["ADMIN", "CASHIER"] },
     ],
   },
   {
@@ -109,7 +109,7 @@ const navigation: NavEntry[] = [
     icon: UtensilsCrossed,
     children: [
       { name: "Menu", href: "/admin/menu", icon: UtensilsCrossed, roles: ["ADMIN"] },
-      { name: "Costing", href: "/admin/costing", icon: Calculator, roles: ["ADMIN"] },
+      { name: "Perhitungan HPP", href: "/admin/costing", icon: Calculator, roles: ["ADMIN"] },
     ],
   },
   // G.3 — Inventory separates BAHAN BAKU stock (BranchIngredient) from
@@ -117,24 +117,24 @@ const navigation: NavEntry[] = [
   // never mixed in the UI. Both stock screens reuse /admin/stock, opened on
   // the matching tab via the dedicated routes below.
   {
-    name: "Inventory",
+    name: "Persediaan",
     icon: Boxes,
     children: [
       { name: "Bahan Baku", href: "/admin/ingredients", icon: Leaf, roles: ["ADMIN"] },
       { name: "Stok Bahan Baku", href: "/admin/stock/ingredients", icon: Boxes, roles: ["ADMIN", "CASHIER"] },
       { name: "Stok Produk", href: "/admin/stock/products", icon: Package, roles: ["ADMIN", "CASHIER"] },
-      { name: "Stock Movement", href: "/admin/inventory", icon: ClipboardList, roles: ["ADMIN", "CASHIER"] },
+      { name: "Perubahan Stok", href: "/admin/inventory", icon: ClipboardList, roles: ["ADMIN", "CASHIER"] },
       { name: "Pembelian", href: "/admin/purchasing/purchases", icon: Container, roles: ["ADMIN"] },
-      { name: "Supplier", href: "/admin/purchasing/suppliers", icon: Truck, roles: ["ADMIN"] },
+      { name: "Pemasok", href: "/admin/purchasing/suppliers", icon: Truck, roles: ["ADMIN"] },
     ],
   },
   {
-    name: "Finance",
+    name: "Keuangan",
     icon: Wallet,
     children: [
-      { name: "Payments", href: "/admin/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
+      { name: "Pembayaran", href: "/admin/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
       { name: "Riwayat Penjualan", href: "/admin/cashier/sales", icon: Receipt, roles: ["ADMIN", "CASHIER"] },
-      { name: "Refund", href: "/admin/refunds", icon: RotateCcw, roles: ["ADMIN", "CASHIER"] },
+      { name: "Pengembalian Dana", href: "/admin/refunds", icon: RotateCcw, roles: ["ADMIN", "CASHIER"] },
       // ACCOUNTING PHASE B — operational expense tracking (ADMIN only).
       { name: "Pengeluaran", href: "/admin/accounting/expenses", icon: Wallet, roles: ["ADMIN"] },
       // ACCOUNTING PHASE C — cashbook read-model (ADMIN only).
@@ -144,16 +144,16 @@ const navigation: NavEntry[] = [
     ],
   },
   {
-    name: "Reports",
+    name: "Laporan",
     icon: BarChart3,
     children: [
       { name: "Laporan Penjualan", href: "/admin/reports", icon: BarChart3, roles: ["ADMIN", "CASHIER"], exact: true },
-      { name: "Best Selling", href: "/admin/reports/products", icon: TrendingUp, roles: ["ADMIN", "CASHIER"] },
+      { name: "Produk Terlaris", href: "/admin/reports/products", icon: TrendingUp, roles: ["ADMIN", "CASHIER"] },
       { name: "Pembelian", href: "/admin/reports/purchases", icon: Container, roles: ["ADMIN"] },
-      { name: "Inventory", href: "/admin/reports/inventory", icon: ClipboardList, roles: ["ADMIN", "CASHIER"] },
+      { name: "Persediaan", href: "/admin/reports/inventory", icon: ClipboardList, roles: ["ADMIN", "CASHIER"] },
       { name: "Pembayaran", href: "/admin/reports/payments", icon: CreditCard, roles: ["ADMIN", "CASHIER"] },
-      { name: "Per Shift", href: "/admin/reports/shift-sales", icon: Clock, roles: ["ADMIN", "CASHIER"] },
-      { name: "Multi Outlet", href: "/admin/reports/multi-outlet", icon: Store, roles: ["ADMIN"] },
+      { name: "Penjualan per Shift", href: "/admin/reports/shift-sales", icon: Clock, roles: ["ADMIN", "CASHIER"] },
+      { name: "Antarcabang", href: "/admin/reports/multi-outlet", icon: Store, roles: ["ADMIN"] },
       { name: "Profitabilitas", href: "/admin/profitability", icon: TrendingUp, roles: ["ADMIN"] },
       { name: "Analisis Performa Menu", href: "/admin/menu-engineering", icon: PieChart, roles: ["ADMIN"] },
     ],
@@ -173,12 +173,12 @@ const navigation: NavEntry[] = [
     ],
   },
   {
-    name: "Settings",
+    name: "Pengaturan",
     icon: Settings,
     children: [
-      { name: "Website Branding", href: "/admin/settings", icon: Settings, roles: ["ADMIN"], exact: true },
-      { name: "Users", href: "/admin/users", icon: Users, roles: ["ADMIN"] },
-      { name: "Audit Logs", href: "/admin/audit-logs", icon: ClipboardList, roles: ["ADMIN"] },
+      { name: "Tampilan Website", href: "/admin/settings", icon: Settings, roles: ["ADMIN"], exact: true },
+      { name: "Pengguna", href: "/admin/users", icon: Users, roles: ["ADMIN"] },
+      { name: "Riwayat Aktivitas", href: "/admin/audit-logs", icon: ClipboardList, roles: ["ADMIN"] },
       { name: "WhatsApp", href: "/admin/whatsapp", icon: MessageSquare, roles: ["ADMIN"] },
     ],
   },
@@ -364,9 +364,9 @@ const REALTIME_STATUS_CONFIG: Record<
   { dot: string; label: string }
 > = {
   connecting: { dot: "bg-yellow-400", label: "Menghubungkan…" },
-  connected: { dot: "bg-green-500", label: "Realtime Connected" },
-  reconnecting: { dot: "bg-yellow-400", label: "Reconnecting" },
-  offline: { dot: "bg-red-500", label: "Offline" },
+  connected: { dot: "bg-green-500", label: "Terhubung langsung" },
+  reconnecting: { dot: "bg-yellow-400", label: "Menghubungkan kembali" },
+  offline: { dot: "bg-red-500", label: "Tidak terhubung" },
 };
 
 /**

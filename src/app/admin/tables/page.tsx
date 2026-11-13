@@ -283,7 +283,7 @@ export default function TablesPage() {
       <Card>
         <CardContent className="pt-6">
           {isLoading ? (
-            <p className="text-center text-gray-500 py-8">Loading...</p>
+            <p className="text-center text-gray-500 py-8">Sedang memuat…</p>
           ) : tables.length === 0 ? (
             <p className="text-center text-gray-500 py-8">
               Belum ada meja
