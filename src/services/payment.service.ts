@@ -108,6 +108,7 @@ export const paymentService = {
     payment: Payment;
     kind: string;
     message: string;
+    sandboxMode?: boolean;
   }> {
     // Signature parity with the server service; the route resolves the tenant
     // from the session, so the value is intentionally not forwarded here.

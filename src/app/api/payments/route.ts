@@ -58,7 +58,10 @@ export async function POST(request: NextRequest) {
         ctx.userId,
         effectiveWriteBranchId(ctx)
       );
-      return successResponse(result, result.message);
+      return successResponse({
+        ...result,
+        sandboxMode: (process.env.IPAYMU_ENV || process.env.IPAYMU_ENVIRONMENT || "sandbox").trim().toLowerCase() !== "production",
+      }, result.message);
     }
 
     if (!body.orderId) {
