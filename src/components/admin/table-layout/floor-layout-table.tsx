@@ -123,18 +123,7 @@ export function FloorLayoutTable({
   };
 
   const compact = item.width < 60 || item.height < 44;
-  const areaLabel =
-    item.areaType === "SMOKING"
-      ? "Merokok"
-      : item.areaType === "NON_SMOKING"
-        ? "Bebas asap rokok"
-        : null;
-  const areaStyle =
-    item.areaType === "SMOKING"
-      ? "border-orange-300 bg-orange-50/90"
-      : item.areaType === "NON_SMOKING"
-        ? "border-emerald-300 bg-emerald-50/90"
-        : "border-slate-300 bg-white/85";
+  const areaLabel = null;
 
   return (
     <div
@@ -159,7 +148,7 @@ export function FloorLayoutTable({
       }}
       className={cn(
         "absolute flex items-center justify-center select-none border-2 shadow-sm",
-        areaStyle,
+        "border-slate-300 bg-white/85",
         // Visual layer only — geometry is driven by the draft item, never by status.
         interactive
           ? cn("cursor-grab active:cursor-grabbing", selected ? "cursor-move" : "hover:brightness-95")

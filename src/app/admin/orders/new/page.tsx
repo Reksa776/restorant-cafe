@@ -607,6 +607,7 @@ export default function KasirManualOrderPage() {
   const [tableLayoutItems, setTableLayoutItems] = useState<CashierLayoutItem[]>(
     []
   );
+  const [tableLayoutZones, setTableLayoutZones] = useState<import("@/services/layout.service").LayoutZoneView[]>([]);
 
   // Product picker filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -735,10 +736,12 @@ export default function KasirManualOrderPage() {
       .then((layout) => {
         if (!alive) return;
         setTableLayoutItems(layout.items);
+        setTableLayoutZones(layout.zones ?? []);
       })
       .catch(() => {
         if (!alive) return;
         setTableLayoutItems([]);
+        setTableLayoutZones([]);
       });
     return () => {
       alive = false;
@@ -1533,6 +1536,7 @@ export default function KasirManualOrderPage() {
                 <CashierTableMap
                   tables={tables}
                   layoutItems={tableLayoutItems}
+                  zones={tableLayoutZones}
                   selectedTableId={tableId || null}
                   onSelectTable={(id) => setTableId(id)}
                 />

@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import type { CashierLayoutItem, CashierTable, CashierMapTable } from "./cashier-table-map.helpers";
+import type { LayoutZoneView } from "@/services/layout.service";
 import {
   isCashierTableSelectable,
   mergeCashierTables,
@@ -26,6 +27,7 @@ import {
 interface CashierTableMapProps {
   tables: readonly CashierTable[];
   layoutItems: readonly CashierLayoutItem[];
+  zones: readonly LayoutZoneView[];
   selectedTableId: string | null;
   onSelectTable: (tableId: string) => void;
 }
@@ -70,11 +72,6 @@ function TableCard({
     table.name ? `, ${table.name}` : "",
     `, kapasitas ${table.capacity} orang`,
     `, ${statusLabel}`,
-    table.areaType === "SMOKING"
-      ? ", area merokok"
-      : table.areaType === "NON_SMOKING"
-        ? ", area bebas asap rokok"
-        : "",
   ].join("");
 
   const shapeClasses =
@@ -105,11 +102,7 @@ function TableCard({
         <span className="mt-0.5 block max-w-full truncate text-[10px] font-medium leading-none opacity-80">
           {table.capacity} org
         </span>
-        {table.areaType && (
-          <span className="mt-1 block max-w-full truncate rounded-full bg-white/80 px-1.5 py-0.5 text-[9px] font-semibold leading-none">
-            {table.areaType === "SMOKING" ? "Merokok" : "Bebas asap rokok"}
-          </span>
-        )}
+        {table.zoneName && <span className="mt-1 block max-w-full truncate rounded-full bg-white/80 px-1.5 py-0.5 text-[9px] font-semibold leading-none">{table.zoneName}</span>}
         <span
           className={`mt-1 block max-w-full truncate rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none ${
             selected
@@ -127,12 +120,19 @@ function TableCard({
 export function CashierTableMap({
   tables,
   layoutItems,
+  zones,
   selectedTableId,
   onSelectTable,
 }: CashierTableMapProps) {
   const merged = useMemo(
-    () => mergeCashierTables(tables, layoutItems),
-    [tables, layoutItems]
+    () => mergeCashierTables(tables, layoutItems).map((table) => {
+      const item = layoutItems.find((entry) => entry.tableId === table.tableId);
+      const zone = item && item.x !== undefined && item.y !== undefined && item.width !== undefined && item.height !== undefined
+        ? zones.find((z) => item.x! + item.width! / 2 >= z.x && item.x! + item.width! / 2 <= z.x + z.width && item.y! + item.height! / 2 >= z.y && item.y! + item.height! / 2 <= z.y + z.height)
+        : undefined;
+      return { ...table, zoneName: zone?.name };
+    }),
+    [tables, layoutItems, zones]
   );
 
   return (

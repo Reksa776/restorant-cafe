@@ -6,6 +6,7 @@ import {
   EDITOR_CANVAS_HEIGHT,
   EDITOR_CANVAS_WIDTH,
   type DraftTableItem,
+  type DraftLayoutZone,
   type ResizeCorner,
 } from "./editor-geometry";
 import { FloorLayoutTable } from "./floor-layout-table";
@@ -15,6 +16,7 @@ const MIN_FIT_SCALE = 0.25;
 const MAX_FIT_SCALE = 1.5;
 
 interface FloorLayoutCanvasProps {
+  zones: DraftLayoutZone[];
   /** Active placed tables (editable draft). */
   items: DraftTableItem[];
   /** Persisted items of INACTIVE tables — rendered muted, never editable. */
@@ -45,6 +47,7 @@ interface FloorLayoutCanvasProps {
  * table for keyboard access.
  */
 export function FloorLayoutCanvas({
+  zones,
   items,
   inactiveItems,
   tables,
@@ -146,6 +149,7 @@ export function FloorLayoutCanvas({
             backgroundSize: `${GRID_LINES}px ${GRID_LINES}px`,
           }}
         >
+          {zones.map((zone) => <div key={zone.id} aria-label={`${zone.name}: ${zone.type}`} className={`pointer-events-none absolute rounded-xl border-2 border-dashed ${zone.type === "SMOKING" ? "border-orange-500 bg-orange-100/50" : zone.type === "TERRACE" ? "border-emerald-600 bg-emerald-100/40" : "border-sky-500 bg-sky-100/40"}`} style={{ left: zone.x, top: zone.y, width: zone.width, height: zone.height }}><span className="absolute left-2 top-2 rounded bg-white/90 px-2 py-1 text-xs font-semibold text-gray-800">{zone.name}</span></div>)}
           {items.map((item) => {
             const table = tables.get(item.tableId);
             if (!table) return null;

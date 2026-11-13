@@ -77,6 +77,7 @@ export async function GET(request: NextRequest, { params }: Params) {
       version: layout.version,
       canvas: layout.canvas,
       items: layout.items.filter((item) => activeIds.has(item.tableId)),
+      zones: layout.zones,
     });
   } catch (error) {
     if (error instanceof AppError) {

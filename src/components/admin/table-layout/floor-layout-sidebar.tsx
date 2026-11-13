@@ -143,32 +143,6 @@ export function FloorLayoutSidebar({
             </div>
 
             <div>
-              <label
-                htmlFor="layout-area-type"
-                className="mb-1 block text-xs font-medium text-gray-600"
-              >
-                Area meja
-              </label>
-              <select
-                id="layout-area-type"
-                value={selectedItem.areaType ?? ""}
-                onChange={(e) =>
-                  onAreaTypeChange(
-                    selectedItem.tableId,
-                    e.target.value === ""
-                      ? null
-                      : (e.target.value as NonNullable<DraftTableItem["areaType"]>)
-                  )
-                }
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="">Belum dipilih</option>
-                <option value="SMOKING">Area merokok</option>
-                <option value="NON_SMOKING">Area bebas asap rokok</option>
-              </select>
-            </div>
-
-            <div>
               <p className="mb-1 text-xs font-medium text-gray-600">Bentuk</p>
               <div className="flex gap-2">
                 <Button

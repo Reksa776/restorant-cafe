@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Loader2, Plus, RefreshCw, TriangleAlert } from "lucide-react";
 import { tableService, type RestaurantTable } from "@/services/table.service";
 import { layoutService, type BranchLayoutView } from "@/services/layout.service";
@@ -21,6 +22,7 @@ import {
   normalizeRotation,
   resizeTable,
   type DraftTableItem,
+  type DraftLayoutZone,
   type EditorShape,
   type ResizeCorner,
 } from "./editor-geometry";
@@ -40,7 +42,6 @@ function toDraftItem(item: {
   height: number;
   rotation: number;
   shape: "RECTANGLE" | "CIRCLE";
-  areaType?: "SMOKING" | "NON_SMOKING" | null;
 }): DraftTableItem {
   return {
     tableId: item.tableId,
@@ -50,7 +51,6 @@ function toDraftItem(item: {
     height: item.height,
     rotation: normalizeRotation(item.rotation),
     shape: item.shape as EditorShape,
-    areaType: item.areaType ?? null,
   };
 }
 
@@ -102,6 +102,8 @@ export function FloorLayoutEditor({
   const [tables, setTables] = useState<RestaurantTable[]>([]);
   const [draft, setDraft] = useState<DraftTableItem[]>([]);
   const [savedItems, setSavedItems] = useState<DraftTableItem[]>([]);
+  const [zones, setZones] = useState<DraftLayoutZone[]>([]);
+  const [savedZones, setSavedZones] = useState<DraftLayoutZone[]>([]);
   const [inactiveItems, setInactiveItems] = useState<DraftTableItem[]>([]);
   const [version, setVersion] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -123,8 +125,8 @@ export function FloorLayoutEditor({
   );
 
   const dirty = useMemo(
-    () => !itemListsEqual(draft, savedItems),
-    [draft, savedItems]
+    () => !itemListsEqual(draft, savedItems) || JSON.stringify(zones) !== JSON.stringify(savedZones),
+    [draft, savedItems, zones, savedZones]
   );
 
   /** Pure data fetch (no setState) — setState stays in the callers. */
@@ -150,6 +152,8 @@ export function FloorLayoutEditor({
       setDraft(active);
       setSavedItems(active);
       setInactiveItems(inactive);
+      setZones(result.layout.zones ?? []);
+      setSavedZones(result.layout.zones ?? []);
       setVersion(result.layout.version);
       setSelectedId(null);
       setIsLoading(false);
@@ -205,6 +209,10 @@ export function FloorLayoutEditor({
 
   const handleSelect = useCallback((tableId: string | null) => {
     setSelectedId(tableId);
+  }, []);
+
+  const handleCreateZone = useCallback(() => {
+    setZones((prev) => [...prev, { id: crypto.randomUUID(), name: `Area ${prev.length + 1}`, type: "NON_SMOKING", x: 24 + (prev.length % 3) * 24, y: 24 + (prev.length % 3) * 24, width: 340, height: 220 }]);
   }, []);
 
   const handlePlace = useCallback(
@@ -288,6 +296,8 @@ export function FloorLayoutEditor({
       setDraft(active);
       setSavedItems(active);
       setInactiveItems(inactive);
+      setZones(layout.zones ?? []);
+      setSavedZones(layout.zones ?? []);
       setVersion(layout.version);
       setSelectedId(null);
     },
@@ -301,7 +311,8 @@ export function FloorLayoutEditor({
       // never sent; the server re-validates every tableId.
       const result = await layoutService.saveAdminBranchLayout(branchId, {
         version,
-        items: draft.map(({ tableId, x, y, width, height, rotation, shape, areaType }) => ({
+        zones,
+        items: draft.map(({ tableId, x, y, width, height, rotation, shape }) => ({
           tableId,
           x,
           y,
@@ -309,7 +320,6 @@ export function FloorLayoutEditor({
           height,
           rotation,
           shape,
-          areaType: areaType ?? null,
         })),
       });
       applyServerLayout(result, tablesMap);
@@ -326,7 +336,7 @@ export function FloorLayoutEditor({
     } finally {
       setIsSaving(false);
     }
-  }, [branchId, version, draft, tablesMap, applyServerLayout]);
+  }, [branchId, version, draft, zones, tablesMap, applyServerLayout]);
 
   const handleSave = useCallback(() => {
     if (!dirty || isSaving) return;
@@ -353,9 +363,10 @@ export function FloorLayoutEditor({
 
   const handleResetConfirm = useCallback(() => {
     setDraft(savedItems);
+    setZones(savedZones);
     setSelectedId(null);
     setResetConfirmOpen(false);
-  }, [savedItems]);
+  }, [savedItems, savedZones]);
 
   // ----------------------------------------------------------
   // Table creation (existing Table CRUD — tableService + /api/tables)
@@ -423,6 +434,7 @@ export function FloorLayoutEditor({
         onReload={handleReloadRequest}
         onReset={handleResetRequest}
         onCreateTable={() => setAddDialogOpen(true)}
+        onCreateZone={handleCreateZone}
         zoom={zoom}
         onZoomChange={setZoom}
       />}
@@ -447,6 +459,7 @@ export function FloorLayoutEditor({
         <div className={readOnly ? "max-w-5xl" : "grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]"}>
           <div className={readOnly ? "pointer-events-none select-none" : undefined} aria-label={readOnly ? "Tampilan review layout" : undefined}>
           <FloorLayoutCanvas
+            zones={zones}
             items={draft}
             inactiveItems={inactiveItems}
             tables={tablesMap}
@@ -458,6 +471,7 @@ export function FloorLayoutEditor({
             onRotate={handleRotate}
             onUnplace={handleUnplace}
           />
+          {!readOnly && <Card className="mt-4"><CardContent className="space-y-3 p-4"><h3 className="font-semibold">Area denah</h3>{zones.map((zone) => <div key={zone.id} className="grid grid-cols-2 gap-2 md:grid-cols-7"><Input aria-label="Nama area" placeholder="Nama area" value={zone.name} onChange={(e) => setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, name: e.target.value } : z))} /><select aria-label="Jenis area" className="rounded-md border px-2 text-sm" value={zone.type} onChange={(e) => setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, type: e.target.value as DraftLayoutZone["type"] } : z))}><option value="SMOKING">Merokok</option><option value="NON_SMOKING">Bebas asap</option><option value="TERRACE">Teras</option></select>{(["x", "y", "width", "height"] as const).map((key) => <Input key={key} aria-label={key} placeholder={key.toUpperCase()} title={key === "x" ? "Posisi horizontal" : key === "y" ? "Posisi vertikal" : key === "width" ? "Lebar area" : "Tinggi area"} type="number" min={0} value={zone[key]} onChange={(e) => setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, [key]: Number(e.target.value) } : z))} />)}<Button variant="outline" onClick={() => setZones((prev) => prev.filter((z) => z.id !== zone.id))}>Hapus</Button></div>)}</CardContent></Card>}
           </div>
           {!readOnly && <FloorLayoutSidebar
             activeItems={draft}

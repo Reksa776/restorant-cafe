@@ -42,6 +42,22 @@ export const TABLE_AREA_TYPES = [
 ] as const satisfies readonly TableAreaType[];
 export type TableAreaTypeValue = (typeof TABLE_AREA_TYPES)[number];
 
+export const LAYOUT_ZONE_TYPES = ["SMOKING", "NON_SMOKING", "TERRACE"] as const;
+export type LayoutZoneType = (typeof LAYOUT_ZONE_TYPES)[number];
+
+export const LayoutZoneSchema = z.object({
+  id: z.string().trim().min(1),
+  name: z.string().trim().min(1).max(50),
+  type: z.enum(LAYOUT_ZONE_TYPES),
+  x: z.number().finite().min(0).max(LAYOUT_CANVAS_WIDTH),
+  y: z.number().finite().min(0).max(LAYOUT_CANVAS_HEIGHT),
+  width: z.number().finite().min(80).max(LAYOUT_CANVAS_WIDTH),
+  height: z.number().finite().min(60).max(LAYOUT_CANVAS_HEIGHT),
+}).superRefine((zone, ctx) => {
+  if (zone.x + zone.width > LAYOUT_CANVAS_WIDTH) ctx.addIssue({ code: "custom", message: "Area berada di luar kanvas", path: ["x"] });
+  if (zone.y + zone.height > LAYOUT_CANVAS_HEIGHT) ctx.addIssue({ code: "custom", message: "Area berada di luar kanvas", path: ["y"] });
+});
+
 /** Wrap any finite degree value into [0, 360). */
 export function normalizeLayoutRotation(degrees: number): number {
   const wrapped = degrees % 360;
@@ -116,6 +132,7 @@ export const SaveBranchLayoutSchema = z
       .positive("Versi layout tidak valid")
       .optional(),
     items: z.array(LayoutItemSchema),
+    zones: z.array(LayoutZoneSchema).default([]),
   })
   .superRefine((body, ctx) => {
     const seen = new Set<string>();

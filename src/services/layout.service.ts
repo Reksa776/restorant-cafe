@@ -30,7 +30,10 @@ export interface BranchLayoutView {
   version: number;
   canvas: { width: number; height: number };
   items: BranchLayoutItemView[];
+  zones: LayoutZoneView[];
 }
+
+export interface LayoutZoneView { id: string; name: string; type: "SMOKING" | "NON_SMOKING" | "TERRACE"; x: number; y: number; width: number; height: number }
 
 /** Public GET /public/branches/:branchCode/layout response data. */
 export interface PublicBranchLayoutView extends BranchLayoutView {

@@ -614,6 +614,7 @@ model TableLayout {
   restaurant Restaurant      @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   branch     Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
   items      TableLayoutItem[]
+  zones      TableLayoutZone[]
 
   @@index([restaurantId])
 
@@ -641,6 +642,21 @@ model TableLayoutItem {
   @@index([tableId])
 
   @@map("tablelayoutitem")
+}
+
+model TableLayoutZone {
+  id       String   @id @default(cuid())
+  layoutId String
+  name     String
+  type     String
+  x        Float
+  y        Float
+  width    Float
+  height   Float
+  layout   TableLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
+
+  @@index([layoutId])
+  @@map("tablelayoutzone")
 }
 
 // ============================================================

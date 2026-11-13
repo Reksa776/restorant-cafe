@@ -75,7 +75,8 @@ export class LayoutService {
     branchId: string,
     version: number,
     items: LayoutItemValue[],
-    restaurantId: string
+    restaurantId: string,
+    zones: Array<{ id: string; name: string; type: string; x: number; y: number; width: number; height: number }> = []
   ) {
     const tableIds = items.map((item) => item.tableId);
     const tables = tableIds.length
@@ -99,7 +100,6 @@ export class LayoutService {
           name: table.name,
           capacity: table.capacity,
           shape: item.shape,
-          ...(item.areaType ? { areaType: item.areaType } : {}),
           x: item.x,
           y: item.y,
           width: item.width,
@@ -110,7 +110,7 @@ export class LayoutService {
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .sort((a, b) => a.number - b.number);
 
-    return { branchId, version, canvas: canvas(), items: viewItems };
+    return { branchId, version, canvas: canvas(), items: viewItems, zones };
   }
 
   private assertBranchInScope(
@@ -149,16 +149,17 @@ export class LayoutService {
 
     const layout = await prisma.tableLayout.findFirst({
       where: { restaurantId, branchId },
-      include: { items: true },
+      include: { items: true, zones: true },
     });
     if (!layout) {
-      return { branchId, version: 1, canvas: canvas(), items: [] };
+      return { branchId, version: 1, canvas: canvas(), items: [], zones: [] };
     }
     return this.resolveLayoutView(
       layout.branchId,
       layout.version,
       layout.items,
-      restaurantId
+      restaurantId,
+      layout.zones
     );
   }
 
@@ -215,7 +216,7 @@ export class LayoutService {
 
       const layout = await tx.tableLayout.findUnique({
         where: { branchId },
-        include: { items: true },
+        include: { items: true, zones: true },
       });
       const currentVersion = layout ? layout.version : 1;
       if (data.version !== undefined && data.version !== currentVersion) {
@@ -261,11 +262,13 @@ export class LayoutService {
 
       if (layout) {
         await tx.tableLayoutItem.deleteMany({ where: { layoutId: layout.id } });
+        await tx.tableLayoutZone.deleteMany({ where: { layoutId: layout.id } });
         if (items.length) {
           await tx.tableLayoutItem.createMany({
             data: items.map((item) => ({ layoutId: layout.id, ...item })),
           });
         }
+        if (data.zones.length) await tx.tableLayoutZone.createMany({ data: data.zones.map((zone) => ({ ...zone, id: zone.id, layoutId: layout.id })) });
         await tx.tableLayout.update({
           where: { id: layout.id },
           data: { version: nextVersion },
@@ -279,18 +282,20 @@ export class LayoutService {
             data: items.map((item) => ({ layoutId: created.id, ...item })),
           });
         }
+        if (data.zones.length) await tx.tableLayoutZone.createMany({ data: data.zones.map((zone) => ({ ...zone, id: zone.id, layoutId: created.id })) });
       }
 
       // The values just persisted are returned directly (createMany returns
       // no rows, so re-reading would be a wasted query).
-      return { branchId, version: nextVersion, items };
+      return { branchId, version: nextVersion, items, zones: data.zones };
     });
 
     return this.resolveLayoutView(
       view.branchId,
       view.version,
       view.items,
-      restaurantId
+      restaurantId,
+      view.zones
     );
   }
 }

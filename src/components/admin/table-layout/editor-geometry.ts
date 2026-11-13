@@ -21,6 +21,7 @@ export const EDITOR_MAX_DIMENSION = 400;
 
 export type EditorShape = "RECTANGLE" | "CIRCLE";
 export type EditorAreaType = "SMOKING" | "NON_SMOKING";
+export interface DraftLayoutZone { id: string; name: string; type: "SMOKING" | "NON_SMOKING" | "TERRACE"; x: number; y: number; width: number; height: number }
 
 /** The editable geometry of one placed table (the layout item, not the table). */
 export interface DraftTableItem {

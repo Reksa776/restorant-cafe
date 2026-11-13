@@ -23,6 +23,7 @@ interface FloorLayoutToolbarProps {
   onReload: () => void;
   onReset: () => void;
   onCreateTable: () => void;
+  onCreateZone: () => void;
   zoom: number;
   onZoomChange: (zoom: number) => void;
 }
@@ -39,6 +40,7 @@ export function FloorLayoutToolbar({
   onReload,
   onReset,
   onCreateTable,
+  onCreateZone,
   zoom,
   onZoomChange,
 }: FloorLayoutToolbarProps) {
@@ -51,6 +53,7 @@ export function FloorLayoutToolbar({
         <Plus className="h-4 w-4 mr-1.5" />
         Tambah Meja
       </Button>
+      <Button type="button" variant="outline" onClick={onCreateZone}>Tambah Area</Button>
 
       <Button
         type="button"

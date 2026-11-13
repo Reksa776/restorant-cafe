@@ -36,6 +36,7 @@ export interface CashierLayoutItem {
   tableId: string;
   shape: "RECTANGLE" | "CIRCLE";
   areaType?: "SMOKING" | "NON_SMOKING" | null;
+  x?: number; y?: number; width?: number; height?: number;
 }
 
 /** One rendered table card: server metadata + layout shape (if any). */
@@ -47,6 +48,7 @@ export interface CashierMapTable {
   status: string;
   shape: "RECTANGLE" | "CIRCLE";
   areaType?: "SMOKING" | "NON_SMOKING" | null;
+  zoneName?: string;
 }
 
 /**
