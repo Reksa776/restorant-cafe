@@ -40,7 +40,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const TYPE_OPTIONS = [
@@ -200,7 +200,7 @@ export default function InventoryReportPage() {
             disabled={isLoading}
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           <Button size="sm" onClick={handleExport} disabled={isExporting}>
             {isExporting ? (
@@ -208,7 +208,7 @@ export default function InventoryReportPage() {
             ) : (
               <Download className="h-4 w-4 mr-2" />
             )}
-            Download CSV
+            Unduh Laporan
           </Button>
         </div>
       </div>

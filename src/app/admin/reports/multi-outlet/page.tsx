@@ -29,7 +29,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
@@ -129,7 +129,7 @@ export default function MultiOutletReportPage() {
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           <Button size="sm" onClick={handleExport} disabled={isExporting}>
             {isExporting ? (
@@ -137,7 +137,7 @@ export default function MultiOutletReportPage() {
             ) : (
               <Download className="h-4 w-4 mr-2" />
             )}
-            Download CSV
+            Unduh Laporan
           </Button>
         </div>
       </div>
@@ -212,9 +212,9 @@ export default function MultiOutletReportPage() {
           {/* Summary */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {[
-              { label: "Total Net Sales", value: rupiah(report.summary.netSales), icon: TrendingUp },
-              { label: "Total Order", value: `${report.summary.totalOrders}`, icon: ShoppingCart },
-              { label: "Total Refund", value: rupiah(report.summary.refund), icon: Banknote },
+              { label: "Total Penjualan Setelah Pengembalian", value: rupiah(report.summary.netSales), icon: TrendingUp },
+              { label: "Total Pesanan", value: `${report.summary.totalOrders}`, icon: ShoppingCart },
+              { label: "Total Uang Dikembalikan", value: rupiah(report.summary.refund), icon: Banknote },
               { label: "Total Outlet", value: `${report.outlets.length}`, icon: Store },
             ].map((c) => (
               <Card key={c.label}>
@@ -266,11 +266,11 @@ export default function MultiOutletReportPage() {
                     <CardContent className="space-y-3">
                       <div className="grid grid-cols-3 gap-3 text-center">
                         <div>
-                          <p className="text-xs text-gray-500">Net Sales</p>
+                          <p className="text-xs text-gray-500">Penjualan Bersih</p>
                           <p className="text-sm font-bold tabular-nums">{rupiah(o.netSales)}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-gray-500">Order</p>
+                          <p className="text-xs text-gray-500">Pesanan</p>
                           <p className="text-sm font-bold tabular-nums">{o.orders}</p>
                         </div>
                         <div>
@@ -289,7 +289,7 @@ export default function MultiOutletReportPage() {
                           <span className="tabular-nums font-medium text-gray-700">{rupiah(o.qris)}</span>
                         </div>
                         <div className="flex items-center justify-between text-xs text-gray-500">
-                          <span>Refund</span>
+                          <span>Uang Dikembalikan</span>
                           <span className="tabular-nums font-medium text-red-600">
                             {o.refund > 0 ? `−${rupiah(o.refund)}` : "—"}
                           </span>

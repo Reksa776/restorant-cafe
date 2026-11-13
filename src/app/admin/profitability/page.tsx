@@ -37,7 +37,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const rupiah = (v: number | null) =>
@@ -47,16 +47,16 @@ const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(2)}%`);
 // H2.3 — coverage state → Badge. Unknown COGS is never rendered as Rp 0.
 const COGS_STATE_BADGE: Record<string, { label: string; className: string }> = {
   // D1 — empty scope: COGS cannot be verified (never rendered as covered).
-  NO_ITEMS: { label: "NO ITEMS", className: "bg-red-100 text-red-800" },
-  COVERED: { label: "COVERED", className: "bg-green-100 text-green-800" },
-  PARTIAL: { label: "PARTIAL", className: "bg-amber-100 text-amber-800" },
-  PENDING_COGS: { label: "PENDING", className: "bg-blue-100 text-blue-800" },
-  UNCOVERED: { label: "UNCOVERED", className: "bg-amber-100 text-amber-800" },
-  LEGACY: { label: "LEGACY", className: "bg-gray-100 text-gray-700" },
+  NO_ITEMS: { label: "Belum Ada Data", className: "bg-red-100 text-red-800" },
+  COVERED: { label: "Data Lengkap", className: "bg-green-100 text-green-800" },
+  PARTIAL: { label: "Sebagian Lengkap", className: "bg-amber-100 text-amber-800" },
+  PENDING_COGS: { label: "Belum Dihitung", className: "bg-blue-100 text-blue-800" },
+  UNCOVERED: { label: "Belum Lengkap", className: "bg-amber-100 text-amber-800" },
+  LEGACY: { label: "Data Lama", className: "bg-gray-100 text-gray-700" },
 };
 const cogsBadge = (state: string) =>
   COGS_STATE_BADGE[state] ?? {
-    label: state,
+    label: "Perlu Dicek",
     className: "bg-gray-100 text-gray-700",
   };
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -132,7 +132,7 @@ export default function ProfitabilityPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `profitability-report-${period}-${todayStr()}.csv`;
+      a.download = `laporan-untung-produk-${period}-${todayStr()}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -157,9 +157,9 @@ export default function ProfitabilityPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold">Profitabilitas</h1>
+          <h1 className="text-3xl font-bold">Untung dari Penjualan</h1>
           <p className="text-gray-500">
-            Margin historis dari HPP yang dibekukan saat order selesai
+            Perkiraan untung setelah biaya bahan produk yang terjual dikurangi.
           </p>
         </div>
         <div className="flex gap-2">
@@ -170,7 +170,7 @@ export default function ProfitabilityPage() {
             disabled={isLoading}
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           <Button size="sm" onClick={handleExport} disabled={isExporting}>
             {isExporting ? (
@@ -178,7 +178,7 @@ export default function ProfitabilityPage() {
             ) : (
               <Download className="h-4 w-4 mr-2" />
             )}
-            Download CSV
+            Unduh Laporan
           </Button>
         </div>
       </div>
@@ -310,11 +310,11 @@ export default function ProfitabilityPage() {
             <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
               <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
               <span>
-                COGS belum dapat diverifikasi: tidak ada item dalam scope untuk
-                periode ini, sehingga Gross Profit ditampilkan sebagai tidak
-                diketahui.{" "}
+                Biaya bahan belum dapat dipastikan karena rincian barang
+                pesanan untuk periode ini belum tersedia. Nilai laba kotor belum
+                dapat ditampilkan.{" "}
                 {summary.revenueWithoutItems.orders > 0 &&
-                  `${summary.revenueWithoutItems.orders} order ber-revenue (${rupiah(
+                  `${summary.revenueWithoutItems.orders} pesanan dengan penjualan (${rupiah(
                     summary.revenueWithoutItems.headerValue
                   )}) tidak memiliki baris item.`}
               </span>
@@ -327,10 +327,10 @@ export default function ProfitabilityPage() {
                 <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
                   <Info className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
-                    COGS Pending: {summary.coverage.pendingOrderItems} item sudah
-                    dibayar tetapi belum selesai — COGS belum terjadi. Revenue
-                    tetap dihitung, namun Gross Profit ditampilkan sebagai tidak
-                    diketahui sampai order selesai.
+                    Ada {summary.coverage.pendingOrderItems} barang pesanan yang sudah
+                    dibayar tetapi belum selesai — biaya bahannya belum dihitung. Uang penjualan
+                    tetap dihitung, tetapi laba kotor baru bisa diketahui setelah
+                    pesanan selesai.
                   </span>
                 </div>
               )}
@@ -338,9 +338,9 @@ export default function ProfitabilityPage() {
                 <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
-                    Sebagian transaksi belum memiliki HPP historis (
-                    {summary.coverage.uncostedOrderItems} item tanpa resep / WAC).
-                    COGS tidak dihitung untuk item tersebut.
+                    Sebagian transaksi belum memiliki data biaya bahan
+                    ({summary.coverage.uncostedOrderItems} barang tanpa resep atau harga bahan yang tercatat).
+                    Biaya dan laba produk tersebut belum bisa dihitung.
                   </span>
                 </div>
               )}
@@ -348,9 +348,9 @@ export default function ProfitabilityPage() {
                 <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
-                    Transaksi sebelum fitur historical costing tidak memiliki
-                    snapshot HPP ({summary.coverage.legacyOrderItems} item).
-                    Revenue tetap valid, COGS tidak tersedia.
+                    Transaksi lama belum memiliki catatan biaya bahan
+                    ({summary.coverage.legacyOrderItems} barang). Uang penjualan tetap tercatat,
+                    tetapi biaya dan laba produk tersebut belum diketahui.
                   </span>
                 </div>
               )}
@@ -361,14 +361,13 @@ export default function ProfitabilityPage() {
             <div className="flex items-start gap-2 rounded-lg border border-purple-200 bg-purple-50 px-4 py-3 text-sm text-purple-800">
               <Info className="h-4 w-4 mt-0.5 shrink-0" />
               <span>
-                Refund ({summary.refundState}): revenue dikembalikan
-                {rupiah(summary.refundReversal)}, COGS historis
-                {rupiah(summary.historicalCogs)} tetap terjadi
+                Uang yang dikembalikan: {rupiah(summary.refundReversal)}. Biaya bahan
+                sebesar {rupiah(summary.historicalCogs)} tetap sudah terpakai
                 {summary.cogsReversal > 0
-                  ? `, ${rupiah(summary.cogsReversal)} di antaranya dibalik dari refund sebagian`
+                  ? `; ${rupiah(summary.cogsReversal)} disesuaikan karena pengembalian sebagian`
                   : ""}
-                . COGS yang ditahan: {rupiah(summary.retainedCogs)}. Refund
-                tidak mengembalikan stok produk/bahan baku secara otomatis.
+                . Biaya bahan yang tetap dihitung: {rupiah(summary.retainedCogs)}. Pengembalian uang
+                tidak otomatis menambah kembali stok produk atau bahan.
               </span>
             </div>
           )}
@@ -377,9 +376,9 @@ export default function ProfitabilityPage() {
             <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
               <Info className="h-4 w-4 mt-0.5 shrink-0" />
               <span>
-                {summary.unpaidCompleted.orders} order selesai namun belum
-                dibayar — COGS {rupiah(summary.unpaidCompleted.cogs)} sudah
-                terjadi tanpa revenue (belum masuk perhitungan margin).
+                {summary.unpaidCompleted.orders} pesanan selesai namun belum
+                dibayar — biaya bahan {rupiah(summary.unpaidCompleted.cogs)} sudah
+                terpakai tanpa ada uang penjualan (belum masuk perhitungan untung).
               </span>
             </div>
           )}
@@ -387,27 +386,27 @@ export default function ProfitabilityPage() {
           {/* Summary */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {[
-              { label: "Net Sales", value: rupiah(summary.netSales), icon: TrendingUp },
-              { label: "COGS (HPP Historis)", value: rupiah(summary.historicalCogs), icon: Wallet },
+              { label: "Penjualan Setelah Pengembalian", value: rupiah(summary.netSales), icon: TrendingUp },
+              { label: "Biaya Bahan Produk Terjual", value: rupiah(summary.historicalCogs), icon: Wallet },
               ...(summary.cogsReversal > 0
-                ? [{ label: "COGS Dibalik (Refund)", value: rupiah(summary.cogsReversal), icon: Wallet }]
+                ? [{ label: "Penyesuaian Biaya Bahan", value: rupiah(summary.cogsReversal), icon: Wallet }]
                 : []),
-              { label: "COGS Ditahan", value: rupiah(summary.retainedCogs), icon: Wallet },
+              { label: "Biaya Bahan yang Tetap Dihitung", value: rupiah(summary.retainedCogs), icon: Wallet },
               ...(summary.refundReversal > 0
-                ? [{ label: "Refund", value: rupiah(summary.refundReversal), icon: Wallet }]
+                ? [{ label: "Uang Dikembalikan", value: rupiah(summary.refundReversal), icon: Wallet }]
                 : []),
               {
-                label: "Gross Profit",
+                label: "Laba Kotor",
                 value:
                   summary.grossProfit === null
                     ? "Tidak diketahui"
                     : rupiah(summary.grossProfit),
                 icon: TrendingUp,
               },
-              { label: "Gross Margin", value: pct(summary.grossMarginPct), icon: Percent },
-              { label: "Food Cost", value: pct(summary.foodCostPct), icon: Percent },
+              { label: "Persentase Laba Kotor", value: pct(summary.grossMarginPct), icon: Percent },
+              { label: "Biaya Bahan dibanding Penjualan", value: pct(summary.foodCostPct), icon: Percent },
               {
-                label: "Ditutup Biaya",
+                label: "Barang dengan Data Biaya",
                 value: `${summary.coverage.costedOrderItems}/${summary.coverage.totalOrderItems} item`,
                 icon: Wallet,
               },
@@ -428,7 +427,7 @@ export default function ProfitabilityPage() {
           {report.branches.length > 1 && (
             <Card>
               <CardHeader>
-                <CardTitle>Profitabilitas per Cabang</CardTitle>
+                <CardTitle>Untung per Cabang</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">
@@ -436,12 +435,12 @@ export default function ProfitabilityPage() {
                     <thead>
                       <tr className="border-b text-left text-gray-500">
                         <th className="pb-2 font-medium">Cabang</th>
-                        <th className="pb-2 font-medium text-right">Order</th>
-                        <th className="pb-2 font-medium text-right">Net Sales</th>
-                        <th className="pb-2 font-medium text-right">COGS</th>
-                        <th className="pb-2 font-medium text-right">Gross Profit</th>
-                        <th className="pb-2 font-medium text-right">Margin</th>
-                        <th className="pb-2 font-medium text-right">Food Cost</th>
+                        <th className="pb-2 font-medium text-right">Pesanan</th>
+                        <th className="pb-2 font-medium text-right">Penjualan Bersih</th>
+                        <th className="pb-2 font-medium text-right">Biaya Bahan</th>
+                        <th className="pb-2 font-medium text-right">Laba Kotor</th>
+                        <th className="pb-2 font-medium text-right">Laba (%)</th>
+                        <th className="pb-2 font-medium text-right">Biaya Bahan (%)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -478,7 +477,7 @@ export default function ProfitabilityPage() {
           {/* Product profitability */}
           <Card>
             <CardHeader>
-              <CardTitle>Profitabilitas Produk</CardTitle>
+              <CardTitle>Untung per Produk</CardTitle>
             </CardHeader>
             <CardContent>
               {report.products.length === 0 ? (
@@ -493,12 +492,12 @@ export default function ProfitabilityPage() {
                         <th className="pb-2 font-medium">#</th>
                         <th className="pb-2 font-medium">Produk</th>
                         <th className="pb-2 font-medium">Kategori</th>
-                        <th className="pb-2 font-medium text-right">Qty</th>
-                        <th className="pb-2 font-medium text-right">Net Sales</th>
-                        <th className="pb-2 font-medium text-right">COGS</th>
-                        <th className="pb-2 font-medium text-right">Gross Profit</th>
-                        <th className="pb-2 font-medium text-right">Margin</th>
-                        <th className="pb-2 font-medium text-right">Food Cost</th>
+                        <th className="pb-2 font-medium text-right">Terjual</th>
+                        <th className="pb-2 font-medium text-right">Penjualan Bersih</th>
+                        <th className="pb-2 font-medium text-right">Biaya Bahan</th>
+                        <th className="pb-2 font-medium text-right">Laba Kotor</th>
+                        <th className="pb-2 font-medium text-right">Laba (%)</th>
+                        <th className="pb-2 font-medium text-right">Biaya Bahan (%)</th>
                         <th className="pb-2 font-medium text-right">Status</th>
                       </tr>
                     </thead>

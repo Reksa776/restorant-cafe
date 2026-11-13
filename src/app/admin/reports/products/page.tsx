@@ -37,7 +37,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
@@ -137,7 +137,7 @@ export default function ProductsReportPage() {
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           <Button size="sm" onClick={handleExport} disabled={isExporting}>
             {isExporting ? (
@@ -145,7 +145,7 @@ export default function ProductsReportPage() {
             ) : (
               <Download className="h-4 w-4 mr-2" />
             )}
-            Download CSV
+            Unduh Laporan
           </Button>
         </div>
       </div>
@@ -260,9 +260,9 @@ export default function ProductsReportPage() {
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {[
               { label: "Produk Terjual", value: report.summary.soldProductCount, icon: Package },
-              { label: "Total Qty Terjual", value: report.summary.qtySold, icon: ShoppingCart },
-              { label: "Gross Sales", value: rupiah(report.summary.grossSales), icon: TrendingUp },
-              { label: "Net Sales", value: rupiah(report.summary.netSales), icon: TrendingUp },
+              { label: "Total Barang Terjual", value: report.summary.qtySold, icon: ShoppingCart },
+              { label: "Penjualan Sebelum Pengembalian", value: rupiah(report.summary.grossSales), icon: TrendingUp },
+              { label: "Penjualan Setelah Pengembalian", value: rupiah(report.summary.netSales), icon: TrendingUp },
             ].map((c) => (
               <Card key={c.label}>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -294,11 +294,11 @@ export default function ProductsReportPage() {
                         <th className="pb-2 font-medium">#</th>
                         <th className="pb-2 font-medium">Produk</th>
                         <th className="pb-2 font-medium">Kategori</th>
-                        <th className="pb-2 font-medium text-right">Qty</th>
-                        <th className="pb-2 font-medium text-right">Gross</th>
+                        <th className="pb-2 font-medium text-right">Jumlah</th>
+                        <th className="pb-2 font-medium text-right">Sebelum Pengembalian</th>
                         <th className="pb-2 font-medium text-right">Diskon</th>
-                        <th className="pb-2 font-medium text-right">Net</th>
-                        <th className="pb-2 font-medium text-right">Order</th>
+                        <th className="pb-2 font-medium text-right">Setelah Pengembalian</th>
+                        <th className="pb-2 font-medium text-right">Pesanan</th>
                       </tr>
                     </thead>
                     <tbody>

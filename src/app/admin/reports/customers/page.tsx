@@ -49,7 +49,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
@@ -144,12 +144,12 @@ export default function CustomerReportPage() {
       { label: "Pelanggan Kembali", value: `${s.returningCustomers}`, icon: Repeat },
       { label: "Aktif", value: `${s.activeCustomers}`, icon: ShoppingCart, hint: "Ada order pada periode" },
       { label: "Tidak Aktif", value: `${s.inactiveCustomers}`, icon: CalendarClock, hint: "Punya riwayat, tanpa order pada periode" },
-      { label: "Total Order", value: `${s.totalOrders}`, icon: ShoppingCart },
+      { label: "Total Pesanan", value: `${s.totalOrders}`, icon: ShoppingCart },
       { label: "Item Terjual", value: `${s.totalItemsSold}`, icon: Package },
       { label: "Rata-rata Order", value: rupiah(s.averageOrderValue), icon: TrendingUp },
       { label: "Total Penjualan", value: rupiah(s.totalSales), icon: TrendingUp },
-      { label: "Total Refund", value: rupiah(s.totalRefund), icon: Download },
-      { label: "Net Sales", value: rupiah(s.netSales), icon: TrendingUp, hint: "Penjualan bersih setelah dampak refund" },
+      { label: "Total Uang Dikembalikan", value: rupiah(s.totalRefund), icon: Download },
+      { label: "Penjualan Setelah Pengembalian", value: rupiah(s.netSales), icon: TrendingUp, hint: "Penjualan setelah uang yang dikembalikan dikurangi" },
     ];
   }, [report]);
 
@@ -163,7 +163,7 @@ export default function CustomerReportPage() {
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           {role === "ADMIN" && (
             <Button size="sm" onClick={handleExport} disabled={isExporting}>
@@ -293,14 +293,14 @@ export default function CustomerReportPage() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Pelanggan</TableHead>
-                        <TableHead className="text-right">Order</TableHead>
+                        <TableHead className="text-right">Pesanan</TableHead>
                         <TableHead className="text-right">Reservasi</TableHead>
                         <TableHead className="text-right">Item</TableHead>
                         <TableHead className="text-right">Total Penjualan</TableHead>
-                        <TableHead className="text-right">Refund</TableHead>
-                        <TableHead className="text-right">Net Sales</TableHead>
+                        <TableHead className="text-right">Uang Dikembalikan</TableHead>
+                        <TableHead className="text-right">Penjualan Bersih</TableHead>
                         <TableHead className="text-right">AOV</TableHead>
-                        <TableHead>Order Terakhir</TableHead>
+                        <TableHead>Pesanan Terakhir</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>

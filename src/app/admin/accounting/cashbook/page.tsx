@@ -45,9 +45,9 @@ import {
 import { toast } from "sonner";
 
 const METHOD_OPTIONS: Array<{ value: CashbookMethod; label: string }> = [
-  { value: "KASIR", label: "Tunai (KASIR)" },
+  { value: "KASIR", label: "Tunai dari Kasir" },
   { value: "QRIS", label: "QRIS" },
-  { value: "CASH", label: "Tunai (Expense)" },
+  { value: "CASH", label: "Tunai untuk Pengeluaran" },
   { value: "TRANSFER", label: "Transfer" },
   { value: "CARD", label: "Kartu" },
   { value: "OTHER", label: "Lainnya" },
@@ -71,8 +71,16 @@ const fmtDate = (iso: string) =>
 
 const SOURCE_LABEL: Record<string, string> = {
   PAYMENT: "Pembayaran",
-  REFUND: "Refund",
+  REFUND: "Uang Dikembalikan",
   EXPENSE: "Pengeluaran",
+};
+const STATUS_LABEL: Record<string, string> = {
+  PAID: "Lunas",
+  APPROVED: "Disetujui",
+  REFUNDED: "Uang Dikembalikan",
+  PENDING: "Menunggu",
+  SETTLED: "Sudah Diterima",
+  CANCELLED: "Dibatalkan",
 };
 
 export default function CashbookPage() {
@@ -162,7 +170,7 @@ export default function CashbookPage() {
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = objectUrl;
-      a.download = `cashbook-${todayStr()}.csv`;
+      a.download = `buku-kas-${todayStr()}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -188,19 +196,19 @@ export default function CashbookPage() {
         label: "Total Kas Keluar",
         value: rupiah(summary.totalOut),
         icon: ArrowUpRight,
-        hint: "Refund + Pengeluaran",
+        hint: "Uang dikembalikan + pengeluaran",
       },
       {
-        label: "Net Movement (periode)",
+        label: "Perubahan Kas Selama Periode",
         value: rupiah(summary.netMovement),
         icon: Scale,
-        hint: "Bukan saldo absolut",
+        hint: "Bukan jumlah uang yang tersedia saat ini",
       },
       {
-        label: "Kas Fisik Teratribusi",
+        label: "Perubahan Uang Tunai",
         value: rupiah(summary.attributableCash.net),
         icon: Scale,
-        hint: "Tunai (KASIR) − refund/expense tunai",
+        hint: "Uang tunai masuk dikurangi pengembalian dan pengeluaran tunai; belum termasuk saldo awal",
       },
     ];
   }, [summary]);
@@ -220,7 +228,7 @@ export default function CashbookPage() {
         <div>
           <h1 className="text-3xl font-bold">Buku Kas</h1>
           <p className="text-gray-500">
-            Pergerakan kas dari pembayaran, refund, dan pengeluaran
+            Uang yang masuk dan keluar dari pembayaran, pengembalian, dan pengeluaran
           </p>
         </div>
         <Button size="sm" onClick={handleExport} disabled={isExporting}>
@@ -229,23 +237,23 @@ export default function CashbookPage() {
           ) : (
             <Download className="h-4 w-4 mr-2" />
           )}
-          Download CSV
+          Unduh Laporan
         </Button>
       </div>
 
       {/* Explicit, non-negotiable warnings */}
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 space-y-1">
-        <p>• Kas berbeda dari omzet/revenue.</p>
-        <p>• Saldo awal tidak tersedia; saldo absolut tidak ditampilkan.</p>
-        <p>• Settlement QRIS belum terverifikasi.</p>
-        <p>• Transaksi tanpa shift tidak dapat diatribusikan ke laci kasir.</p>
+        <p>• Jumlah uang yang masuk atau keluar berbeda dari total penjualan.</p>
+        <p>• Saldo awal belum dicatat, jadi jumlah uang kas saat ini belum bisa dihitung.</p>
+        <p>• Belum ada bukti uang pembayaran QRIS sudah masuk ke rekening.</p>
+        <p>• Transaksi tanpa giliran kasir tidak bisa dicocokkan dengan uang di laci kasir.</p>
         <p>
-          • Tanggal bertanda (fallback) memakai waktu pembuatan (createdAt),
-          bukan waktu penerimaan uang yang terverifikasi.
+          • Tanggal bertanda "perkiraan" memakai waktu transaksi dicatat,
+          bukan waktu uang benar-benar diterima.
         </p>
         <p>
-          • Transaksi legacy tanpa cabang (branchId kosong) tidak ditampilkan
-          bagi admin yang dibatasi ke cabang tertentu.
+          • Transaksi lama yang belum memiliki cabang tidak ditampilkan
+          jika akun admin dibatasi ke cabang tertentu.
         </p>
       </div>
 
@@ -284,7 +292,7 @@ export default function CashbookPage() {
               />
             </div>
             <div className="space-y-1">
-              <span className="text-xs text-gray-500">Tipe</span>
+              <span className="text-xs text-gray-500">Jenis Transaksi</span>
               <Select
                 value={typeFilter}
                 onValueChange={(v) => {
@@ -340,7 +348,7 @@ export default function CashbookPage() {
               </Select>
             </div>
             <div className="space-y-1">
-              <span className="text-xs text-gray-500">Cari (order/catatan)</span>
+              <span className="text-xs text-gray-500">Cari (pesanan atau catatan)</span>
               <Input
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
@@ -364,7 +372,7 @@ export default function CashbookPage() {
                 <RefreshCw
                   className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
                 />
-                Refresh
+          Muat Ulang
               </Button>
             </div>
           </div>
@@ -400,18 +408,18 @@ export default function CashbookPage() {
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
               <div className="flex justify-between">
-                <span>Tunai (KASIR)</span>
+                <span>Tunai dari penjualan</span>
                 <span className="tabular-nums">{rupiah(summary.inflow.kasir)}</span>
               </div>
               <div className="flex justify-between">
                 <span className="flex items-center gap-1">
-                  <QrCode className="h-3.5 w-3.5" /> QRIS (belum settled)
+                  <QrCode className="h-3.5 w-3.5" /> QRIS (belum dicairkan)
                 </span>
                 <span className="tabular-nums">{rupiah(summary.inflow.qris)}</span>
               </div>
               {summary.inflow.other > 0 && (
                 <div className="flex justify-between">
-                  <span>Instrumen lain</span>
+                  <span>Metode pembayaran lain</span>
                   <span className="tabular-nums">{rupiah(summary.inflow.other)}</span>
                 </div>
               )}
@@ -423,16 +431,16 @@ export default function CashbookPage() {
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
               <div className="flex justify-between">
-                <span>Refund tunai</span>
+                <span>Uang dikembalikan tunai</span>
                 <span className="tabular-nums">{rupiah(summary.outflow.refundKasir)}</span>
               </div>
               <div className="flex justify-between">
-                <span>Refund non-tunai</span>
+                <span>Uang dikembalikan non-tunai</span>
                 <span className="tabular-nums">{rupiah(summary.outflow.refundQris)}</span>
               </div>
               {summary.outflow.refundUnknown > 0 && (
                 <div className="flex justify-between">
-                  <span>Refund (instrumen tidak pasti)</span>
+                  <span>Pengembalian (metode belum diketahui)</span>
                   <span className="tabular-nums">
                     {rupiah(summary.outflow.refundUnknown)}
                   </span>
@@ -461,18 +469,18 @@ export default function CashbookPage() {
             </CardHeader>
             <CardContent className="space-y-1 text-sm">
               <div className="flex justify-between">
-                <span>Non-tunai (masuk)</span>
+                <span>Pembayaran non-tunai yang masuk</span>
                 <span className="tabular-nums">{rupiah(summary.nonCash.in)}</span>
               </div>
               <div className="flex justify-between">
-                <span>Pembayaran pada order CANCELLED</span>
+                <span>Pembayaran pada pesanan yang dibatalkan</span>
                 <span className="tabular-nums">
                   {summary.collectedOnCancelledOrders.count} ·{" "}
                   {rupiah(summary.collectedOnCancelledOrders.amount)}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span>Tanpa shift</span>
+                <span>Tanpa giliran kasir</span>
                 <span className="tabular-nums">
                   {summary.unattributedShift.count} ·{" "}
                   {rupiah(summary.unattributedShift.inAmount + summary.unattributedShift.outAmount)}
@@ -513,12 +521,12 @@ export default function CashbookPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Tanggal</TableHead>
-                      <TableHead>Sumber</TableHead>
+                        <TableHead>Asal Transaksi</TableHead>
                       <TableHead>Tipe</TableHead>
                       <TableHead>Metode</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Cabang</TableHead>
-                      <TableHead>Order / Shift</TableHead>
+                        <TableHead>Pesanan / Giliran Kasir</TableHead>
                       <TableHead className="text-right">Nominal</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -528,7 +536,7 @@ export default function CashbookPage() {
                         <TableCell className="whitespace-nowrap text-xs text-gray-500">
                           {fmtDate(e.date)}
                           {e.dateFallback && (
-                            <span className="ml-1 text-amber-600">(fallback)</span>
+                            <span className="ml-1 text-amber-600">(perkiraan)</span>
                           )}
                         </TableCell>
                         <TableCell className="text-sm">
@@ -547,22 +555,22 @@ export default function CashbookPage() {
                         </TableCell>
                         <TableCell className="text-sm">{e.methodLabel}</TableCell>
                         <TableCell className="text-xs text-gray-500">
-                          {e.status ?? "—"}
+                          {e.status ? STATUS_LABEL[e.status] ?? e.status : "—"}
                         </TableCell>
                         <TableCell className="text-sm text-gray-500">
                           {e.branchCode ? `${e.branchCode}` : "—"}
                         </TableCell>
                         <TableCell className="text-xs text-gray-500">
-                          {e.orderNumber ?? "—"}
+                          {e.orderNumber ? `Pesanan ${e.orderNumber}` : "—"}
                           {e.shiftNumber ? ` / ${e.shiftNumber}` : ""}
                           {!e.shiftAttributed && e.source !== "EXPENSE" && (
-                            <span className="ml-1 text-amber-600" title="Tidak teratribusi ke shift">
+                            <span className="ml-1 text-amber-600" title="Belum dicocokkan dengan giliran kasir">
                               !
                             </span>
                           )}
                           {e.onCancelledOrder && (
                             <Badge variant="secondary" className="ml-1 text-[10px]">
-                              order cancelled
+                              Pesanan Dibatalkan
                             </Badge>
                           )}
                         </TableCell>

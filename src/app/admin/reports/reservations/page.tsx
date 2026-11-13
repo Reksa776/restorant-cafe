@@ -48,7 +48,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const STATUS_LABEL: Record<string, string> = {
@@ -162,9 +162,9 @@ export default function ReservationReportPage() {
       { label: "Tidak Hadir", value: `${s.noShow}`, icon: UserX, hint: `${s.noShowRate}% dari total` },
       { label: "Rata-rata Tamu", value: `${s.averagePartySize}`, icon: Users },
       { label: "Total Tamu", value: `${s.totalGuests}`, icon: Users },
-      { label: "Revenue Reservasi", value: rupiah(s.reservationRevenue), icon: TrendingUp },
-      { label: "Refund Reservasi", value: rupiah(s.reservationRefund), icon: Undo2 },
-      { label: "Net Revenue", value: rupiah(s.reservationNetRevenue), icon: TrendingUp, hint: "Setelah dampak refund" },
+      { label: "Pendapatan Reservasi", value: rupiah(s.reservationRevenue), icon: TrendingUp },
+      { label: "Uang Reservasi Dikembalikan", value: rupiah(s.reservationRefund), icon: Undo2 },
+      { label: "Pendapatan Reservasi Setelah Pengembalian", value: rupiah(s.reservationNetRevenue), icon: TrendingUp, hint: "Setelah uang yang dikembalikan dikurangi" },
     ];
   }, [report]);
 
@@ -185,12 +185,12 @@ export default function ReservationReportPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold">Laporan Reservasi</h1>
-          <p className="text-gray-500">Statistik reservasi, funnel & revenue</p>
+          <p className="text-gray-500">Ringkasan reservasi dan pendapatannya</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           {role === "ADMIN" && (
             <Button size="sm" onClick={handleExport} disabled={isExporting}>
@@ -293,7 +293,7 @@ export default function ReservationReportPage() {
           </div>
 
           <p className="text-xs text-gray-500">
-            Catatan: Revenue dan refund diatribusikan berdasarkan tanggal order dan tanggal persetujuan refund, bukan tanggal reservasi.
+            Catatan: Pendapatan dan uang yang dikembalikan dihitung berdasarkan tanggal pesanan dan tanggal persetujuan pengembalian, bukan tanggal reservasi.
           </p>
 
           {/* Static funnel */}
@@ -468,7 +468,7 @@ export default function ReservationReportPage() {
                 ) : (
                   Object.entries(report.paymentStatus).map(([k, v]) => (
                     <div key={k} className="flex items-center justify-between gap-3 py-1.5">
-                      <span className="text-sm">{k === "NO_ORDER" ? "Tanpa Order" : k}</span>
+                      <span className="text-sm">{k === "NO_ORDER" ? "Belum Ada Pesanan" : k}</span>
                       <span className="text-sm font-medium tabular-nums">{v}</span>
                     </div>
                   ))

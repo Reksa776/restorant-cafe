@@ -42,7 +42,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const STATUS_OPTIONS = [
@@ -176,7 +176,7 @@ export default function PurchasesReportPage() {
       { label: "Diterima", value: `${s.totalReceived}`, icon: CheckCircle2 },
       { label: "Dibatalkan", value: `${s.totalCancelled}`, icon: XCircle },
       { label: "Total Item Dibeli", value: `${s.totalItemsPurchased}`, icon: Layers },
-      { label: "Total Qty", value: `${s.totalQuantity}`, icon: Package },
+      { label: "Total Barang Dibeli", value: `${s.totalQuantity}`, icon: Package },
     ];
   }, [report]);
 
@@ -186,7 +186,7 @@ export default function PurchasesReportPage() {
         <div>
           <h1 className="text-3xl font-bold">Laporan Pembelian</h1>
           <p className="text-gray-500">
-            Nilai, kuantitas, dan status pembelian — bukan COGS/profit
+            Nilai, jumlah, dan status pembelian bahan. Biaya bahan pada laporan laba dihitung saat produk terjual.
           </p>
         </div>
         <div className="flex gap-2">
@@ -197,7 +197,7 @@ export default function PurchasesReportPage() {
             disabled={isLoading}
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           <Button size="sm" onClick={handleExport} disabled={isExporting}>
             {isExporting ? (
@@ -205,7 +205,7 @@ export default function PurchasesReportPage() {
             ) : (
               <Download className="h-4 w-4 mr-2" />
             )}
-            Download CSV
+            Unduh Laporan
           </Button>
         </div>
       </div>
@@ -386,7 +386,7 @@ export default function PurchasesReportPage() {
                         <th className="pb-2 font-medium">Cabang</th>
                         <th className="pb-2 font-medium">Status</th>
                         <th className="pb-2 font-medium text-right">Item</th>
-                        <th className="pb-2 font-medium text-right">Qty</th>
+                        <th className="pb-2 font-medium text-right">Jumlah</th>
                         <th className="pb-2 font-medium text-right">Total</th>
                         <th className="pb-2 font-medium">Dibuat Oleh</th>
                         <th className="pb-2 font-medium">Diterima</th>
@@ -487,7 +487,7 @@ export default function PurchasesReportPage() {
                     <thead>
                       <tr className="border-b text-left text-gray-500">
                         <th className="pb-2 font-medium">Produk</th>
-                        <th className="pb-2 font-medium text-right">Qty Dibeli</th>
+                        <th className="pb-2 font-medium text-right">Jumlah Dibeli</th>
                         <th className="pb-2 font-medium text-right">Total Biaya</th>
                         <th className="pb-2 font-medium text-right">Rata-rata Harga Satuan</th>
                         <th className="pb-2 font-medium text-right">Jumlah Pembelian</th>
@@ -530,7 +530,7 @@ export default function PurchasesReportPage() {
                       <tr className="border-b text-left text-gray-500">
                         <th className="pb-2 font-medium">Supplier</th>
                         <th className="pb-2 font-medium text-right">Jumlah Pembelian</th>
-                        <th className="pb-2 font-medium text-right">Qty</th>
+                        <th className="pb-2 font-medium text-right">Jumlah</th>
                         <th className="pb-2 font-medium text-right">Total Nilai</th>
                       </tr>
                     </thead>

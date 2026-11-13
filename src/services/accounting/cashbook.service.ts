@@ -44,7 +44,7 @@ import {
 const FETCH_CAP = 20000;
 
 const METHOD_LABEL: Record<string, string> = {
-  KASIR: "Tunai (KASIR)",
+  KASIR: "Tunai dari Kasir",
   QRIS: "QRIS",
   CASH: "Tunai",
   TRANSFER: "Transfer",

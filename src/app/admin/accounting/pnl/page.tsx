@@ -45,17 +45,17 @@ const PERIODS: Array<{ value: PnlPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const COGS_BADGE: Record<string, { label: string; className: string }> = {
   // D1 — empty scope: COGS cannot be verified.
-  NO_ITEMS: { label: "NO ITEMS", className: "bg-red-100 text-red-800" },
-  COVERED: { label: "COVERED", className: "bg-green-100 text-green-800" },
-  PARTIAL: { label: "PARTIAL", className: "bg-amber-100 text-amber-800" },
-  PENDING_COGS: { label: "PENDING", className: "bg-blue-100 text-blue-800" },
-  UNCOVERED: { label: "UNCOVERED", className: "bg-amber-100 text-amber-800" },
-  LEGACY: { label: "LEGACY", className: "bg-gray-100 text-gray-700" },
+  NO_ITEMS: { label: "Belum Ada Data", className: "bg-red-100 text-red-800" },
+  COVERED: { label: "Data Lengkap", className: "bg-green-100 text-green-800" },
+  PARTIAL: { label: "Sebagian Lengkap", className: "bg-amber-100 text-amber-800" },
+  PENDING_COGS: { label: "Belum Dihitung", className: "bg-blue-100 text-blue-800" },
+  UNCOVERED: { label: "Belum Lengkap", className: "bg-amber-100 text-amber-800" },
+  LEGACY: { label: "Data Lama", className: "bg-gray-100 text-gray-700" },
 };
 
 const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
@@ -157,7 +157,7 @@ export default function PnlPage() {
   const s = report?.summary;
   const cogsBadge = report
     ? (COGS_BADGE[report.cogsState] ?? {
-        label: report.cogsState,
+        label: "Perlu Dicek",
         className: "bg-gray-100 text-gray-700",
       })
     : null;
@@ -166,9 +166,9 @@ export default function PnlPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Laba Rugi</h1>
+          <h1 className="text-3xl font-bold">Laporan Laba Rugi</h1>
           <p className="text-gray-500">
-            Laba rugi periode dari penjualan, HPP, dan pengeluaran operasional
+            Ringkasan uang hasil penjualan setelah dikurangi biaya bahan dan biaya operasional.
           </p>
         </div>
         <Button size="sm" onClick={handleExport} disabled={isExporting}>
@@ -177,21 +177,21 @@ export default function PnlPage() {
           ) : (
             <Download className="h-4 w-4 mr-2" />
           )}
-          Download CSV
+          Unduh Laporan
         </Button>
       </div>
 
       {/* Explicit, non-negotiable warnings */}
       <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 space-y-1">
         <p>
-          • <strong>Net Profit belum final</strong> — hanya pengeluaran yang
+          • <strong>Laba bersih belum final</strong> — hanya pengeluaran yang
           tercatat di menu Pengeluaran yang dihitung; biaya lain (gaji, sewa,
           penyusutan, dll.) belum termasuk.
         </p>
-        <p>• Laba rugi berbeda dari arus kas (lihat Buku Kas).</p>
-        <p>• Pembelian/purchase persediaan bukan Operating Expense (menjadi HPP saat terjual).</p>
+        <p>• Laba rugi berbeda dari uang tunai yang masuk dan keluar (lihat Buku Kas).</p>
+        <p>• Pembelian bahan untuk stok baru dihitung sebagai biaya bahan saat bahan tersebut terpakai untuk produk yang terjual.</p>
         <p>
-          • Bila COGS tidak lengkap, Gross Profit dan Net Profit ditampilkan
+          • HPP (Harga Pokok Penjualan) adalah biaya bahan yang dipakai untuk membuat produk. Jika datanya belum lengkap, laba kotor dan laba bersih ditampilkan
           &quot;Tidak diketahui&quot;, bukan dihitung dengan HPP nol.
         </p>
       </div>
@@ -248,7 +248,7 @@ export default function PnlPage() {
                 <RefreshCw
                   className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`}
                 />
-                Refresh
+                Muat Ulang
               </Button>
             </div>
           </div>
@@ -257,10 +257,10 @@ export default function PnlPage() {
             <ReportBranchFilter />
             {report && cogsBadge && (
               <span className="flex items-center gap-2 text-xs text-gray-500">
-                COGS coverage:
+                Kelengkapan data HPP:
                 <Badge className={cogsBadge.className}>{cogsBadge.label}</Badge>
                 {report.refundState !== "NONE" && (
-                  <Badge variant="secondary">Refund {report.refundState}</Badge>
+                  <Badge variant="secondary">Status pengembalian: {report.refundState === "PARTIAL" ? "Sebagian" : "Penuh"}</Badge>
                 )}
               </span>
             )}
@@ -286,39 +286,39 @@ export default function PnlPage() {
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {[
               {
-                label: "Gross Sales",
+                label: "Total Penjualan Sebelum Pengembalian",
                 value: rupiah(s.grossSales),
-                hint: "Bruto termasuk pajak & service",
+                hint: "Termasuk pajak dan biaya layanan",
                 icon: TrendingUp,
               },
               {
-                label: "Net Sales",
+                label: "Penjualan Setelah Pengembalian",
                 value: rupiah(s.netSales),
-                hint: "Kanonik: setelah refund (basis produk)",
+                hint: "Setelah uang yang dikembalikan dikurangi",
                 icon: TrendingUp,
               },
               {
-                label: "COGS (ditahan)",
+                label: "Biaya Bahan yang Terpakai",
                 value: rupiah(s.cogs),
-                hint: "HPP historis − reversal refund",
+                hint: "Biaya bahan setelah penyesuaian pengembalian uang",
                 icon: Wallet,
               },
               {
-                label: "Gross Profit",
+                label: "Laba Kotor",
                 value: rupiahOrUnknown(s.grossProfit),
-                hint: s.grossProfit === null ? "COGS belum lengkap" : "Net Sales − COGS",
+                hint: s.grossProfit === null ? "Data biaya bahan belum lengkap" : "Penjualan setelah pengembalian dikurangi biaya bahan",
                 icon: TrendingUp,
               },
               {
-                label: "Operating Expenses",
+                label: "Biaya Operasional",
                 value: rupiah(s.operatingExpenses),
                 hint: `${report.opex.count} pengeluaran tercatat`,
                 icon: Wallet,
               },
               {
-                label: "Net Profit",
+                label: "Laba Bersih",
                 value: rupiahOrUnknown(s.netProfit),
-                hint: "Belum final (biaya lain belum tercatat)",
+                hint: "Belum final karena sebagian biaya mungkin belum dicatat",
                 icon: Scale,
               },
             ].map((c) => (
@@ -344,8 +344,8 @@ export default function PnlPage() {
                 <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
                   <Info className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
-                    Belum ada pengeluaran tercatat pada periode ini — Net Profit
-                    saat ini sama dengan Gross Profit dan belum mencerminkan
+                    Belum ada pengeluaran tercatat pada periode ini — laba bersih
+                    saat ini sama dengan laba kotor dan belum mencerminkan
                     biaya operasional sebenarnya.
                   </span>
                 </div>
@@ -354,13 +354,13 @@ export default function PnlPage() {
                 <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
-                    COGS belum dapat diverifikasi: tidak ada item dalam scope
+                    Biaya bahan belum dapat dipastikan: tidak ada barang pesanan
                     untuk periode ini.{" "}
                     {report.disclosure.revenueWithoutItems.orders > 0 &&
-                      `${report.disclosure.revenueWithoutItems.orders} order ber-revenue (${rupiah(
+                      `${report.disclosure.revenueWithoutItems.orders} pesanan dengan penjualan (${rupiah(
                         report.disclosure.revenueWithoutItems.headerValue
                       )}) tidak memiliki baris item.`}{" "}
-                    Gross Profit &amp; Net Profit ditampilkan sebagai tidak
+                    Laba kotor dan laba bersih ditampilkan sebagai tidak
                     diketahui.
                   </span>
                 </div>
@@ -370,11 +370,11 @@ export default function PnlPage() {
                 <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
-                    COGS tidak lengkap: {report.coverage.costedOrderItems}/
-                    {report.coverage.totalOrderItems} item ber-HPP. COGS{" "}
+                    Data biaya bahan belum lengkap: {report.coverage.costedOrderItems}/
+                    {report.coverage.totalOrderItems} barang pesanan sudah memiliki biaya. Biaya bahan{" "}
                     {report.coverage.legacyOrderItems > 0 &&
-                      `(legacy ${report.coverage.legacyOrderItems}) `}
-                    tidak tersedia → Gross Profit & Net Profit tidak diketahui.
+                      `(data lama ${report.coverage.legacyOrderItems}) `}
+                    belum tersedia → nilai laba kotor dan laba bersih belum dapat ditampilkan.
                   </span>
                 </div>
               )}
@@ -382,9 +382,9 @@ export default function PnlPage() {
                 <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
                   <Info className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
-                    {report.unpaidCompleted.orders} order selesai namun belum
-                    dibayar — COGS {rupiah(report.unpaidCompleted.cogs)} sudah
-                    terjadi tanpa revenue (belum masuk perhitungan laba).
+                    {report.unpaidCompleted.orders} pesanan selesai namun belum
+                    dibayar — biaya bahan {rupiah(report.unpaidCompleted.cogs)} sudah
+                    terpakai tanpa ada uang penjualan (belum masuk perhitungan laba).
                   </span>
                 </div>
               )}
@@ -398,22 +398,22 @@ export default function PnlPage() {
                 <CardTitle className="text-sm font-medium">Rincian Laba Rugi</CardTitle>
               </CardHeader>
               <CardContent className="space-y-1 text-sm">
-                <Row label="Gross Sales" value={rupiah(s.grossSales)} />
+                <Row label="Total Penjualan Sebelum Pengembalian" value={rupiah(s.grossSales)} />
                 <Row label="Diskon" value={`− ${rupiah(s.totalDiscount)}`} />
                 <Row label="Pajak" value={rupiah(s.totalTax)} />
-                <Row label="Service Charge" value={rupiah(s.totalServiceCharge)} />
-                <Row label="Refund (APPROVED)" value={`− ${rupiah(s.totalRefund)}`} />
-                <Row label="Net Sales" value={rupiah(s.netSales)} strong />
-                <Row label="COGS Historis" value={rupiah(s.historicalCogs)} />
-                <Row label="COGS Dibalik (Refund)" value={`− ${rupiah(s.cogsReversal)}`} />
-                <Row label="COGS (ditahan)" value={rupiah(s.cogs)} strong />
+                <Row label="Biaya Layanan" value={rupiah(s.totalServiceCharge)} />
+                <Row label="Uang Dikembalikan" value={`− ${rupiah(s.totalRefund)}`} />
+                <Row label="Penjualan Setelah Pengembalian" value={rupiah(s.netSales)} strong />
+                <Row label="Biaya Bahan Saat Pesanan Selesai" value={rupiah(s.historicalCogs)} />
+                <Row label="Penyesuaian Biaya Bahan karena Pengembalian" value={`− ${rupiah(s.cogsReversal)}`} />
+                <Row label="Biaya Bahan yang Terpakai" value={rupiah(s.cogs)} strong />
                 <Row
-                  label="Gross Profit"
+                  label="Laba Kotor"
                   value={rupiahOrUnknown(s.grossProfit)}
                   strong
                 />
-                <Row label="Operating Expenses" value={`− ${rupiah(s.operatingExpenses)}`} />
-                <Row label="Net Profit" value={rupiahOrUnknown(s.netProfit)} strong />
+                <Row label="Biaya Operasional" value={`− ${rupiah(s.operatingExpenses)}`} />
+                <Row label="Laba Bersih" value={rupiahOrUnknown(s.netProfit)} strong />
               </CardContent>
             </Card>
 
@@ -451,8 +451,8 @@ export default function PnlPage() {
           </div>
 
           <p className="text-xs text-gray-400">
-            Basis tanggal — penjualan: {report.disclosure.dateBasis.revenue} ·
-            refund: {report.disclosure.dateBasis.refund} · HPP:{" "}
+            Tanggal yang dipakai — penjualan: {report.disclosure.dateBasis.revenue} ·
+            pengembalian uang: {report.disclosure.dateBasis.refund} · biaya bahan:{" "}
             {report.disclosure.dateBasis.cogs} · pengeluaran:{" "}
             {report.disclosure.dateBasis.expense}.
           </p>

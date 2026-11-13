@@ -342,7 +342,7 @@ export default function ExpensesPage() {
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = objectUrl;
-      a.download = `expense-report-${todayStr()}.csv`;
+      a.download = `laporan-pengeluaran-${todayStr()}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -370,7 +370,7 @@ export default function ExpensesPage() {
         <div>
           <h1 className="text-3xl font-bold">Pengeluaran</h1>
           <p className="text-gray-500">
-            Catat biaya operasional restoran (bukan COGS/pembelian)
+            Catat biaya sehari-hari restoran, seperti listrik, sewa, atau kebutuhan operasional. Pembelian bahan untuk stok dicatat di menu Pembelian.
           </p>
         </div>
         <div className="flex gap-2">
@@ -489,7 +489,7 @@ export default function ExpensesPage() {
                 <RefreshCw
                   className={`h-4 w-4 mr-2 ${loading ? "animate-spin" : ""}`}
                 />
-                Refresh
+                Muat Ulang
               </Button>
               <Button size="sm" onClick={handleExport} disabled={isExporting}>
                 {isExporting ? (
@@ -497,7 +497,7 @@ export default function ExpensesPage() {
                 ) : (
                   <Download className="h-4 w-4 mr-2" />
                 )}
-                Download CSV
+                Unduh Laporan
               </Button>
             </div>
           </div>
@@ -674,7 +674,7 @@ export default function ExpensesPage() {
               {editing ? "Edit Pengeluaran" : "Tambah Pengeluaran"}
             </DialogTitle>
             <DialogDescription>
-              Catat biaya operasional. Pembelian bahan baku tidak dicatat di sini.
+              Catat biaya sehari-hari restoran. Pembelian bahan untuk stok tidak dicatat di sini.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">

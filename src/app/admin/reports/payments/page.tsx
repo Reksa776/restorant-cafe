@@ -37,7 +37,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const METHOD_OPTIONS = [
@@ -53,7 +53,7 @@ const STATUS_OPTIONS = [
   { value: "FAILED", label: "Gagal" },
   { value: "EXPIRED", label: "Kedaluwarsa" },
   { value: "UNPAID", label: "Belum Dibayar" },
-  { value: "REFUNDED", label: "Refund" },
+  { value: "REFUNDED", label: "Uang Dikembalikan" },
   { value: "CANCELLED", label: "Dibatalkan" },
 ];
 
@@ -168,7 +168,7 @@ export default function PaymentsReportPage() {
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           <Button size="sm" onClick={handleExport} disabled={isExporting}>
             {isExporting ? (
@@ -176,7 +176,7 @@ export default function PaymentsReportPage() {
             ) : (
               <Download className="h-4 w-4 mr-2" />
             )}
-            Download CSV
+            Unduh Laporan
           </Button>
         </div>
       </div>
@@ -355,10 +355,10 @@ export default function PaymentsReportPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left text-gray-500">
-                        <th className="pb-2 font-medium">Order</th>
+                        <th className="pb-2 font-medium">Pesanan</th>
                         <th className="pb-2 font-medium">Tanggal</th>
                         <th className="pb-2 font-medium">Kasir</th>
-                        <th className="pb-2 font-medium">Shift</th>
+                        <th className="pb-2 font-medium">Giliran Kasir</th>
                         <th className="pb-2 font-medium">Metode</th>
                         <th className="pb-2 font-medium">Status</th>
                         <th className="pb-2 font-medium text-right">Nominal</th>

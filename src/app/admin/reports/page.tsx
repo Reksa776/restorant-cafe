@@ -54,7 +54,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const PAYMENT_META: Record<
@@ -67,7 +67,7 @@ const PAYMENT_META: Record<
   other: { label: "Lainnya", color: "bg-gray-100 text-gray-700" },
   unpaid: { label: "Belum Dibayar", color: "bg-yellow-100 text-yellow-800" },
   failed: { label: "Gagal / Kedaluwarsa", color: "bg-red-100 text-red-800" },
-  refunded: { label: "Refund", color: "bg-orange-100 text-orange-800" },
+  refunded: { label: "Uang Dikembalikan", color: "bg-orange-100 text-orange-800" },
   cancelled: { label: "Dibatalkan", color: "bg-gray-200 text-gray-600" },
 };
 
@@ -97,7 +97,7 @@ const PAYMENT_STATUS_OPTIONS = [
   { value: "FAILED", label: "Gagal" },
   { value: "EXPIRED", label: "Kedaluwarsa" },
   { value: "UNPAID", label: "Belum Dibayar" },
-  { value: "REFUNDED", label: "Refund" },
+  { value: "REFUNDED", label: "Uang Dikembalikan" },
   { value: "CANCELLED", label: "Dibatalkan" },
 ];
 
@@ -195,16 +195,16 @@ export default function ReportsPage() {
     const s = report.summary;
     return [
       { label: "Total Penjualan", value: rupiah(s.totalSales), icon: TrendingUp },
-      { label: "Total Order", value: `${s.totalOrders} (${s.paidOrders} lunas)`, icon: ShoppingCart },
+      { label: "Total Pesanan", value: `${s.totalOrders} (${s.paidOrders} lunas)`, icon: ShoppingCart },
       { label: "Item Terjual", value: `${s.totalItemsSold}`, icon: Package },
-      { label: "Rata-rata Order", value: rupiah(s.averageOrderValue), icon: Banknote },
+      { label: "Rata-rata Nilai Pesanan", value: rupiah(s.averageOrderValue), icon: Banknote },
       { label: "Total Diskon", value: rupiah(s.totalDiscount), icon: Banknote },
       // PHASE 8B (B8) — "Total Refund" is the RAW approved refund amount, NOT
       // the proportional product-revenue reversal applied inside `netSales`.
-      { label: "Total Refund", value: rupiah(s.totalRefund), icon: Undo2, hint: "Nilai refund bruto yang disetujui" },
+      { label: "Total Uang Dikembalikan", value: rupiah(s.totalRefund), icon: Undo2, hint: "Total pengembalian uang yang disetujui" },
       { label: "Total Pajak", value: rupiah(s.totalTax), icon: Landmark },
       { label: "Service Charge", value: rupiah(s.totalServiceCharge), icon: Landmark },
-      { label: "Net Sales", value: rupiah(s.netSales), icon: TrendingUp, hint: "Penjualan bersih setelah dampak refund" },
+      { label: "Penjualan Setelah Pengembalian", value: rupiah(s.netSales), icon: TrendingUp, hint: "Penjualan setelah uang yang dikembalikan dikurangi" },
     ];
   }, [report]);
 
@@ -227,7 +227,7 @@ export default function ReportsPage() {
             disabled={isLoading}
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           {role === "ADMIN" && (
             <Button size="sm" onClick={handleExport} disabled={isExporting}>
@@ -434,7 +434,7 @@ export default function ReportsPage() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Tipe Order</CardTitle>
+                <CardTitle>Jenis Pesanan</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 {Object.entries(report.orderType).map(([key, v]) => (
@@ -518,10 +518,10 @@ export default function ReportsPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Promo</TableHead>
-                      <TableHead className="text-right">Order</TableHead>
+                      <TableHead className="text-right">Pesanan</TableHead>
                       <TableHead className="text-right">Usage</TableHead>
                       <TableHead className="text-right">Diskon</TableHead>
-                      <TableHead className="text-right">Revenue</TableHead>
+                      <TableHead className="text-right">Penjualan</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>

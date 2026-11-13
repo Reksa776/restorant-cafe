@@ -35,7 +35,7 @@ const PERIODS: Array<{ value: ReportPeriod; label: string }> = [
   { value: "yesterday", label: "Kemarin" },
   { value: "week", label: "Minggu Ini" },
   { value: "month", label: "Bulan Ini" },
-  { value: "custom", label: "Custom" },
+  { value: "custom", label: "Pilih Tanggal" },
 ];
 
 const rupiah = (v: number) => `Rp${Math.round(v).toLocaleString("id-ID")}`;
@@ -132,13 +132,13 @@ export default function ShiftSalesReportPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold">Laporan Penjualan per Shift</h1>
-          <p className="text-gray-500">Rekap kasir per sesi buka/tutup shift</p>
+          <h1 className="text-3xl font-bold">Laporan Penjualan per Giliran Kasir</h1>
+          <p className="text-gray-500">Ringkasan penjualan untuk setiap giliran kasir</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => loadReport()} disabled={isLoading}>
             <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-            Refresh
+            Muat Ulang
           </Button>
           <Button size="sm" onClick={handleExport} disabled={isExporting}>
             {isExporting ? (
@@ -146,7 +146,7 @@ export default function ShiftSalesReportPage() {
             ) : (
               <Download className="h-4 w-4 mr-2" />
             )}
-            Download CSV
+            Unduh Laporan
           </Button>
         </div>
       </div>
@@ -248,7 +248,7 @@ export default function ShiftSalesReportPage() {
               { label: "Total Sales", value: rupiah(report.summary.totalSales), icon: TrendingUp },
               { label: "Cash (Kasir)", value: rupiah(report.summary.cash), icon: Banknote },
               { label: "QRIS", value: rupiah(report.summary.qris), icon: Banknote },
-              { label: "Total Refund", value: rupiah(report.summary.refund), icon: Undo2 },
+              { label: "Total Uang Dikembalikan", value: rupiah(report.summary.refund), icon: Undo2 },
             ].map((c) => (
               <Card key={c.label}>
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -279,14 +279,14 @@ export default function ShiftSalesReportPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left text-gray-500">
-                        <th className="pb-2 font-medium">Shift</th>
+                        <th className="pb-2 font-medium">Giliran Kasir</th>
                         <th className="pb-2 font-medium">Kasir</th>
                         <th className="pb-2 font-medium">Status</th>
                         <th className="pb-2 font-medium">Waktu</th>
                         <th className="pb-2 font-medium text-right">Opening</th>
                         <th className="pb-2 font-medium text-right">Cash</th>
                         <th className="pb-2 font-medium text-right">QRIS</th>
-                        <th className="pb-2 font-medium text-right">Refund</th>
+                        <th className="pb-2 font-medium text-right">Uang Dikembalikan</th>
                         <th className="pb-2 font-medium text-right">Expected</th>
                         <th className="pb-2 font-medium text-right">Actual</th>
                         <th className="pb-2 font-medium text-right">Difference</th>
