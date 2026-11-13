@@ -52,7 +52,7 @@ function ZoneCanvasItem({
   ];
   const color = zone.type === "SMOKING" ? "border-orange-500 bg-orange-100/40" : zone.type === "TERRACE" ? "border-emerald-600 bg-emerald-100/40" : "border-sky-500 bg-sky-100/40";
   return <div ref={root} data-zone-id={zone.id} role="button" tabIndex={0} aria-label={`${zone.name}, pilih dan seret untuk memindahkan`} onPointerDown={(e) => begin(e, null)} onPointerMove={move} onPointerUp={() => { gesture.current = null; }} onPointerCancel={() => { gesture.current = null; }} className={`absolute z-0 touch-none rounded-xl border-2 border-dashed ${color} ${selected ? "border-solid ring-2 ring-brand-primary/50" : "cursor-move"}`} style={{ left: zone.x, top: zone.y, width: zone.width, height: zone.height }}>
-    <span className="pointer-events-none absolute left-2 top-2 rounded bg-white/90 px-2 py-1 text-xs font-semibold text-gray-800">{zone.name}</span>
+    <span className="pointer-events-none absolute inset-0 flex items-center justify-center px-3 text-center"><span className="rounded bg-white/90 px-2 py-1 text-xs font-semibold text-gray-800">{zone.name}</span></span>
     {selected && handles.map(({ corner, className }) => <span key={corner} aria-hidden="true" onPointerDown={(e) => begin(e, corner)} className={`absolute z-30 h-3 w-3 rounded-sm border-2 border-brand-primary bg-white ${className}`} />)}
   </div>;
 }
