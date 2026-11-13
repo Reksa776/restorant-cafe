@@ -31,6 +31,7 @@ import {
 } from "@/lib/api-error-handler";
 import { formatPhoneDisplay, normalizePhone } from "@/lib/phone";
 import { layoutService } from "@/services/layout.service";
+import type { LayoutZoneView } from "@/services/layout.service";
 import { ReservationFloorMap } from "@/components/customer/reservation/reservation-floor-map";
 import {
   floorMapCacheBranch,
@@ -311,6 +312,7 @@ export function ReservationWizardPage({ routeStep }: { routeStep: Step }) {
   const [floorLayoutItems, setFloorLayoutItems] = useState<
     FloorMapLayoutItem[]
   >([]);
+  const [floorLayoutZones, setFloorLayoutZones] = useState<LayoutZoneView[]>([]);
   const [floorLayoutError, setFloorLayoutError] = useState<string | null>(null);
   const [floorLayoutRetryKey, setFloorLayoutRetryKey] = useState(0);
   const [floorViewPreference, setFloorViewPreference] =
@@ -665,6 +667,7 @@ export function ReservationWizardPage({ routeStep }: { routeStep: Step }) {
         if (!alive) return;
         floorLayoutResolvedFor.current = branch;
         setFloorLayoutItems(data.items);
+        setFloorLayoutZones(data.zones ?? []);
         setFloorLayoutStatus("ready");
       })
       .catch((error) => {
@@ -1404,6 +1407,7 @@ export function ReservationWizardPage({ routeStep }: { routeStep: Step }) {
                   <>
                     <ReservationFloorMap
                       tables={floorMapTables}
+                      zones={floorLayoutZones}
                       selectedTableId={effectiveTableId}
                       onSelectTable={selectTable}
                     />

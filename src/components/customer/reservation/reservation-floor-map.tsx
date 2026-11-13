@@ -12,8 +12,10 @@ import type {
   FloorMapStatus,
   FloorMapTable,
 } from "./reservation-floor-map.helpers";
+import type { LayoutZoneView } from "@/services/layout.service";
 
 interface ReservationFloorMapProps {
+  zones: readonly LayoutZoneView[];
   /** Merged layout+availability rows (includes unavailable tables). */
   tables: readonly FloorMapTable[];
   selectedTableId: string | null;
@@ -243,6 +245,7 @@ function FallbackTableCard({
 }
 
 export function ReservationFloorMap({
+  zones,
   tables,
   selectedTableId,
   onSelectTable,
@@ -326,6 +329,16 @@ export function ReservationFloorMap({
                   transformOrigin: "top left",
                 }}
               >
+                {zones.map((zone) => (
+                  <div
+                    key={zone.id}
+                    aria-label={`${zone.name}, ${zone.type === "SMOKING" ? "area merokok" : zone.type === "TERRACE" ? "teras" : "area bebas asap rokok"}`}
+                    className={`absolute flex items-center justify-center rounded-xl border-2 border-dashed ${zone.type === "SMOKING" ? "border-orange-500 bg-orange-100/40" : zone.type === "TERRACE" ? "border-emerald-600 bg-emerald-100/40" : "border-sky-500 bg-sky-100/40"}`}
+                    style={{ left: zone.x, top: zone.y, width: zone.width, height: zone.height }}
+                  >
+                    <span className="rounded bg-white/90 px-2 py-1 text-xs font-semibold text-gray-800">{zone.name}</span>
+                  </div>
+                ))}
                 {placed.map((table) => (
                   <TableNode
                     key={table.tableId}
