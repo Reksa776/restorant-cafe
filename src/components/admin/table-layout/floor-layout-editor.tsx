@@ -107,6 +107,7 @@ export function FloorLayoutEditor({
   const [inactiveItems, setInactiveItems] = useState<DraftTableItem[]>([]);
   const [version, setVersion] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -156,6 +157,7 @@ export function FloorLayoutEditor({
       setSavedZones(result.layout.zones ?? []);
       setVersion(result.layout.version);
       setSelectedId(null);
+      setSelectedZoneId(null);
       setIsLoading(false);
     },
     []
@@ -209,10 +211,31 @@ export function FloorLayoutEditor({
 
   const handleSelect = useCallback((tableId: string | null) => {
     setSelectedId(tableId);
+    if (tableId) setSelectedZoneId(null);
   }, []);
 
   const handleCreateZone = useCallback(() => {
-    setZones((prev) => [...prev, { id: crypto.randomUUID(), name: `Area ${prev.length + 1}`, type: "NON_SMOKING", x: 24 + (prev.length % 3) * 24, y: 24 + (prev.length % 3) * 24, width: 340, height: 220 }]);
+    setZones((prev) => {
+      const zone = { id: crypto.randomUUID(), name: `Area ${prev.length + 1}`, type: "NON_SMOKING" as const, x: 24 + (prev.length % 3) * 24, y: 24 + (prev.length % 3) * 24, width: 340, height: 220 };
+      setSelectedZoneId(zone.id);
+      return [...prev, zone];
+    });
+  }, []);
+
+  const handleMoveZone = useCallback((zoneId: string, dx: number, dy: number) => {
+    setZones((prev) => prev.map((zone) => zone.id === zoneId ? { ...zone, x: Math.max(0, Math.min(900 - zone.width, zone.x + dx)), y: Math.max(0, Math.min(600 - zone.height, zone.y + dy)) } : zone));
+  }, []);
+
+  const handleResizeZone = useCallback((zoneId: string, corner: ResizeCorner, dx: number, dy: number) => {
+    setZones((prev) => prev.map((zone) => {
+      if (zone.id !== zoneId) return zone;
+      let { x, y, width, height } = zone;
+      if (corner.includes("w")) { const next = Math.max(0, Math.min(x + width - 80, x + dx)); width += x - next; x = next; }
+      if (corner.includes("e")) width = Math.max(80, Math.min(900 - x, width + dx));
+      if (corner.includes("n")) { const next = Math.max(0, Math.min(y + height - 60, y + dy)); height += y - next; y = next; }
+      if (corner.includes("s")) height = Math.max(60, Math.min(600 - y, height + dy));
+      return { ...zone, x, y, width, height };
+    }));
   }, []);
 
   const handlePlace = useCallback(
@@ -300,6 +323,7 @@ export function FloorLayoutEditor({
       setSavedZones(layout.zones ?? []);
       setVersion(layout.version);
       setSelectedId(null);
+      setSelectedZoneId(null);
     },
     []
   );
@@ -460,6 +484,10 @@ export function FloorLayoutEditor({
           <div className={readOnly ? "pointer-events-none select-none" : undefined} aria-label={readOnly ? "Tampilan review layout" : undefined}>
           <FloorLayoutCanvas
             zones={zones}
+            selectedZoneId={selectedZoneId}
+            onSelectZone={setSelectedZoneId}
+            onMoveZone={handleMoveZone}
+            onResizeZone={handleResizeZone}
             items={draft}
             inactiveItems={inactiveItems}
             tables={tablesMap}
@@ -471,7 +499,7 @@ export function FloorLayoutEditor({
             onRotate={handleRotate}
             onUnplace={handleUnplace}
           />
-          {!readOnly && <Card className="mt-4"><CardContent className="space-y-3 p-4"><h3 className="font-semibold">Area denah</h3>{zones.map((zone) => <div key={zone.id} className="grid grid-cols-2 gap-2 md:grid-cols-7"><Input aria-label="Nama area" placeholder="Nama area" value={zone.name} onChange={(e) => setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, name: e.target.value } : z))} /><select aria-label="Jenis area" className="rounded-md border px-2 text-sm" value={zone.type} onChange={(e) => setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, type: e.target.value as DraftLayoutZone["type"] } : z))}><option value="SMOKING">Merokok</option><option value="NON_SMOKING">Bebas asap</option><option value="TERRACE">Teras</option></select>{(["x", "y", "width", "height"] as const).map((key) => <Input key={key} aria-label={key} placeholder={key.toUpperCase()} title={key === "x" ? "Posisi horizontal" : key === "y" ? "Posisi vertikal" : key === "width" ? "Lebar area" : "Tinggi area"} type="number" min={0} value={zone[key]} onChange={(e) => setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, [key]: Number(e.target.value) } : z))} />)}<Button variant="outline" onClick={() => setZones((prev) => prev.filter((z) => z.id !== zone.id))}>Hapus</Button></div>)}</CardContent></Card>}
+          {!readOnly && <Card className="mt-4"><CardContent className="space-y-3 p-4"><h3 className="font-semibold">Area denah</h3><p className="text-xs text-gray-500">Klik area untuk memilih. Seret bagian tengah untuk memindahkan dan tarik handle sudut untuk mengubah ukuran.</p>{zones.map((zone) => <div key={zone.id} className={`grid grid-cols-2 gap-2 rounded-md p-2 md:grid-cols-7 ${zone.id === selectedZoneId ? "bg-gray-100" : ""}`}><Input aria-label="Nama area" placeholder="Nama area" value={zone.name} onFocus={() => setSelectedZoneId(zone.id)} onChange={(e) => setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, name: e.target.value } : z))} /><select aria-label="Jenis area" className="rounded-md border px-2 text-sm" value={zone.type} onFocus={() => setSelectedZoneId(zone.id)} onChange={(e) => setZones((prev) => prev.map((z) => z.id === zone.id ? { ...z, type: e.target.value as DraftLayoutZone["type"] } : z))}><option value="SMOKING">Merokok</option><option value="NON_SMOKING">Bebas asap</option><option value="TERRACE">Teras</option></select><Button variant="outline" onClick={() => { setZones((prev) => prev.filter((z) => z.id !== zone.id)); setSelectedZoneId((id) => id === zone.id ? null : id); }}>Hapus</Button></div>)}</CardContent></Card>}
           </div>
           {!readOnly && <FloorLayoutSidebar
             activeItems={draft}

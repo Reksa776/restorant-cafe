@@ -15,8 +15,54 @@ const GRID_LINES = 60;
 const MIN_FIT_SCALE = 0.25;
 const MAX_FIT_SCALE = 1.5;
 
+function ZoneCanvasItem({
+  zone, selected, toVirtual, onSelect, onMove, onResize,
+}: {
+  zone: DraftLayoutZone;
+  selected: boolean;
+  toVirtual: (point: { clientX: number; clientY: number }) => { x: number; y: number };
+  onSelect: (id: string) => void;
+  onMove: (id: string, dx: number, dy: number) => void;
+  onResize: (id: string, corner: ResizeCorner, dx: number, dy: number) => void;
+}) {
+  const root = useRef<HTMLDivElement>(null);
+  const gesture = useRef<{ corner: ResizeCorner | null; point: { x: number; y: number } } | null>(null);
+  const begin = (e: React.PointerEvent, corner: ResizeCorner | null) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onSelect(zone.id);
+    root.current?.setPointerCapture(e.pointerId);
+    gesture.current = { corner, point: toVirtual(e) };
+  };
+  const move = (e: React.PointerEvent) => {
+    const current = gesture.current;
+    if (!current) return;
+    const point = toVirtual(e);
+    const dx = point.x - current.point.x;
+    const dy = point.y - current.point.y;
+    if (current.corner) onResize(zone.id, current.corner, dx, dy);
+    else onMove(zone.id, dx, dy);
+    current.point = point;
+  };
+  const handles: Array<{ corner: ResizeCorner; className: string }> = [
+    { corner: "nw", className: "-left-1.5 -top-1.5 cursor-nw-resize" },
+    { corner: "ne", className: "-right-1.5 -top-1.5 cursor-ne-resize" },
+    { corner: "sw", className: "-bottom-1.5 -left-1.5 cursor-sw-resize" },
+    { corner: "se", className: "-bottom-1.5 -right-1.5 cursor-se-resize" },
+  ];
+  const color = zone.type === "SMOKING" ? "border-orange-500 bg-orange-100/40" : zone.type === "TERRACE" ? "border-emerald-600 bg-emerald-100/40" : "border-sky-500 bg-sky-100/40";
+  return <div ref={root} data-zone-id={zone.id} role="button" tabIndex={0} aria-label={`${zone.name}, pilih dan seret untuk memindahkan`} onPointerDown={(e) => begin(e, null)} onPointerMove={move} onPointerUp={() => { gesture.current = null; }} onPointerCancel={() => { gesture.current = null; }} className={`absolute z-0 touch-none rounded-xl border-2 border-dashed ${color} ${selected ? "border-solid ring-2 ring-brand-primary/50" : "cursor-move"}`} style={{ left: zone.x, top: zone.y, width: zone.width, height: zone.height }}>
+    <span className="pointer-events-none absolute left-2 top-2 rounded bg-white/90 px-2 py-1 text-xs font-semibold text-gray-800">{zone.name}</span>
+    {selected && handles.map(({ corner, className }) => <span key={corner} aria-hidden="true" onPointerDown={(e) => begin(e, corner)} className={`absolute z-30 h-3 w-3 rounded-sm border-2 border-brand-primary bg-white ${className}`} />)}
+  </div>;
+}
+
 interface FloorLayoutCanvasProps {
   zones: DraftLayoutZone[];
+  selectedZoneId: string | null;
+  onSelectZone: (zoneId: string | null) => void;
+  onMoveZone: (zoneId: string, dx: number, dy: number) => void;
+  onResizeZone: (zoneId: string, corner: ResizeCorner, dx: number, dy: number) => void;
   /** Active placed tables (editable draft). */
   items: DraftTableItem[];
   /** Persisted items of INACTIVE tables — rendered muted, never editable. */
@@ -48,6 +94,10 @@ interface FloorLayoutCanvasProps {
  */
 export function FloorLayoutCanvas({
   zones,
+  selectedZoneId,
+  onSelectZone,
+  onMoveZone,
+  onResizeZone,
   items,
   inactiveItems,
   tables,
@@ -96,7 +146,9 @@ export function FloorLayoutCanvas({
     // Clicking empty canvas deselects. (Table pointerdowns stopPropagation, so
     // they never reach here.)
     if ((e.target as HTMLElement).closest("[data-table-id]")) return;
+    if ((e.target as HTMLElement).closest("[data-zone-id]")) return;
     onSelect(null);
+    onSelectZone(null);
     (e.currentTarget as HTMLDivElement).focus();
   };
 
@@ -149,7 +201,7 @@ export function FloorLayoutCanvas({
             backgroundSize: `${GRID_LINES}px ${GRID_LINES}px`,
           }}
         >
-          {zones.map((zone) => <div key={zone.id} aria-label={`${zone.name}: ${zone.type}`} className={`pointer-events-none absolute rounded-xl border-2 border-dashed ${zone.type === "SMOKING" ? "border-orange-500 bg-orange-100/50" : zone.type === "TERRACE" ? "border-emerald-600 bg-emerald-100/40" : "border-sky-500 bg-sky-100/40"}`} style={{ left: zone.x, top: zone.y, width: zone.width, height: zone.height }}><span className="absolute left-2 top-2 rounded bg-white/90 px-2 py-1 text-xs font-semibold text-gray-800">{zone.name}</span></div>)}
+          {zones.map((zone) => <ZoneCanvasItem key={zone.id} zone={zone} selected={zone.id === selectedZoneId} toVirtual={toVirtual} onSelect={(id) => { onSelect(null); onSelectZone(id); }} onMove={onMoveZone} onResize={onResizeZone} />)}
           {items.map((item) => {
             const table = tables.get(item.tableId);
             if (!table) return null;
