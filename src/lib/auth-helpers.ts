@@ -27,6 +27,12 @@ export interface AuthenticatedContext {
   restaurantId: string;
   role: string;
   /**
+   * The authenticated user's email, read from the DB row. Used only for
+   * UI/allow-list decisions (e.g. the SUPERADMIN_EMAILS payout panel) — never
+   * as a substitute for a role check.
+   */
+  email: string | null;
+  /**
    * Branch IDs the user is explicitly assigned to (via UserBranch).
    *
    * Empty array means "all branches of the restaurant" — this is the
@@ -91,6 +97,7 @@ export async function requireRestaurantContext(
     where: { id: session.user.id },
     select: {
       id: true,
+      email: true,
       restaurantId: true,
       role: true,
       isActive: true,
@@ -139,6 +146,7 @@ export async function requireRestaurantContext(
     userId: user.id,
     restaurantId: user.restaurantId,
     role: user.role,
+    email: user.email,
     branchIds,
     branchScoped: branchIds.length > 0,
     branchId,

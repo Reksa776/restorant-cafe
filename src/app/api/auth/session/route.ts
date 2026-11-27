@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireRoles } from "@/lib/auth-helpers";
+import { isSuperAdminEmail } from "@/lib/superadmin";
 import { branchService } from "@/services/branch/branch.service";
 
 /**
@@ -35,6 +36,10 @@ export async function GET() {
         userId: ctx.userId,
         restaurantId: ctx.restaurantId,
         role: ctx.role,
+        email: ctx.email,
+        // Navigation-only flag: the API guard (requireSuperAdmin) re-checks
+        // the SUPERADMIN_EMAILS allow-list on every request.
+        isSuperAdmin: isSuperAdminEmail(ctx.email),
         branches: branchResult.items,
         branchId: null,
         branchScoped: ctx.branchScoped,

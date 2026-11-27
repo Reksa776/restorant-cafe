@@ -18,6 +18,7 @@ import {
   ensureOrderStockReserved,
   releaseOrderStock,
 } from "@/services/stock/order-stock.service";
+import { creditWalletFromOrder } from "@/services/wallet/wallet.service";
 
 export class PaymentService {
   private provider: PaymentProvider;
@@ -1249,6 +1250,22 @@ customer: { select: { id: true, name: true, phone: true } },
           where: { id: payment.orderId, paymentStatus: current.status },
           data: { paymentStatus: "PAID" },
         });
+
+        // Merchant wallet — centralised (master merchant) settlement. Every
+        // PAID online payment belongs to the platform's master merchant
+        // account, so the tenant's wallet is credited in THIS transaction
+        // (money and payment state commit together). The credit is idempotent
+        // on orderId, so a duplicate gateway callback can never double-credit
+        // the merchant.
+        await creditWalletFromOrder(
+          {
+            restaurantId: payment.restaurantId,
+            orderId: payment.orderId,
+            orderNumber: payment.order.orderNumber,
+            grossAmount: payment.amount,
+          },
+          tx
+        );
 
         // Phase 2 — reservation payment ownership (OPTION B: Reservation →
         // Order → Payment via Reservation.orderId). A PAID order may belong to

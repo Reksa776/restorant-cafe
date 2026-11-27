@@ -9,6 +9,9 @@ interface SessionInfo {
   userId: string;
   restaurantId: string;
   role: StaffRole;
+  email?: string | null;
+  /** True when the email is listed in SUPERADMIN_EMAILS (UI gate only). */
+  isSuperAdmin?: boolean;
 }
 
 /**

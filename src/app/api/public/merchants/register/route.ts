@@ -9,6 +9,7 @@ import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { generateUniqueSlug, setTenantCookie } from "@/lib/tenant";
 import { buildTenantPublicUrl } from "@/lib/tenant-url";
 import { STARTER_TRIAL_DAYS, addDays } from "@/lib/subscription";
+import { getOrCreateWallet } from "@/services/wallet/wallet.service";
 
 // ============================================================
 // POST /api/public/merchants/register — SELF-SERVICE SAAS ONBOARDING
@@ -140,6 +141,11 @@ async function createTenant(input: RegisterMerchantInput) {
         currentPeriodEnd: addDays(new Date(), STARTER_TRIAL_DAYS),
       },
     });
+
+    // Merchant wallet — created with the tenant so the owner can immediately
+    // see incoming online revenue and request a payout (0 balance until the
+    // first PAID online order). Existing tenants self-heal on first read.
+    await getOrCreateWallet(restaurant.id, tx);
 
     const user = await tx.user.create({
       data: {

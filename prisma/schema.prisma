@@ -258,6 +258,9 @@ model Restaurant {
   shipments                OrderShipment[]
   subscription             RestaurantSubscription?
   saasInvoices             SaasInvoice[]
+  wallet                   RestaurantWallet?
+  walletLedger             WalletLedger[]
+  withdrawals              WithdrawalRequest[]
 
   @@index([isActive])
   @@map("restaurant")
@@ -1723,6 +1726,122 @@ model ExpenseCategory {
 // date used by every filter/report), categoryId/branchId are validated
 // server-side against the caller's tenant and authorized branches, and
 // createdByUserId is taken from the session — never from client input.
+// ============================================================
+// MERCHANT WALLET & PAYOUT — centralised (master merchant) settlement.
+//
+// Customer online payments settle into the PLATFORM's master merchant
+// account, so each tenant owns a wallet (1-to-1 with Restaurant) holding the
+// money the platform owes that merchant. Int Rupiah (no cents) is used for
+// every amount: the same unit as SaasInvoice/Order.deliveryFee and well inside
+// Int range.
+//
+// Balance invariants (enforced in src/services/wallet/wallet.service.ts):
+//   availableBalance — withdrawable right now
+//   pendingBalance   — held by a WithdrawalRequest awaiting Super Admin action
+//   totalEarned      — lifetime NET order credits (gross − platform MDR)
+//   totalWithdrawn   — lifetime amount transferred out (gross of bank fee)
+//
+// There is deliberately NO DB CHECK constraint (MySQL 8 supports them, but
+// Prisma migrations/tests would then diverge); every mutation is an atomic
+// guarded update, so a negative balance is impossible even under concurrency.
+// ============================================================
+
+enum WalletTxType {
+  ORDER_CREDIT
+  WITHDRAWAL_HOLD
+  WITHDRAWAL_RELEASE
+  PLATFORM_FEE
+  ADJUSTMENT
+}
+
+model RestaurantWallet {
+  id                String   @id @default(cuid())
+  restaurantId      String   @unique
+  /// Saldo siap tarik (Rupiah).
+  availableBalance  Int      @default(0)
+  /// Saldo yang sedang ditahan oleh pengajuan pencairan.
+  pendingBalance    Int      @default(0)
+  /// Akumulasi pendapatan BERSIH yang pernah masuk.
+  totalEarned       Int      @default(0)
+  /// Akumulasi dana yang sudah benar-benar dicairkan.
+  totalWithdrawn    Int      @default(0)
+  bankName          String?
+  bankAccountNumber String?
+  bankAccountHolder String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  restaurant  Restaurant          @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  ledger      WalletLedger[]
+  withdrawals WithdrawalRequest[]
+
+  @@index([restaurantId])
+  @@map("restaurantwallet")
+}
+
+/// Immutable balance-mutation ledger. Rows are only ever INSERTed — never
+/// updated or deleted — so the history of every Rupiah stays auditable.
+/// amount is signed: positive = credit, negative = debit/hold.
+model WalletLedger {
+  id           String       @id @default(cuid())
+  restaurantId String
+  type         WalletTxType
+  amount       Int
+  balanceAfter Int
+  /// orderId for order credits, withdrawalId for holds/releases.
+  referenceId  String?
+  description  String
+  createdAt    DateTime     @default(now())
+
+  restaurant         Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  restaurantWallet   RestaurantWallet? @relation(fields: [restaurantWalletId], references: [id])
+  restaurantWalletId String?
+
+  @@unique([restaurantId, type, referenceId], map: "walletledger_ref_unique")
+  @@index([restaurantId, createdAt])
+  @@map("walletledger")
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  REJECTED
+}
+
+model WithdrawalRequest {
+  id                String           @id @default(cuid())
+  /// WD-YYYYMMDD-XXXXXX
+  withdrawalCode    String           @unique
+  restaurantId      String
+  /// Jumlah pengajuan kotor (didebit dari availableBalance).
+  amount            Int
+  /// Biaya transfer/admin (PAYOUT_FLAT_FEE), ditanggung merchant.
+  feeAmount         Int              @default(0)
+  /// Jumlah bersih yang ditransfer ke rekening merchant.
+  netAmount         Int
+  bankName          String
+  bankAccountNumber String
+  bankAccountHolder String
+  status            WithdrawalStatus @default(PENDING)
+  /// Nomor resi/bukti transfer dari Super Admin.
+  transferReference String?
+  rejectionReason   String?
+  requestedByUserId String?
+  processedByEmail  String?
+  processedAt       DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  restaurant         Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  restaurantWallet   RestaurantWallet? @relation(fields: [restaurantWalletId], references: [id])
+  restaurantWalletId String?
+
+  @@index([restaurantId, status])
+  @@index([status, createdAt])
+  @@map("withdrawalrequest")
+}
+
 model Expense {
   id              String        @id @default(cuid())
   restaurantId    String

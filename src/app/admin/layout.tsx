@@ -37,6 +37,8 @@ import {
   LayoutGrid,
   BookOpen,
   RotateCcw,
+  ShieldCheck,
+  Landmark,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
@@ -143,6 +145,8 @@ const navigation: NavEntry[] = [
       { name: "Buku Kas", href: "/admin/accounting/cashbook", icon: BookOpen, roles: ["ADMIN"] },
       // ACCOUNTING PHASE D — profit & loss read-model (ADMIN only).
       { name: "Laba Rugi", href: "/admin/accounting/pnl", icon: TrendingUp, roles: ["ADMIN"] },
+      // MERCHANT WALLET — online revenue balance and bank payouts (ADMIN only).
+      { name: "Saldo & Pencairan", href: "/admin/payouts", icon: Landmark, roles: ["ADMIN"] },
     ],
   },
   {
@@ -210,7 +214,7 @@ function AdminBrandLogo({ url, alt }: { url?: string | null; alt: string }) {
  */
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const { role } = useUserRole();
+  const { role, session } = useUserRole();
   const { branding } = useBranding();
 
   // Role-aware navigation (UI layer). Server-side API guards are the real
@@ -334,6 +338,31 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             </div>
           );
         })}
+
+        {/* SaaS-owner shortcut — rendered ONLY when the signed-in email is
+            listed in SUPERADMIN_EMAILS (flag from /api/auth/session). The
+            cross-tenant API re-checks the allow-list server-side. */}
+        {session?.isSuperAdmin && (
+          <div className="mt-3 border-t border-dashed border-gray-200 pt-3">
+            <Link
+              href="/superadmin/payouts"
+              onClick={onNavigate}
+              className={cn(
+                "flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100",
+                pathname.startsWith("/superadmin/payouts") &&
+                  "ring-2 ring-slate-300"
+              )}
+            >
+              <ShieldCheck className="h-5 w-5 shrink-0 text-slate-600" />
+              <span className="min-w-0 flex-1 truncate">
+                Pencairan SaaS
+                <span className="block text-[10px] font-normal text-slate-500">
+                  Super Admin
+                </span>
+              </span>
+            </Link>
+          </div>
+        )}
       </nav>
 
       {/* Role chip (bottom, above logout) */}
