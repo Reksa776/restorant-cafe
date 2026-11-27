@@ -10,6 +10,18 @@ RUN npm ci
 FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Build memory guard — this host may be a 1–2 GB VPS. Capping the Node heap
+# makes `next build` fail fast with an OOM instead of pushing the whole VPS
+# into swap-thrash/hang. Telemetry is off so no background reporter runs.
+# For a 1 GB host use `--max-old-space-size=1024` (see `npm run build:low-mem`).
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS="--max-old-space-size=1280"
+
+# Emit `.next/standalone` (copied by the runner stage below). Only the Docker
+# build sets this: plain `npm run build` + `next start` (PM2) must NOT use
+# standalone output, because `next start` refuses to run on it.
+ENV BUILD_STANDALONE=1
+
 # `next build` imports route modules while collecting route metadata. It needs
 # a syntactically valid URL for Prisma client construction, but never uses this
 # build-only value at runtime; Compose injects the real DATABASE_URL then.

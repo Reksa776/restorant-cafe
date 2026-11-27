@@ -21,6 +21,10 @@ services:
     image: mysql:8.0
     container_name: restaurant-mysql
     restart: unless-stopped
+    # Memory ceilings sized for a 1–2 GB VPS (= 1024–2048 MB total below).
+    # `docker stats` shows real usage; if the box has 1 GB, drop app to 512m
+    # and mysql to 384m. The host swap file (see README) is the safety net.
+    mem_limit: 512m
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD wajib diisi di .env (jangan pakai default lemah)}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-restaurant_app}
@@ -59,6 +63,7 @@ services:
     image: redis:7-alpine
     container_name: restaurant-redis
     restart: unless-stopped
+    mem_limit: 96m
     ports:
       - "6379:6379"
     volumes:
@@ -80,6 +85,10 @@ services:
         NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
     container_name: restaurant-app
     restart: unless-stopped
+    # Next.js runtime ceiling (not the build — that one is capped by
+    # NODE_OPTIONS in the Dockerfile builder stage). ~640 MB is enough for
+    # SSE + Baileys + Prisma on a single-tenant-owner app container.
+    mem_limit: 640m
     ports:
       - "3000:3000"
     environment:
@@ -126,6 +135,7 @@ services:
     image: nginx:alpine
     container_name: restaurant-nginx
     restart: unless-stopped
+    mem_limit: 64m
     ports:
       - "80:80"
       - "443:443"

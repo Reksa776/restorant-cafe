@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "typecheck": "tsc --noEmit",
+    "build": "NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS='--max-old-space-size=1280' next build",
+    "build:low-mem": "NEXT_TELEMETRY_DISABLED=1 NODE_OPTIONS='--max-old-space-size=1024' next build",
     "start": "next start -p 3000",
     "lint": "eslint",
     "postinstall": "prisma generate",

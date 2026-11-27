@@ -191,7 +191,12 @@ pub/sub (see `src/lib/realtime/bus.ts`).
 
 ## Production (VPS)
 
-- Build: `npm run build`; run with `next start -p 3001` under PM2.
+- Build: `npm run build` (heap capped at 1280 MB, telemetry off); run with
+  `next start -p 3001` under PM2.
+- Small VPS (1 GB): use `npm run build:low-mem` (1024 MB heap) and always keep
+  a 2 GB swap file active — see *Anti-hang: swap file* below.
+- Type checking is a separate gate: `npm run typecheck` (`tsc --noEmit`).
+  `next build` no longer blocks on it, so run it in CI/before deploy.
 - Reverse proxy (Apache/Cloudflare) terminates TLS and proxies to `:3001`;
   `X-Forwarded-*` headers must be set (SSE needs `X-Accel-Buffering: no`).
 - Apply migrations before starting the new build — use **`npm run db:deploy`**
@@ -199,6 +204,21 @@ pub/sub (see `src/lib/realtime/bus.ts`).
   raw `npx prisma migrate deploy` on this host: that path is not guarded.
 - Port 3000 is reserved for other applications on the same host — do not
   bind the restaurant app there.
+
+### Anti-hang: swap file (wajib untuk VPS 1–2 GB)
+
+```bash
+sudo fallocate -l 2G /swapfile   # or: sudo dd if=/dev/zero of=/swapfile bs=1M count=2048
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+free -h                          # verify Swap: 2.0Gi
+sudo sysctl vm.swappiness=10     # prefer RAM, use swap only as a safety net
+```
+
+Low-memory Node defaults already live in the repo: `NODE_OPTIONS='--max-old-space-size=1280'`
+for `npm run build` and `1024` for `npm run build:low-mem`.
 
 ## Tests
 
