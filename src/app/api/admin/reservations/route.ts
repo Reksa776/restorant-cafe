@@ -16,11 +16,14 @@ import {
   authorizedBranches,
   assertBranchInScope,
 } from "@/lib/auth-helpers";
+import { requirePlanFeature } from "@/services/billing/plan-guard.service";
 
 async function GET(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
     const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
+    // Phase 4 — table reservations are a PRO+ feature.
+    await requirePlanFeature(ctx.restaurantId, "reservations");
 
     const params = Object.fromEntries(request.nextUrl.searchParams);
 
@@ -66,6 +69,8 @@ async function POST(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
     const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
+    // Phase 4 — table reservations are a PRO+ feature.
+    await requirePlanFeature(ctx.restaurantId, "reservations");
 
     const body = await request.json();
 

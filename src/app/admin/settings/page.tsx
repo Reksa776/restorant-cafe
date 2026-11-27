@@ -5,7 +5,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { MessageSquare, Upload, Trash2, Palette, Store, Loader2, MapPin } from "lucide-react";
+import {
+  MessageSquare,
+  Upload,
+  Trash2,
+  Palette,
+  Store,
+  Loader2,
+  MapPin,
+  Truck,
+} from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 import api from "@/lib/axios";
@@ -34,6 +43,27 @@ const ADMIN_BRANDING_STORAGE_KEY = "admin.branding.latest";
 // tenant-confined). Colors are validated client-side AND server-side as
 // strict #RRGGBB hex — arbitrary CSS never reaches the DOM.
 // ============================================================
+
+interface RestaurantProfile {
+  slug: string;
+  name: string;
+  address: string | null;
+  phone: string | null;
+  email: string | null;
+  storeUrl?: string;
+  /** `https://<slug>.<ROOT_DOMAIN>` (or the /r/<slug> fallback). */
+  subdomainUrl?: string;
+  /** False when the app is reached via raw IP / no root domain. */
+  subdomainEnabled?: boolean;
+}
+
+interface DeliverySettings {
+  deliveryEnabled: boolean;
+  deliveryProvider: "MOCK" | "BITESHIP" | "GRABEXPRESS";
+  deliveryApiKeyMasked: string | null;
+  hasApiKey: boolean;
+  deliveryAutoDispatchOn: "PAID" | "READY";
+}
 
 interface BrandingData {
   siteName: string;
@@ -250,6 +280,15 @@ export default function SettingsPage() {
   });
   const [restaurantName, setRestaurantName] = useState<string | null>(null);
 
+  // Phase 2 — tenant profile (name / contact + immutable public slug).
+  const [profile, setProfile] = useState<RestaurantProfile | null>(null);
+  const [isProfileSaving, setIsProfileSaving] = useState(false);
+
+  // Phase 3 — instant delivery (BYOK). The API key is write-only: GET returns
+  // a masked value ("****1234"), never the secret.
+  const [delivery, setDelivery] = useState<DeliverySettings | null>(null);
+  const [isDeliverySaving, setIsDeliverySaving] = useState(false);
+
   // Same BrandingProvider context the admin shell renders from — a save
   // re-themes the whole admin UI instantly (no reload / no rebuild).
   const { applyBranding } = useBranding();
@@ -279,18 +318,118 @@ export default function SettingsPage() {
     }
   }, []);
 
+  const loadProfile = useCallback(async () => {
+    try {
+      const res = await api.get("/admin/restaurant");
+      setProfile(res.data?.data ?? null);
+    } catch (error) {
+      console.error("Failed to load restaurant profile:", error);
+      toast.error("Gagal memuat profil restoran");
+    }
+  }, []);
+
+  const loadDelivery = useCallback(async () => {
+    try {
+      const res = await api.get("/admin/settings/delivery");
+      const data = res.data?.data;
+      // Phase 4 — third-party couriers are temporarily hidden. A legacy
+      // Biteship/GrabExpress configuration is displayed (and re-saved) as the
+      // internal MOCK mode; the provider code itself is untouched.
+      if (data && data.deliveryProvider !== "MOCK") {
+        data.deliveryProvider = "MOCK";
+      }
+      setDelivery(data ?? null);
+    } catch (error) {
+      console.error("Failed to load delivery settings:", error);
+      toast.error("Gagal memuat pengaturan pengiriman");
+    }
+  }, []);
+
+  const saveDelivery = async () => {
+    if (!delivery) return;
+    setIsDeliverySaving(true);
+    try {
+      // Provider is fixed to the internal MOCK mode while third-party
+      // couriers are hidden (the server enforces the same rule).
+      const res = await api.patch("/admin/settings/delivery", {
+        deliveryEnabled: delivery.deliveryEnabled,
+        deliveryProvider: "MOCK",
+        deliveryAutoDispatchOn: delivery.deliveryAutoDispatchOn,
+      });
+      setDelivery(res.data?.data ?? delivery);
+      toast.success("Pengaturan pengiriman berhasil disimpan");
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response
+          ?.data?.message || "Gagal menyimpan pengaturan pengiriman";
+      toast.error(message);
+    } finally {
+      setIsDeliverySaving(false);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!profile) return;
+    if (profile.name.trim().length < 2) {
+      toast.error("Nama restoran minimal 2 karakter");
+      return;
+    }
+    setIsProfileSaving(true);
+    try {
+      const res = await api.patch("/admin/restaurant", {
+        name: profile.name.trim(),
+        address: profile.address?.trim() || null,
+        phone: profile.phone?.trim() || null,
+        email: profile.email?.trim() || null,
+      });
+      setProfile(res.data?.data ?? profile);
+      toast.success("Profil restoran berhasil disimpan");
+    } catch (error) {
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response
+          ?.data?.message || "Gagal menyimpan profil restoran";
+      toast.error(message);
+    } finally {
+      setIsProfileSaving(false);
+    }
+  };
+
+  /** Canonical storefront address (subdomain when available). */
+  const storeUrl = profile
+    ? profile.subdomainEnabled && profile.subdomainUrl
+      ? profile.subdomainUrl
+      : `/r/${profile.slug}`
+    : "";
+
+  const copyStoreUrl = async () => {
+    if (!storeUrl) return;
+    try {
+      const absolute = storeUrl.startsWith("http")
+        ? storeUrl
+        : `${window.location.origin}${storeUrl}`;
+      await navigator.clipboard.writeText(absolute);
+      toast.success("Link toko disalin");
+    } catch {
+      toast.error("Gagal menyalin link");
+    }
+  };
+
   // Initial branding load — the setState calls all happen inside the async
   // loadBranding continuation (never synchronously in the effect body).
   useEffect(() => {
     let cancelled = false;
     (async () => {
       await Promise.resolve();
-      if (!cancelled) void loadBranding();
+      if (!cancelled) {
+        void loadBranding();
+        void loadProfile();
+        void loadDelivery();
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [loadBranding]);
+  }, [loadBranding, loadProfile, loadDelivery]);
 
   const handleSave = async () => {
     // Client-side validation before touching the network.
@@ -433,6 +572,251 @@ export default function SettingsPage() {
         <h1 className="text-3xl font-bold">Pengaturan</h1>
         <p className="text-gray-500">Pengaturan sistem dan tampilan website</p>
       </div>
+
+      {/* ===== Profil Restoran (multi-tenant) ===== */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Store className="h-5 w-5" /> Profil Restoran
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="profile-name">Nama Restoran</Label>
+              <Input
+                id="profile-name"
+                value={profile?.name ?? ""}
+                onChange={(e) =>
+                  setProfile((prev) =>
+                    prev ? { ...prev, name: e.target.value } : prev
+                  )
+                }
+                maxLength={120}
+                disabled={!profile}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="profile-slug">URL Subdomain Toko</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="profile-slug"
+                  value={
+                    profile?.subdomainEnabled && profile.subdomainUrl
+                      ? profile.subdomainUrl
+                      : profile
+                        ? `/r/${profile.slug}`
+                        : ""
+                  }
+                  readOnly
+                  className="font-mono"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={copyStoreUrl}
+                  disabled={!profile}
+                >
+                  Salin Link
+                </Button>
+                {profile?.subdomainEnabled && profile.subdomainUrl && (
+                  <a
+                    href={profile.subdomainUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex h-9 shrink-0 items-center justify-center rounded-md border border-gray-300 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Buka Toko
+                  </a>
+                )}
+              </div>
+              <p className="text-[11px] text-gray-500">
+                {profile?.subdomainEnabled && profile.subdomainUrl ? (
+                  <>
+                    Link alternatif: <code>/r/{profile.slug}</code>.{" "}
+                  </>
+                ) : null}
+                Slug bersifat permanen agar QR meja dan link yang sudah
+                dibagikan tetap berlaku.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 md:col-span-2">
+              <Label htmlFor="profile-address">Alamat</Label>
+              <Input
+                id="profile-address"
+                value={profile?.address ?? ""}
+                onChange={(e) =>
+                  setProfile((prev) =>
+                    prev ? { ...prev, address: e.target.value } : prev
+                  )
+                }
+                maxLength={300}
+                placeholder="Jl. Contoh No. 123, Jakarta"
+                disabled={!profile}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="profile-phone">No. Telepon</Label>
+              <Input
+                id="profile-phone"
+                type="tel"
+                value={profile?.phone ?? ""}
+                onChange={(e) =>
+                  setProfile((prev) =>
+                    prev ? { ...prev, phone: e.target.value } : prev
+                  )
+                }
+                maxLength={30}
+                placeholder="081234567890"
+                disabled={!profile}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="profile-email">Email</Label>
+              <Input
+                id="profile-email"
+                type="email"
+                value={profile?.email ?? ""}
+                onChange={(e) =>
+                  setProfile((prev) =>
+                    prev ? { ...prev, email: e.target.value } : prev
+                  )
+                }
+                maxLength={190}
+                placeholder="info@resto.id"
+                disabled={!profile}
+              />
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              onClick={handleSaveProfile}
+              disabled={!profile || isProfileSaving}
+            >
+              {isProfileSaving ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" /> Menyimpan...
+                </>
+              ) : (
+                "Simpan Profil"
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ===== Pengiriman Instan (GrabExpress / Biteship) ===== */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Truck className="h-5 w-5" /> Pengiriman Instan (GrabExpress / Biteship)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {!delivery ? (
+            <div className="flex items-center justify-center py-6 text-gray-400">
+              <Loader2 className="h-5 w-5 animate-spin" />
+            </div>
+          ) : (
+            <>
+              {/* Enable toggle */}
+              <label className="flex items-start justify-between gap-4 rounded-lg border border-gray-200 p-3 cursor-pointer">
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">
+                    Aktifkan Pengiriman Instan
+                  </span>
+                  <span className="block text-xs text-gray-500 mt-0.5">
+                    Pelanggan dapat memesan tipe Delivery dan memanggil kurir
+                    otomatis. Setiap cabang wajib memiliki koordinat.
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={delivery.deliveryEnabled}
+                  onChange={(e) =>
+                    setDelivery({ ...delivery, deliveryEnabled: e.target.checked })
+                  }
+                  className="mt-1 h-4 w-4 shrink-0 accent-emerald-600"
+                />
+              </label>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="delivery-provider">Provider Kurir</Label>
+                  <select
+                    id="delivery-provider"
+                    value={delivery.deliveryProvider}
+                    onChange={(e) =>
+                      setDelivery({
+                        ...delivery,
+                        deliveryProvider: e.target.value as DeliverySettings["deliveryProvider"],
+                      })
+                    }
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                  >
+                    <option value="MOCK">Internal — simulasi ongkir &amp; driver</option>
+                  </select>
+                  <p className="text-[11px] text-gray-500">
+                    Mode internal menghitung ongkir dan membuat driver
+                    simulasi, sehingga alur bisa dites tanpa biaya.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="delivery-dispatch">Pemicu Panggil Driver</Label>
+                  <select
+                    id="delivery-dispatch"
+                    value={delivery.deliveryAutoDispatchOn}
+                    onChange={(e) =>
+                      setDelivery({
+                        ...delivery,
+                        deliveryAutoDispatchOn: e.target.value as DeliverySettings["deliveryAutoDispatchOn"],
+                      })
+                    }
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-brand-primary"
+                  >
+                    <option value="PAID">Saat Lunas (webhook pembayaran)</option>
+                    <option value="READY">Saat Makanan Siap (status READY)</option>
+                  </select>
+                  <p className="text-[11px] text-gray-500">
+                    Jika pemanggilan gagal, status pengiriman menjadi Gagal dan
+                    kasir dapat menekan “Panggil Ulang Driver”.
+                  </p>
+                </div>
+              </div>
+
+              <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                Integrasi kurir pihak ketiga (Biteship/GrabExpress) akan segera
+                hadir. Saat ini pengiriman berjalan dengan mode internal
+                (simulasi ongkir &amp; driver), tanpa API key.
+              </p>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+                <p className="text-[11px] text-gray-500">
+                  Webhook status kurir: <code>/api/webhooks/delivery</code>
+                  {" "}— set <code>DELIVERY_WEBHOOK_SECRET</code> di server untuk
+                  provider nyata.
+                </p>
+                <Button
+                  type="button"
+                  onClick={() => saveDelivery()}
+                  disabled={isDeliverySaving}
+                >
+                  {isDeliverySaving && (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  )}
+                  Simpan Pengiriman
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* ===== Website Branding ===== */}

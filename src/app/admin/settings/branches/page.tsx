@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { branchService, type Branch } from "@/services/branch.service";
+import { billingService } from "@/services/billing.service";
 import { refreshBranchContext } from "@/hooks/use-branch-context";
 import { toast } from "sonner";
 import { Loader2, Plus, Store, Pencil, Power } from "lucide-react";
@@ -23,9 +25,125 @@ type BranchForm = {
   name: string;
   address: string;
   phone: string;
+  latitude: string;
+  longitude: string;
+  postalCode: string;
+  contactPhone: string;
 };
 
-const EMPTY_FORM: BranchForm = { code: "", name: "", address: "", phone: "" };
+const EMPTY_FORM: BranchForm = {
+  code: "",
+  name: "",
+  address: "",
+  phone: "",
+  latitude: "",
+  longitude: "",
+  postalCode: "",
+  contactPhone: "",
+};
+
+/** Empty input → null (not configured); invalid input → NaN (blocked). */
+function parseCoordinate(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return Number(trimmed.replace(",", "."));
+}
+
+function coordinateError(
+  value: string,
+  label: string,
+  min: number,
+  max: number
+): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = parseCoordinate(value);
+  if (parsed === null || !Number.isFinite(parsed)) {
+    return `${label} harus berupa angka`;
+  }
+  if (parsed < min || parsed > max) {
+    return `${label} harus antara ${min} dan ${max}`;
+  }
+  return null;
+}
+
+/**
+ * Courier pickup origin (instant delivery). A branch can only be a delivery
+ * origin when BOTH coordinates are set; the API validates the same rules.
+ */
+function LocationFields({
+  idPrefix,
+  form,
+  onChange,
+}: {
+  idPrefix: string;
+  form: BranchForm;
+  onChange: (patch: Partial<BranchForm>) => void;
+}) {
+  const latError = coordinateError(form.latitude, "Latitude", -90, 90);
+  const lngError = coordinateError(form.longitude, "Longitude", -180, 180);
+
+  return (
+    <div className="space-y-3 rounded-lg border border-gray-200 bg-gray-50/60 p-3">
+      <div>
+        <p className="text-sm font-medium">Lokasi Penjemputan Kurir</p>
+        <p className="text-[11px] text-muted-foreground">
+          Titik asal kurir instan (GrabExpress/Biteship). Isi latitude &amp;
+          longitude agar cabang ini bisa melayani delivery.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-latitude`}>Latitude</Label>
+          <Input
+            id={`${idPrefix}-latitude`}
+            inputMode="decimal"
+            value={form.latitude}
+            onChange={(e) => onChange({ latitude: e.target.value })}
+            placeholder="-6.175392"
+            aria-invalid={!!latError}
+          />
+          {latError && <p className="text-xs text-red-500">{latError}</p>}
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-longitude`}>Longitude</Label>
+          <Input
+            id={`${idPrefix}-longitude`}
+            inputMode="decimal"
+            value={form.longitude}
+            onChange={(e) => onChange({ longitude: e.target.value })}
+            placeholder="106.827152"
+            aria-invalid={!!lngError}
+          />
+          {lngError && <p className="text-xs text-red-500">{lngError}</p>}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-postal`}>Kode Pos</Label>
+          <Input
+            id={`${idPrefix}-postal`}
+            value={form.postalCode}
+            onChange={(e) => onChange({ postalCode: e.target.value })}
+            placeholder="10110"
+            maxLength={20}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={`${idPrefix}-contact`}>Telepon Kurir</Label>
+          <Input
+            id={`${idPrefix}-contact`}
+            type="tel"
+            value={form.contactPhone}
+            onChange={(e) => onChange({ contactPhone: e.target.value })}
+            placeholder="081234567890"
+            maxLength={30}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function BranchSettingsPage() {
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -34,12 +152,28 @@ export default function BranchSettingsPage() {
   const [editing, setEditing] = useState<Branch | null>(null);
   const [form, setForm] = useState<BranchForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  // Phase 4 — branch quota from the tenant's subscription (display only; the
+  // API enforces it with 403 PLAN_LIMIT_REACHED).
+  const [quota, setQuota] = useState<{ used: number; limit: number } | null>(
+    null
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const items = await branchService.getBranches();
+      // Billing is a progressive enhancement here: a failure must never block
+      // the branch list itself.
+      const [items, overview] = await Promise.all([
+        branchService.getBranches(),
+        billingService.getOverview().catch(() => null),
+      ]);
       setBranches(items);
+      if (overview) {
+        setQuota({
+          used: overview.usage.branches.used,
+          limit: overview.usage.branches.limit,
+        });
+      }
     } catch (err) {
       console.error("Failed to load branches:", err);
       toast.error("Gagal memuat cabang");
@@ -48,8 +182,13 @@ export default function BranchSettingsPage() {
     }
   }, []);
 
+  // Deferred so `load`'s setState calls never run synchronously inside the
+  // effect body (cascading-render guard).
   useEffect(() => {
-    load();
+    const timer = setTimeout(() => {
+      void load();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   const openCreate = () => {
@@ -64,6 +203,10 @@ export default function BranchSettingsPage() {
       name: branch.name,
       address: branch.address ?? "",
       phone: branch.phone ?? "",
+      latitude: branch.latitude != null ? String(branch.latitude) : "",
+      longitude: branch.longitude != null ? String(branch.longitude) : "",
+      postalCode: branch.postalCode ?? "",
+      contactPhone: branch.contactPhone ?? "",
     });
   };
 
@@ -75,6 +218,10 @@ export default function BranchSettingsPage() {
         name: form.name.trim(),
         address: form.address.trim() || undefined,
         phone: form.phone.trim() || undefined,
+        latitude: parseCoordinate(form.latitude),
+        longitude: parseCoordinate(form.longitude),
+        postalCode: form.postalCode.trim() || null,
+        contactPhone: form.contactPhone.trim() || null,
       });
       toast.success("Cabang berhasil dibuat");
       setCreateOpen(false);
@@ -99,6 +246,10 @@ export default function BranchSettingsPage() {
         name: form.name.trim() || undefined,
         address: form.address.trim() || undefined,
         phone: form.phone.trim() || undefined,
+        latitude: parseCoordinate(form.latitude),
+        longitude: parseCoordinate(form.longitude),
+        postalCode: form.postalCode.trim() || null,
+        contactPhone: form.contactPhone.trim() || null,
       });
       toast.success("Cabang berhasil diperbarui");
       setEditing(null);
@@ -133,6 +284,9 @@ export default function BranchSettingsPage() {
   const codeInvalid =
     form.code.trim() === "" || form.code.trim().length > 20 || /\s/.test(form.code);
   const nameInvalid = form.name.trim().length < 2;
+  const locationInvalid =
+    coordinateError(form.latitude, "Latitude", -90, 90) !== null ||
+    coordinateError(form.longitude, "Longitude", -180, 180) !== null;
 
   return (
     <div className="space-y-6">
@@ -148,6 +302,52 @@ export default function BranchSettingsPage() {
           Tambah Cabang
         </Button>
       </div>
+
+      {quota && (
+        <div
+          className={`rounded-xl border p-4 ${
+            quota.used >= quota.limit
+              ? "border-amber-300 bg-amber-50"
+              : "border-gray-200 bg-card"
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-medium">
+              Kuota cabang:{" "}
+              <span className="font-bold">
+                terpakai {quota.used} dari {quota.limit} cabang
+              </span>
+            </p>
+            {quota.used >= quota.limit && (
+              <Link
+                href="/admin/billing"
+                className="text-sm font-semibold text-brand-primary hover:underline"
+              >
+                Beli Add-On Cabang Baru →
+              </Link>
+            )}
+          </div>
+          <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-gray-200">
+            <div
+              className={`h-2 rounded-full ${
+                quota.used >= quota.limit ? "bg-amber-500" : "bg-brand-primary"
+              }`}
+              style={{
+                width: `${Math.min(
+                  100,
+                  Math.round((quota.used / Math.max(1, quota.limit)) * 100)
+                )}%`,
+              }}
+            />
+          </div>
+          {quota.used >= quota.limit && (
+            <p className="mt-2 text-xs text-amber-800">
+              Kuota cabang penuh. Tambah kuota lewat menu Paket &amp; Billing
+              sebelum membuat cabang baru.
+            </p>
+          )}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
@@ -184,6 +384,17 @@ export default function BranchSettingsPage() {
                     {b.address || "Tanpa alamat"}
                     {b.phone ? ` · ${b.phone}` : ""}
                   </p>
+                  <p
+                    className={`text-xs truncate ${
+                      b.latitude != null && b.longitude != null
+                        ? "text-emerald-600"
+                        : "text-amber-600"
+                    }`}
+                  >
+                    {b.latitude != null && b.longitude != null
+                      ? `📍 ${b.latitude}, ${b.longitude} — siap delivery`
+                      : "📍 Koordinat belum diisi — delivery nonaktif"}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
@@ -218,6 +429,15 @@ export default function BranchSettingsPage() {
               Buat outlet baru. Kode dipakai pada URL QR meja.
             </DialogDescription>
           </DialogHeader>
+          {quota && quota.used >= quota.limit && (
+            <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              Kuota cabang penuh ({quota.used}/{quota.limit}).{" "}
+              <Link href="/admin/billing" className="font-semibold underline">
+                Beli Add-On Cabang Baru
+              </Link>{" "}
+              untuk menambah kuota sebelum membuat cabang baru.
+            </div>
+          )}
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="branch-code">Kode</Label>
@@ -273,6 +493,11 @@ export default function BranchSettingsPage() {
                 placeholder="021-123456"
               />
             </div>
+            <LocationFields
+              idPrefix="branch"
+              form={form}
+              onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+            />
           </div>
           <DialogFooter>
             <Button
@@ -282,10 +507,10 @@ export default function BranchSettingsPage() {
             >
               Batal
             </Button>
-            <Button
-              onClick={handleCreate}
-              disabled={saving || codeInvalid || nameInvalid}
-            >
+                          <Button
+                onClick={handleCreate}
+                disabled={saving || codeInvalid || nameInvalid || locationInvalid}
+              >
               {saving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
               Buat
             </Button>
@@ -359,6 +584,11 @@ export default function BranchSettingsPage() {
                 }
               />
             </div>
+            <LocationFields
+              idPrefix="edit-branch"
+              form={form}
+              onChange={(patch) => setForm((prev) => ({ ...prev, ...patch }))}
+            />
           </div>
           <DialogFooter>
             <Button
@@ -370,7 +600,7 @@ export default function BranchSettingsPage() {
             </Button>
             <Button
               onClick={handleUpdate}
-              disabled={saving || codeInvalid || nameInvalid}
+              disabled={saving || codeInvalid || nameInvalid || locationInvalid}
             >
               {saving && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
               Simpan

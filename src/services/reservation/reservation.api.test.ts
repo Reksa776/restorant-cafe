@@ -287,8 +287,12 @@ async function seedFixtures(): Promise<void> {
   const hashedC = await bcrypt.hash(PW_C, 10);
 
   const [ra, rb] = await Promise.all([
-    prisma.restaurant.create({ data: { name: `QA R3 API A ${tag}` } }),
-    prisma.restaurant.create({ data: { name: `QA R3 API B ${tag}` } }),
+    prisma.restaurant.create({
+      data: { slug: `qa-r3-api-a-${tag}`.toLowerCase(), name: `QA R3 API A ${tag}` },
+    }),
+    prisma.restaurant.create({
+      data: { slug: `qa-r3-api-b-${tag}`.toLowerCase(), name: `QA R3 API B ${tag}` },
+    }),
   ]);
   restA = ra.id;
   restB = rb.id;

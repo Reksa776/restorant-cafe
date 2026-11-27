@@ -4,6 +4,7 @@ import { successResponse, errorResponse } from "@/lib/api-response";
 import { NotFoundError, AppError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { layoutService } from "@/services/layout/layout.service";
+import { resolveRequestTenant } from "@/lib/tenant";
 
 type Params = { params: Promise<{ branchCode: string }> };
 
@@ -36,14 +37,39 @@ export async function GET(request: NextRequest, { params }: Params) {
     const { branchCode } = await params;
     const code = branchCode.trim().toUpperCase();
 
-    const branch = await prisma.branch.findFirst({
-      where: {
-        code,
-        isActive: true,
-        restaurant: { isActive: true },
-      },
-      select: { id: true, code: true, restaurantId: true },
-    });
+    // Phase 2 — scope the code to the resolved tenant (slug/restaurantId/
+    // cookie). Without a tenant hint the code must be unambiguous across all
+    // merchants; otherwise we refuse instead of returning a random tenant's
+    // floor map.
+    const tenant = await resolveRequestTenant(request);
+
+    let branch: { id: string; code: string; restaurantId: string } | null;
+    if (tenant) {
+      branch = await prisma.branch.findFirst({
+        where: {
+          code,
+          restaurantId: tenant.id,
+          isActive: true,
+          restaurant: { isActive: true },
+        },
+        select: { id: true, code: true, restaurantId: true },
+      });
+    } else {
+      const candidates = await prisma.branch.findMany({
+        where: { code, isActive: true, restaurant: { isActive: true } },
+        select: { id: true, code: true, restaurantId: true },
+        take: 2,
+      });
+      if (candidates.length > 1) {
+        throw new AppError(
+          "Kode cabang dipakai lebih dari satu restoran. Sertakan slug restoran.",
+          400,
+          "TENANT_AMBIGUOUS"
+        );
+      }
+      branch = candidates[0] ?? null;
+    }
+
     if (!branch) {
       throw new NotFoundError("Cabang tidak ditemukan");
     }

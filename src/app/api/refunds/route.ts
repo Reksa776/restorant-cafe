@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
-    const ctx = await requireRoles(["CASHIER"], branchId);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
     const body = await request.json();
 
     if (!body.orderId || typeof body.orderId !== "string") {

@@ -15,8 +15,7 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio",
-    "worker:dev": "tsx src/workers/whatsapp.worker.ts"
+    "db:studio": "prisma studio"
   },
   "engines": {
     "node": ">=20.9.0"

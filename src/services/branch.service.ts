@@ -12,6 +12,11 @@ export interface Branch {
   name: string;
   address?: string | null;
   phone?: string | null;
+  /** Courier pickup origin (instant delivery). Null = not configured. */
+  latitude?: number | null;
+  longitude?: number | null;
+  postalCode?: string | null;
+  contactPhone?: string | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -45,6 +50,10 @@ export const branchService = {
     name: string;
     address?: string;
     phone?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    postalCode?: string | null;
+    contactPhone?: string | null;
   }): Promise<Branch> {
     const response = await api.post("/admin/branches", data);
     return response.data.data;
@@ -57,6 +66,10 @@ export const branchService = {
       address?: string;
       phone?: string;
       code?: string;
+      latitude?: number | null;
+      longitude?: number | null;
+      postalCode?: string | null;
+      contactPhone?: string | null;
     }
   ): Promise<Branch> {
     const response = await api.put(`/admin/branches/${id}`, data);

@@ -466,7 +466,7 @@ function FullBill({
         )}
         {Number(order.tax) > 0 && (
           <div className="flex justify-between gap-2">
-            <span className="text-gray-500">Pajak (10%)</span>
+            <span className="text-gray-500">Pajak</span>
             <span className="tabular-nums">{rupiah(order.tax)}</span>
           </div>
         )}

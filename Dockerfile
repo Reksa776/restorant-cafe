@@ -18,6 +18,14 @@ ENV DATABASE_URL="mysql://prisma_build:prisma_build@127.0.0.1:9/prisma_build"
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
+# `NEXT_PUBLIC_*` values are inlined into the client bundle at BUILD time, so
+# they must be passed as build args (see docker-compose `build.args`) — runtime
+# `environment:` alone does not reach the browser bundle.
+ARG NEXT_PUBLIC_ROOT_DOMAIN=""
+ARG NEXT_PUBLIC_APP_URL="http://localhost:3000"
+ENV NEXT_PUBLIC_ROOT_DOMAIN=$NEXT_PUBLIC_ROOT_DOMAIN
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
+
 # Generate Prisma Client
 RUN npx prisma generate
 

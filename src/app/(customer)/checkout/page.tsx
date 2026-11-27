@@ -13,6 +13,9 @@ import {
   QrCode,
   Banknote,
   BadgePercent,
+  MapPin,
+  Navigation,
+  Truck,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
@@ -31,6 +34,30 @@ interface Table {
   capacity: number;
   /** Branch this table belongs to (null = legacy/unassigned table). */
   branch?: { id: string; name: string; code: string } | null;
+}
+
+/** One instant-courier quote returned by POST /public/delivery/rates. */
+interface DeliveryRateOption {
+  provider: string;
+  courierCode: string;
+  courierName: string;
+  serviceType: string;
+  serviceName: string;
+  fee: number;
+  currency: string;
+  etaMinMinutes: number | null;
+  etaMaxMinutes: number | null;
+}
+
+const deliveryRateKey = (rate: DeliveryRateOption) =>
+  `${rate.courierCode}:${rate.serviceType}`;
+
+function formatEta(rate: DeliveryRateOption): string {
+  if (rate.etaMinMinutes === null && rate.etaMaxMinutes === null) return "";
+  if (rate.etaMinMinutes !== null && rate.etaMaxMinutes !== null) {
+    return `± ${rate.etaMinMinutes}–${rate.etaMaxMinutes} menit`;
+  }
+  return `± ${rate.etaMinMinutes ?? rate.etaMaxMinutes} menit`;
 }
 
 // ============================================================
@@ -92,9 +119,6 @@ export default function CheckoutPage() {
   const {
     items,
     subtotal,
-    tax,
-    serviceCharge,
-    grandTotal,
     restaurantId,
     clearCart,
     tableContext,
@@ -137,8 +161,23 @@ export default function CheckoutPage() {
   // DINE-IN checkout offers exactly two methods: QRIS (default) and Kasir.
   const [paymentMethod, setPaymentMethod] = useState<"QRIS" | "KASIR">("QRIS");
 
-  // DINE_IN orders (QR table flow or manually selected) are tax-free and
-  // service-free — subtotal = total. TAKEAWAY / DELIVERY keep tax + service.
+  // DELIVERY — customer address + coordinates + the SERVER courier quote.
+  // The client never sends a fee: the server re-quotes and charges its own.
+  const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [deliveryLatitude, setDeliveryLatitude] = useState("");
+  const [deliveryLongitude, setDeliveryLongitude] = useState("");
+  const [deliveryNotes, setDeliveryNotes] = useState("");
+  const [deliveryRates, setDeliveryRates] = useState<DeliveryRateOption[]>([]);
+  const [selectedDeliveryKey, setSelectedDeliveryKey] = useState<string | null>(
+    null
+  );
+  const [isLoadingRates, setIsLoadingRates] = useState(false);
+  const [ratesError, setRatesError] = useState<string | null>(null);
+  const [isLocating, setIsLocating] = useState(false);
+
+  // DINE_IN drives the payment-method choice (QRIS/KASIR); it no longer
+  // changes the bill — H5 removed the hardcoded tax/service charge, so every
+  // order type totals exactly `subtotal − discount` on the server.
   const isDineIn = (tableContext ? "DINE_IN" : orderType) === "DINE_IN";
 
   // Prefill customer data from the logged-in account (F3).
@@ -232,17 +271,31 @@ export default function CheckoutPage() {
   };
 
   // Final total including a CONFIRMED voucher discount (display only —
-  // server recomputes at order creation). Tax/service for TAKEAWAY /
-  // DELIVERY are applied on the discounted subtotal, same as the server.
+  // server recomputes at order creation). No tax/service charge is added:
+  // the server bills exactly the discounted subtotal.
   const confirmedDiscount = confirmedVoucher?.discount ?? 0;
   const discountedBase = Math.max(subtotal - confirmedDiscount, 0);
-  const discountedTax = isDineIn ? 0 : Math.round(discountedBase * 0.1);
-  const discountedService = isDineIn ? 0 : Math.round(discountedBase * 0.05);
-  const displayTotal = confirmedVoucher
-    ? discountedBase + discountedTax + discountedService
-    : isDineIn
-      ? subtotal
-      : grandTotal;
+  const selectedDeliveryRate =
+    (selectedDeliveryKey
+      ? deliveryRates.find((r) => deliveryRateKey(r) === selectedDeliveryKey)
+      : null) ??
+    deliveryRates[0] ??
+    null;
+  // A quote is only meaningful with a branch, a real address and both
+  // coordinates. This is also the render gate for the rate list — no state is
+  // cleared from inside an effect.
+  const deliveryLocationValid =
+    Boolean(checkoutBranchCode) &&
+    deliveryAddress.trim().length >= 5 &&
+    deliveryLatitude.trim() !== "" &&
+    deliveryLongitude.trim() !== "" &&
+    Number.isFinite(Number(deliveryLatitude)) &&
+    Number.isFinite(Number(deliveryLongitude));
+  const deliveryFee =
+    orderType === "DELIVERY" && deliveryLocationValid
+      ? (selectedDeliveryRate?.fee ?? 0)
+      : 0;
+  const displayTotal = discountedBase + deliveryFee;
 
   // Load tables if restaurant is available and not coming from QR. The list
   // is scoped to the branch the customer selected (checkoutBranchCode): the
@@ -275,6 +328,86 @@ export default function CheckoutPage() {
       loadTablesRef.current();
     }
   }, [restaurantId, orderType, tableContext, checkoutBranchCode]);
+
+  // Live courier quote (debounced). Purely advisory: the order endpoint
+  // re-quotes and charges its own server-side fee, so a stale/forged quote can
+  // never change what the customer pays.
+  useEffect(() => {
+    if (orderType !== "DELIVERY") return;
+
+    const address = deliveryAddress.trim();
+    const lat = Number(deliveryLatitude);
+    const lng = Number(deliveryLongitude);
+    const hasCoords =
+      deliveryLatitude.trim() !== "" &&
+      deliveryLongitude.trim() !== "" &&
+      Number.isFinite(lat) &&
+      Number.isFinite(lng);
+
+    if (!checkoutBranchCode || address.length < 5 || !hasCoords) {
+      // Nothing to quote yet. The UI hides stale rates via
+      // `deliveryLocationValid`; no synchronous setState in this effect.
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setIsLoadingRates(true);
+      setRatesError(null);
+      try {
+        const res = await api.post("/public/delivery/rates", {
+          branchCode: checkoutBranchCode,
+          address,
+          latitude: lat,
+          longitude: lng,
+        });
+        if (cancelled) return;
+        const rates = (res.data?.data?.rates || []) as DeliveryRateOption[];
+        setDeliveryRates(rates);
+        if (rates.length === 0) {
+          setRatesError("Tidak ada layanan kurir untuk alamat ini.");
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setDeliveryRates([]);
+        setRatesError(getErrorMessage(error) || "Gagal menghitung ongkir");
+      } finally {
+        if (!cancelled) setIsLoadingRates(false);
+      }
+    }, 600);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [
+    orderType,
+    deliveryAddress,
+    deliveryLatitude,
+    deliveryLongitude,
+    checkoutBranchCode,
+  ]);
+
+  const handleUseMyLocation = () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      toast.error("Browser tidak mendukung geolokasi. Isi koordinat manual.");
+      return;
+    }
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setDeliveryLatitude(position.coords.latitude.toFixed(6));
+        setDeliveryLongitude(position.coords.longitude.toFixed(6));
+        setIsLocating(false);
+        toast.success("Lokasi berhasil diambil");
+      },
+      () => {
+        setIsLocating(false);
+        toast.error("Gagal mengambil lokasi. Isi latitude/longitude manual.");
+      },
+      { enableHighAccuracy: true, timeout: 10_000 }
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -319,6 +452,34 @@ export default function CheckoutPage() {
     if (orderType === "DINE_IN" && !effectiveTableId) {
       toast.error("Pilih meja untuk dine-in");
       return;
+    }
+
+    if (orderType === "DELIVERY") {
+      if (deliveryAddress.trim().length < 5) {
+        toast.error("Alamat pengiriman wajib diisi");
+        return;
+      }
+      const lat = Number(deliveryLatitude);
+      const lng = Number(deliveryLongitude);
+      if (
+        deliveryLatitude.trim() === "" ||
+        deliveryLongitude.trim() === "" ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lng)
+      ) {
+        toast.error(
+          "Koordinat alamat wajib diisi. Gunakan tombol \"Gunakan Lokasi Saya\"."
+        );
+        return;
+      }
+      if (!checkoutBranchCode) {
+        toast.error("Pilih cabang pengiriman terlebih dahulu");
+        return;
+      }
+      if (!selectedDeliveryRate) {
+        toast.error("Ongkir belum tersedia — tunggu perhitungan selesai");
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -385,6 +546,18 @@ export default function CheckoutPage() {
         notes: notes.trim() || undefined,
         items: orderItems,
         paymentMethod: isDineIn ? paymentMethod : undefined,
+        // DELIVERY: the server re-quotes from these coordinates and ignores
+        // any client fee. Courier/service only hint which quoted rate to use.
+        ...(orderType === "DELIVERY" && selectedDeliveryRate
+          ? {
+              deliveryAddress: deliveryAddress.trim(),
+              deliveryLatitude: Number(deliveryLatitude),
+              deliveryLongitude: Number(deliveryLongitude),
+              deliveryNotes: deliveryNotes.trim() || undefined,
+              deliveryCourier: selectedDeliveryRate.courierCode,
+              deliveryService: selectedDeliveryRate.serviceType,
+            }
+          : {}),
         ...(confirmedVoucher
           ? { promoCode: confirmedVoucher.code }
           : {}),
@@ -627,6 +800,157 @@ export default function CheckoutPage() {
                 </select>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Delivery — address + coordinates + live courier quote */}
+        {!tableContext && orderType === "DELIVERY" && (
+          <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-4">
+            <div className="flex items-center gap-2">
+              <Truck className="h-4 w-4 text-gray-500" />
+              <h2 className="font-medium">Alamat Pengiriman</h2>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Alamat Lengkap <span className="text-red-500">*</span>
+              </label>
+              <textarea
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                placeholder="Nama gedung/jalan, nomor rumah, RT/RW, kelurahan, kecamatan, patokan"
+                rows={3}
+                maxLength={500}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent resize-none"
+                required
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-sm font-medium text-gray-700">
+                  Koordinat <span className="text-red-500">*</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleUseMyLocation}
+                  disabled={isLocating}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-brand-primary px-3 py-1.5 text-xs font-medium text-brand-primary hover:bg-brand-secondary disabled:opacity-50"
+                >
+                  {isLocating ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Navigation className="h-3.5 w-3.5" />
+                  )}
+                  Gunakan Lokasi Saya
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">
+                    Latitude
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={deliveryLatitude}
+                    onChange={(e) => setDeliveryLatitude(e.target.value)}
+                    placeholder="-6.175392"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-gray-500 mb-1">
+                    Longitude
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={deliveryLongitude}
+                    onChange={(e) => setDeliveryLongitude(e.target.value)}
+                    placeholder="106.827152"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-gray-400">
+                Koordinat dipakai untuk menghitung ongkir dan titik antar
+                kurir. Aktifkan izin lokasi pada browser Anda.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Catatan untuk Kurir{" "}
+                <span className="text-gray-400 font-normal">(opsional)</span>
+              </label>
+              <input
+                type="text"
+                value={deliveryNotes}
+                onChange={(e) => setDeliveryNotes(e.target.value)}
+                maxLength={300}
+                placeholder="Contoh: titip ke satpam, jangan ketuk pintu"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent"
+              />
+            </div>
+
+            {/* Live courier quote */}
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-gray-500" />
+                <p className="text-sm font-medium">Ongkir Instan</p>
+              </div>
+
+              {isLoadingRates ? (
+                <div className="flex items-center gap-2 py-2 text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Menghitung ongkir...
+                </div>
+              ) : ratesError ? (
+                <p className="text-xs text-red-600">{ratesError}</p>
+              ) : !deliveryLocationValid || deliveryRates.length === 0 ? (
+                <p className="text-xs text-gray-400">
+                  Isi alamat dan koordinat untuk melihat tarif kurir.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {deliveryRates.map((rate) => {
+                    const key = deliveryRateKey(rate);
+                    const selected =
+                      selectedDeliveryRate !== null &&
+                      deliveryRateKey(selectedDeliveryRate) === key;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setSelectedDeliveryKey(key)}
+                        aria-pressed={selected}
+                        className={`w-full flex items-center justify-between gap-3 rounded-lg border-2 px-3 py-2.5 text-left transition-colors ${
+                          selected
+                            ? "border-brand-primary bg-brand-secondary"
+                            : "border-gray-200 hover:border-brand-accent"
+                        }`}
+                      >
+                        <span className="min-w-0">
+                          <span className="block text-sm font-medium">
+                            {rate.courierName} — {rate.serviceName}
+                          </span>
+                          <span className="block text-[11px] text-gray-500">
+                            {formatEta(rate) || "Estimasi instan"}
+                          </span>
+                        </span>
+                        <span className="text-sm font-semibold tabular-nums whitespace-nowrap">
+                          Rp{rate.fee.toLocaleString("id-ID")}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  <p className="text-[11px] text-gray-400">
+                    Ongkir final dihitung ulang oleh server saat pesanan dibuat.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -894,17 +1218,18 @@ export default function CheckoutPage() {
                 </span>
               </div>
             )}
-            {!isDineIn && (
-              <>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Pajak (10%)</span>
-                  <span>Rp{(confirmedVoucher ? discountedTax : tax).toLocaleString("id-ID")}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Service Charge (5%)</span>
-                  <span>Rp{(confirmedVoucher ? discountedService : serviceCharge).toLocaleString("id-ID")}</span>
-                </div>
-              </>
+            {orderType === "DELIVERY" && deliveryFee > 0 && (
+              <div className="flex justify-between">
+                <span className="text-gray-500">
+                  Ongkir
+                  {selectedDeliveryRate
+                    ? ` (${selectedDeliveryRate.courierName})`
+                    : ""}
+                </span>
+                <span className="tabular-nums">
+                  Rp{deliveryFee.toLocaleString("id-ID")}
+                </span>
+              </div>
             )}
           <div className="border-t pt-2 flex justify-between font-bold">
             <span>Total</span>

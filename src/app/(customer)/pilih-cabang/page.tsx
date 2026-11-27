@@ -87,7 +87,9 @@ export default function PilihCabangPage() {
       const message =
         normalized.status === 404
           ? "Cabang tidak ditemukan atau sudah tidak tersedia."
-          : normalized.status === 429
+          : normalized.status === 400
+            ? "Konteks restoran belum diketahui. Pindai QR meja atau buka link restoran (mis. /r/demo-resto) untuk mulai memesan."
+            : normalized.status === 429
             ? "Terlalu banyak permintaan. Coba lagi beberapa saat."
             : normalized.status !== null && normalized.status >= 500
               ? "Gagal memuat daftar cabang."

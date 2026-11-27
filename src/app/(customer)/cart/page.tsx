@@ -28,9 +28,6 @@ export default function CartPage() {
     removeItem,
     clearCart,
     subtotal,
-    tax,
-    serviceCharge,
-    grandTotal,
     totalItems,
     tableContext,
     customerBranch,
@@ -235,22 +232,11 @@ export default function CartPage() {
               <span className="text-gray-500">Subtotal ({totalItems} item)</span>
               <span>Rp{subtotal.toLocaleString("id-ID")}</span>
             </div>
-            {/* QR dine-in orders are tax/service-free — subtotal = total */}
-            {!tableContext && (
-              <>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Pajak (10%)</span>
-                  <span>Rp{tax.toLocaleString("id-ID")}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Service Charge (5%)</span>
-                  <span>Rp{serviceCharge.toLocaleString("id-ID")}</span>
-                </div>
-              </>
-            )}
+            {/* H5 — no tax/service charge line: the server bills exactly the
+                subtotal (minus discount at checkout). */}
             <div className="border-t pt-2 flex justify-between font-bold">
               <span>Total</span>
-              <span>Rp{(tableContext ? subtotal : grandTotal).toLocaleString("id-ID")}</span>
+              <span>Rp{subtotal.toLocaleString("id-ID")}</span>
             </div>
           </div>
       </div>

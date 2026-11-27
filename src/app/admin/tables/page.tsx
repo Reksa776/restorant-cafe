@@ -27,6 +27,8 @@ import {
   type RestaurantTable,
 } from "@/services/table.service";
 import { cn } from "@/lib/utils";
+import api from "@/lib/axios";
+import { buildTenantTableUrl } from "@/lib/tenant-url";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
@@ -108,6 +110,24 @@ export default function TablesPage() {
       ? window.location.origin.replace(/\/+$/, "")
       : ""
   );
+  // Merchant slug — table links/QR use the tenant's own subdomain
+  // (`<slug>.<ROOT_DOMAIN>`) instead of the admin host.
+  const [storeSlug, setStoreSlug] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .get("/admin/restaurant")
+      .then((res) => {
+        if (alive) setStoreSlug(res.data?.data?.slug ?? null);
+      })
+      .catch(() => {
+        // Non-blocking: links fall back to the current origin.
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const loadTables = useCallback(async (silent = false, isCurrent?: () => boolean) => {
     if (!silent) setIsLoading(true);
@@ -213,12 +233,18 @@ export default function TablesPage() {
 
   /**
    * Customer (public) ordering URL for a table, e.g. /t/{branchCode}/{number}
-   * for branch tables or /t/{number} for legacy ones.
+   * for branch tables or /t/{number} for legacy ones — resolved against the
+   * merchant's subdomain when one is available, exactly like the QR payload.
    */
-  const customerUrl = (table: RestaurantTable): string =>
-    origin
-      ? tableService.getCustomerUrl(origin, table.number, table.branch?.code)
-      : "";
+  const customerUrl = (table: RestaurantTable): string => {
+    if (!origin) return "";
+    const tablePath = table.branch?.code
+      ? `/t/${encodeURIComponent(table.branch.code)}/${table.number}`
+      : `/t/${table.number}`;
+    return storeSlug
+      ? buildTenantTableUrl(storeSlug, tablePath)
+      : `${origin}${tablePath}`;
+  };
 
   /**
    * Generate (or refresh) the QR for a table and show the detail modal.

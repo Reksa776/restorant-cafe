@@ -111,6 +111,33 @@ export class WhatsAppError extends AppError {
   }
 }
 
+export class DeliveryError extends AppError {
+  constructor(message: string = "Delivery failed") {
+    super(message, 422, "DELIVERY_ERROR");
+    this.name = "DeliveryError";
+  }
+}
+
+/**
+ * Phase 4 — SaaS plan/quota guard failure.
+ *
+ * 403 (not 402/429): the tenant is authenticated but its SUBSCRIPTION does not
+ * allow the action. `code` lets the UI distinguish "quota habis" from "fitur
+ * belum ada di paket ini" and show the right upgrade/add-on CTA:
+ *   PLAN_LIMIT_REACHED — branch / staff / monthly transaction quota reached
+ *   UPGRADE_REQUIRED   — feature not included in the current plan, or the
+ *                        subscription is expired/cancelled
+ */
+export class PlanLimitError extends AppError {
+  constructor(
+    code: "PLAN_LIMIT_REACHED" | "UPGRADE_REQUIRED" = "PLAN_LIMIT_REACHED",
+    message: string = "Batas paket langganan tercapai"
+  ) {
+    super(message, 403, code);
+    this.name = "PlanLimitError";
+  }
+}
+
 export class RateLimitError extends AppError {
   constructor(message: string = "Too many requests, please try again later") {
     super(message, 429, "RATE_LIMITED");

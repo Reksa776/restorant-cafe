@@ -352,6 +352,10 @@ class WhatsAppSessionManager {
       for (const dbSession of activeSessions) {
         const restaurantId = dbSession.restaurantId;
 
+        // A provider already lives in this process (connected, pairing, or
+        // restoring) — never start a second socket for the same tenant.
+        if (this.sessions.has(restaurantId)) continue;
+
         // Check if credential files exist
         const provider = await this.getOrCreateProvider(restaurantId);
         if (provider.hasExistingSession()) {

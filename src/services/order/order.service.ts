@@ -7,6 +7,7 @@ import {
   ConflictError,
   UnauthorizedError,
   ForbiddenError,
+  IngredientCompletionError,
 } from "@/lib/errors";
 import type {
   CreateOrderInput,
@@ -23,10 +24,20 @@ import {
   StockRefType,
 } from "@/services/stock/stock.service";
 import {
+  ensureOrderStockReserved,
+  orderHasStockDeduction,
+  releaseOrderStock,
+} from "@/services/stock/order-stock.service";
+import { consumeOrderIngredients } from "@/services/ingredient/ingredient-stock.service";
+import {
   resolveReportRange,
   revenueWhere,
 } from "@/services/report/report.service";
 import { createOrderItemCostSnapshots } from "@/services/costing/historical-snapshot";
+import {
+  assertCanCreateOrder,
+  isPlanFeatureActive,
+} from "@/services/billing/plan-guard.service";
 import { auditService } from "@/services/audit/audit.service";
 import { MONEY_EPSILON } from "@/lib/money";
 import {
@@ -193,6 +204,15 @@ interface CustomerOrderContext {
   normalizedPhone: string | null;
   orderItems: PricedOrderItemInput[];
   subtotal: number;
+  /** Server-quoted delivery (0 / null for non-delivery orders). */
+  deliveryFee: number;
+  deliveryAddress: string | null;
+  deliveryLatitude: number | null;
+  deliveryLongitude: number | null;
+  deliveryNotes: string | null;
+  deliveryProvider: string | null;
+  deliveryCourier: string | null;
+  deliveryServiceType: string | null;
 }
 
 export class OrderService {
@@ -208,6 +228,10 @@ export class OrderService {
     restaurantId: string,
     branchId?: string | null
   ) {
+    // Phase 4 — subscription validity + monthly transaction quota (STARTER:
+    // 150/month). Throws 403 PLAN_LIMIT_REACHED / UPGRADE_REQUIRED.
+    await assertCanCreateOrder(restaurantId);
+
     // Validate customer exists and belongs to this restaurant
     const customer = await prisma.customer.findFirst({
       where: {
@@ -479,12 +503,14 @@ export class OrderService {
       };
     });
 
-    // DINE_IN orders are tax-free and service-free: total = subtotal.
-    // TAKEAWAY / DELIVERY keep the 10% tax + 5% service charge.
-    const isDineIn = input.orderType === "DINE_IN";
-    const tax = isDineIn ? 0 : Math.round(subtotal * 0.1);
-    const serviceCharge = isDineIn ? 0 : Math.round(subtotal * 0.05);
-    const grandTotal = subtotal + tax + serviceCharge;
+    // H5 — no hardcoded tax / service charge. Both default to 0 so the bill is
+    // exactly subtotal (no discount on the admin/POS path), matching what the
+    // gateway and the cashier are asked to collect. A configurable per-outlet
+    // tax setting is a separate feature; until then the server never invents
+    // a percentage.
+    const tax = 0;
+    const serviceCharge = 0;
+    const grandTotal = subtotal;
 
     // Create order in transaction, retrying on a unique-constraint race
     // (restaurantId + orderNumber) with a fresh order number each attempt.
@@ -537,6 +563,21 @@ export class OrderService {
             data: { status: "OCCUPIED" },
           });
         }
+
+        // K5 — hold the product stock atomically with the order. The row lock
+        // lives inside applyStockMovement, so a concurrent order for the same
+        // last unit fails HERE (and rolls the order back) instead of later at
+        // READY, after the customer has already paid.
+        await ensureOrderStockReserved(tx, {
+          restaurantId,
+          orderId: newOrder.id,
+          branchId: branchId || null,
+          items: orderItems.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+          reason: "Stok dipegang saat pesanan dibuat",
+        });
 
         return newOrder;
       });
@@ -604,6 +645,9 @@ export class OrderService {
     sessionCustomerId?: string,
     branchId?: string | null
   ): Promise<CreatedCustomerOrder> {
+    // Phase 4 — same subscription/quota gate as the admin POS path.
+    await assertCanCreateOrder(restaurantId);
+
     const context = await this.buildCustomerOrderContext(
       prisma,
       input,
@@ -794,6 +838,16 @@ export class OrderService {
         notes: notes ?? "Reservasi dibatalkan",
       },
     });
+
+    // K5 — the linked order is gone: release the product stock hold it still
+    // carries, inside this same transaction. Idempotent and a no-op for an
+    // order that never deducted stock (e.g. legacy branch-less data).
+    await releaseOrderStock(tx, {
+      restaurantId,
+      orderId,
+      reason: notes ?? "Reservasi dibatalkan",
+    });
+
     return true;
   }
 
@@ -860,6 +914,75 @@ export class OrderService {
         }
         resolvedBranchId = table.branchId;
       }
+    }
+
+    // ============================================================
+    // DELIVERY — server-authoritative quote.
+    //
+    // A delivery order needs a branch (pickup origin), a full address and
+    // coordinates. The courier fee is quoted HERE from the tenant's own
+    // provider and persisted on the order; the client's deliveryFee (if it
+    // sends one) is never read. Network I/O happens before the order
+    // transaction, so a slow courier API cannot hold DB locks.
+    // ============================================================
+    let deliveryFee = 0;
+    let deliveryAddress: string | null = null;
+    let deliveryLatitude: number | null = null;
+    let deliveryLongitude: number | null = null;
+    let deliveryNotes: string | null = null;
+    let deliveryProvider: string | null = null;
+    let deliveryCourier: string | null = null;
+    let deliveryServiceType: string | null = null;
+
+    if (input.orderType === "DELIVERY") {
+      if (input.tableId) {
+        throw new ValidationError(
+          "Pesanan delivery tidak menggunakan meja — hapus pilihan meja."
+        );
+      }
+      if (!resolvedBranchId) {
+        throw new ValidationError(
+          "Pilih cabang pengiriman terlebih dahulu."
+        );
+      }
+      const address = input.deliveryAddress?.trim();
+      if (!address || address.length < 5) {
+        throw new ValidationError("Alamat pengiriman wajib diisi.");
+      }
+      if (
+        input.deliveryLatitude === undefined ||
+        input.deliveryLongitude === undefined
+      ) {
+        throw new ValidationError(
+          "Koordinat alamat pengiriman wajib diisi (gunakan \"Gunakan Lokasi Saya\")."
+        );
+      }
+
+      const { deliveryService } = await import(
+        "@/services/delivery/delivery.service"
+      );
+      const quote = await deliveryService.quoteForOrder({
+        restaurantId,
+        branchId: resolvedBranchId,
+        destination: {
+          address,
+          latitude: input.deliveryLatitude,
+          longitude: input.deliveryLongitude,
+          contactName: input.customerName || null,
+          contactPhone: normalizedPhone,
+        },
+        courierCode: input.deliveryCourier ?? null,
+        serviceType: input.deliveryService ?? null,
+      });
+
+      deliveryFee = quote.rate.fee;
+      deliveryAddress = address;
+      deliveryLatitude = input.deliveryLatitude;
+      deliveryLongitude = input.deliveryLongitude;
+      deliveryNotes = input.deliveryNotes?.trim() || null;
+      deliveryProvider = quote.provider;
+      deliveryCourier = quote.rate.courierCode;
+      deliveryServiceType = quote.rate.serviceType;
     }
 
     // Validate all products exist, are available, and belong to this restaurant.
@@ -1104,7 +1227,20 @@ export class OrderService {
 
     // Server-authoritative pricing is complete — hand the validated context to
     // the create step (see persistCustomerOrder).
-    return { resolvedBranchId, orderItems, subtotal, normalizedPhone };
+    return {
+      resolvedBranchId,
+      orderItems,
+      subtotal,
+      normalizedPhone,
+      deliveryFee,
+      deliveryAddress,
+      deliveryLatitude,
+      deliveryLongitude,
+      deliveryNotes,
+      deliveryProvider,
+      deliveryCourier,
+      deliveryServiceType,
+    };
   }
 
   /**
@@ -1121,13 +1257,21 @@ export class OrderService {
     context: CustomerOrderContext,
     options?: CustomerOrderEngineOptions
   ): Promise<CustomerOrderResult> {
-    const { resolvedBranchId, orderItems, subtotal, normalizedPhone } =
-      context;
+    const {
+      resolvedBranchId,
+      orderItems,
+      subtotal,
+      normalizedPhone,
+      deliveryFee,
+      deliveryAddress,
+      deliveryLatitude,
+      deliveryLongitude,
+      deliveryNotes,
+      deliveryProvider,
+      deliveryCourier,
+      deliveryServiceType,
+    } = context;
 
-    // DINE_IN orders are tax-free and service-free: total = subtotal.
-    // TAKEAWAY / DELIVERY keep the 10% tax + 5% service charge, computed on
-    // the discounted subtotal when a promo is applied.
-    const isDineIn = input.orderType === "DINE_IN";
 
     // Customer side effects are collected here and RETURNED so the caller can
     // announce them AFTER its transaction commits (a guest checkout creates a
@@ -1225,12 +1369,16 @@ export class OrderService {
         promoCode = applied.promoCode;
       }
 
-      // DINE_IN orders are tax-free and service-free. TAKEAWAY/DELIVERY
-      // keep 10% tax + 5% service charge on the discounted subtotal.
+      // H5 — no hardcoded tax / service charge: both are always 0, so the
+      // payable total is exactly the discounted subtotal. This is the same
+      // number persisted on the order, sent to iPaymu and shown to the
+      // cashier — one source of truth.
       const taxBase = Math.max(subtotal - discount, 0);
-      const tax = isDineIn ? 0 : Math.round(taxBase * 0.1);
-      const serviceCharge = isDineIn ? 0 : Math.round(taxBase * 0.05);
-      const grandTotal = taxBase + tax + serviceCharge;
+      const tax = 0;
+      const serviceCharge = 0;
+      // Delivery fee is the SERVER quote captured in the context — it is part
+      // of the payable total sent to iPaymu and mirrored on the order.
+      const grandTotal = taxBase + deliveryFee;
 
       // Create order
       const newOrder = await tx.order.create({
@@ -1249,6 +1397,11 @@ export class OrderService {
           tax,
           serviceCharge,
           grandTotal,
+          deliveryFee,
+          deliveryAddress,
+          deliveryLatitude,
+          deliveryLongitude,
+          deliveryNotes,
           notes: input.notes,
           promoId,
           promoCode,
@@ -1266,6 +1419,28 @@ export class OrderService {
           },
         },
       });
+
+      // Delivery booking INTENT (PENDING). Created atomically with the order
+      // so dispatch later reuses this row — one order can never hold two
+      // courier bookings. No courier API is contacted here.
+      if (
+        input.orderType === "DELIVERY" &&
+        deliveryProvider &&
+        deliveryCourier &&
+        deliveryServiceType
+      ) {
+        await tx.orderShipment.create({
+          data: {
+            restaurantId,
+            orderId: newOrder.id,
+            provider: deliveryProvider,
+            courierCode: deliveryCourier,
+            serviceType: deliveryServiceType,
+            status: "PENDING",
+            fee: deliveryFee,
+          },
+        });
+      }
 
       // Record the promo use (upgrades a prior claim row when present).
       if (promoId) {
@@ -1292,6 +1467,20 @@ export class OrderService {
         });
         tableOccupied = true;
       }
+
+      // K5 — hold the product stock inside this same transaction (BranchProduct
+      // FOR UPDATE). A race for the last unit now loses here, before payment,
+      // instead of producing a paid order that cannot reach READY.
+      await ensureOrderStockReserved(tx, {
+        restaurantId,
+        orderId: newOrder.id,
+        branchId: resolvedBranchId,
+        items: orderItems.map((item) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+        })),
+        reason: "Stok dipegang saat pesanan dibuat",
+      });
 
       // KASIR intent: record the UNPAID cashier payment atomically with the
       // order (no gateway call), so a DINE-IN order never exists without its
@@ -1481,6 +1670,7 @@ export class OrderService {
             },
           },
         },
+        shipment: true,
       },
     });
 
@@ -1543,6 +1733,7 @@ export class OrderService {
             },
           },
         },
+        shipment: true,
       },
     });
 
@@ -1562,9 +1753,12 @@ export class OrderService {
    * and internal payment fields (provider / paymentUrl / providerRef) are
    * intentionally NOT selected here (see H3).
    */
-  async getOrderByNumber(orderNumber: string) {
+  async getOrderByNumber(orderNumber: string, restaurantId?: string) {
+    // Phase 2 (multi-tenant): public tracking passes the resolved tenant so
+    // an order number from merchant B can never be read through merchant A's
+    // storefront. Admin callers keep the old signature (no tenant filter).
     const order = await prisma.order.findFirst({
-      where: { orderNumber },
+      where: { orderNumber, ...(restaurantId ? { restaurantId } : {}) },
       include: {
         customer: {
           select: { name: true },
@@ -1596,6 +1790,21 @@ export class OrderService {
           },
           orderBy: { createdAt: "desc" },
           take: 1,
+        },
+        // Public-safe shipment fields only (no raw provider payload).
+        shipment: {
+          select: {
+            provider: true,
+            courierCode: true,
+            serviceType: true,
+            status: true,
+            fee: true,
+            waybillId: true,
+            driverName: true,
+            driverPhone: true,
+            driverPlate: true,
+            trackingUrl: true,
+          },
         },
       },
     });
@@ -1761,35 +1970,32 @@ export class OrderService {
         },
       });
 
-      // Product stock deduction on READY — only on the real
-      // PROCESSING→READY transition. For orders already READY when this
-      // behavior is deployed, retain the former COMPLETED-time deduction as
-      // a one-time fallback when no ORDER_READY movement exists.
-      // Uses atomic conditional UPDATE to prevent negative stock under
-      // concurrent access. The order must have a branchId for
-      // BranchProduct to be resolved; legacy orders without a branch
-      // skip stock deduction (no branch to deduct from).
+      // K5 — product stock is now HELD when the order is created
+      // (ORDER_RESERVE), so READY must never deduct a second time. Legacy
+      // orders created before the hold existed keep the former
+      // READY/COMPLETED deduction as a one-time fallback: it only runs when no
+      // deduction ledger row exists for the order yet. The deduction itself
+      // stays atomic (branchproduct FOR UPDATE, balance may not go negative).
+      const stockAlreadyDeducted = await orderHasStockDeduction(
+        tx,
+        restaurantId,
+        order.id
+      );
+
       let legacyReadyNeedsStockDeduction = false;
       if (
+        !stockAlreadyDeducted &&
         order.status === "READY" &&
         input.status === "COMPLETED" &&
         order.branchId
       ) {
-        const readyMovement = await tx.stockMovement.findFirst({
-          where: {
-            restaurantId,
-            branchId: order.branchId,
-            refType: StockRefType.ORDER_READY,
-            refId: order.id,
-          },
-          select: { id: true },
-        });
-        legacyReadyNeedsStockDeduction = !readyMovement;
+        legacyReadyNeedsStockDeduction = true;
       }
 
       const deductProductStockNow =
-        (order.status === "PROCESSING" && input.status === "READY") ||
-        legacyReadyNeedsStockDeduction;
+        !stockAlreadyDeducted &&
+        ((order.status === "PROCESSING" && input.status === "READY") ||
+          legacyReadyNeedsStockDeduction);
       if (deductProductStockNow && order.branchId) {
         // Aggregate quantity per product across order items
         const freshItems = await tx.orderItem.findMany({
@@ -1838,6 +2044,54 @@ export class OrderService {
         }
       }
 
+      // K4 — consume the recipe/BOM of the completed order in THIS
+      // transaction. Idempotent: the ORDER_COMPLETED ledger row is written
+      // exactly once per order, so a repeated completion never consumes twice.
+      // Master-data gaps (missing/empty recipe, addon/option BOM not filled,
+      // inactive ingredient) still never block a paid order from completing —
+      // the engine validates every requirement BEFORE its first ledger write,
+      // so a skipped run leaves no partial stock and no partial ledger. A
+      // genuine failure (infrastructure, unexpected) propagates and rolls the
+      // status flip back.
+      if (
+        order.status !== "COMPLETED" &&
+        input.status === "COMPLETED" &&
+        order.branchId
+      ) {
+        const alreadyConsumed = await tx.ingredientStockMovement.findFirst({
+          where: {
+            restaurantId,
+            refType: "ORDER_COMPLETED",
+            refId: order.id,
+          },
+          select: { id: true },
+        });
+        if (!alreadyConsumed) {
+          try {
+            await consumeOrderIngredients(tx, {
+              restaurantId,
+              branchId: order.branchId,
+              items: fresh.items.map((item) => ({
+                productId: item.productId,
+                quantity: item.quantity,
+                customizations: item.customizations,
+              })),
+              refId: order.id,
+              reason: `Pesanan ${order.orderNumber} selesai`,
+              userId: changedBy ?? null,
+            });
+          } catch (error) {
+            if (error instanceof IngredientCompletionError) {
+              console.warn(
+                `[Order] Ingredient consumption skipped for ${order.orderNumber}: ${error.message}`
+              );
+            } else {
+              throw error;
+            }
+          }
+        }
+      }
+
       // Free table when order is completed or cancelled
       if (
         (input.status === "COMPLETED" || input.status === "CANCELLED") &&
@@ -1846,6 +2100,19 @@ export class OrderService {
         await tx.table.update({
           where: { id: order.tableId },
           data: { status: "AVAILABLE" },
+        });
+      }
+
+      // K5 — return whatever product stock this order still holds (the hold
+      // written at creation, or the legacy READY deduction). Ledger-derived
+      // and idempotent: an approved refund that already restored part of the
+      // order is subtracted, never restored twice.
+      if (input.status === "CANCELLED") {
+        await releaseOrderStock(tx, {
+          restaurantId,
+          orderId: order.id,
+          reason: input.notes ?? "Pesanan dibatalkan",
+          userId: changedBy ?? null,
         });
       }
 
@@ -1883,8 +2150,22 @@ export class OrderService {
     // WhatsApp notification trigger on READY status
     // ============================================================
     if (input.status === "READY") {
+      // Phase 5 — WhatsApp notifications are a PRO+ feature (`whatsappNotif`).
+      // A tenant on a lower plan (or with a lapsed subscription) skips the send
+      // silently: the status change is already committed and MUST NOT be
+      // affected by a notification decision.
+      const whatsappAllowed = await isPlanFeatureActive(
+        restaurantId,
+        "whatsappNotif"
+      );
+      if (!whatsappAllowed) {
+        console.log(
+          `[Order] WhatsApp notification skipped for order ${order.orderNumber} (paket aktif tanpa fitur whatsappNotif)`
+        );
+      }
+
       // Idempotency: check if already notified
-      if (!order.notifiedAt) {
+      if (whatsappAllowed && !order.notifiedAt) {
         const customerPhone = order.customer?.phone;
 
         // Only trigger if customer has a valid phone (not a guest placeholder)
@@ -2000,6 +2281,37 @@ export class OrderService {
           source: "DIRECT_STATUS_UPDATE",
         },
       });
+    }
+
+    // ============================================================
+    // DELIVERY — auto-dispatch when the tenant chose "READY".
+    //
+    // Runs AFTER the status transaction committed and is best-effort: a
+    // courier/API failure marks the shipment FAILED (retryable from the
+    // dashboard) and can never roll back the READY transition. The PAID
+    // trigger lives in the iPaymu webhook.
+    // ============================================================
+    if (input.status === "READY" && order.orderType === "DELIVERY") {
+      try {
+        const settings = await prisma.restaurantSettings.findUnique({
+          where: { restaurantId },
+          select: { deliveryEnabled: true, deliveryAutoDispatchOn: true },
+        });
+        if (
+          settings?.deliveryEnabled &&
+          settings.deliveryAutoDispatchOn === "READY"
+        ) {
+          const { deliveryService } = await import(
+            "@/services/delivery/delivery.service"
+          );
+          await deliveryService.dispatchOrderShipment(id, restaurantId);
+        }
+      } catch (error) {
+        console.error(
+          `[Order] Delivery auto-dispatch failed for ${order.orderNumber} (status stays READY; retry from the dashboard):`,
+          error
+        );
+      }
     }
 
     return { order: updatedOrder, whatsappTriggered };

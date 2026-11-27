@@ -95,10 +95,16 @@ function layoutItem(tableId: string, overrides: Record<string, unknown> = {}) {
 
 before(async () => {
   const restA = await prisma.restaurant.create({
-    data: { name: `QA Layout A ${Date.now()}` },
+    data: {
+      slug: `qa-layout-a-${Date.now()}`,
+      name: `QA Layout A ${Date.now()}`,
+    },
   });
   const restB = await prisma.restaurant.create({
-    data: { name: `QA Layout B ${Date.now()}` },
+    data: {
+      slug: `qa-layout-b-${Date.now()}`,
+      name: `QA Layout B ${Date.now()}`,
+    },
   });
   restAId = restA.id;
   restBId = restB.id;

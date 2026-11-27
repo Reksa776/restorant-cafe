@@ -16,7 +16,11 @@ import {
   Truck,
   User,
   XCircle,
+  Phone,
+  ExternalLink,
+  MapPin,
 } from "lucide-react";
+import api from "@/lib/axios";
 import { orderService, type Order } from "@/services/order.service";
 import { useRealtimeListener } from "@/components/admin/realtime-provider";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
@@ -50,6 +54,19 @@ const PAYMENT_STATUS_META: Record<string, { label: string; cls: string }> = {
   REFUNDED: { label: "Direfund", cls: "bg-red-100 text-red-700" },
 };
 
+const SHIPMENT_STATUS_META: Record<
+  string,
+  { label: string; cls: string }
+> = {
+  PENDING: { label: "Menunggu Kurir", cls: "bg-gray-100 text-gray-600" },
+  ALLOCATING: { label: "Mencari Driver", cls: "bg-yellow-100 text-yellow-700" },
+  PICKING_UP: { label: "Driver Menuju Resto", cls: "bg-blue-100 text-blue-700" },
+  IN_DELIVERY: { label: "Sedang Diantar", cls: "bg-indigo-100 text-indigo-700" },
+  DELIVERED: { label: "Terkirim", cls: "bg-green-100 text-green-700" },
+  CANCELLED: { label: "Dibatalkan", cls: "bg-red-100 text-red-700" },
+  FAILED: { label: "Gagal — Panggil Ulang", cls: "bg-red-100 text-red-700" },
+};
+
 const TYPE_META: Record<string, { label: string; Icon: typeof UtensilsCrossed }> = {
   DINE_IN: { label: "Makan di Tempat", Icon: UtensilsCrossed },
   TAKEAWAY: { label: "Bawa Pulang", Icon: ShoppingBag },
@@ -73,6 +90,7 @@ export default function AdminOrderByNumberPage({
   const [barcodePaymentOpen, setBarcodePaymentOpen] = useState(false);
   const [printOpen, setPrintOpen] = useState(false);
   const [autoPrintBill, setAutoPrintBill] = useState(false);
+  const [isDispatching, setIsDispatching] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -204,6 +222,35 @@ export default function AdminOrderByNumberPage({
   );
   const isPaid = order.paymentStatus === "PAID";
 
+  const shipment = order.shipment ?? null;
+  const liveShipment = Boolean(
+    shipment &&
+      ["ALLOCATING", "PICKING_UP", "IN_DELIVERY", "DELIVERED"].includes(
+        shipment.status
+      )
+  );
+  const canDispatch =
+    order.orderType === "DELIVERY" &&
+    isPaid &&
+    !liveShipment &&
+    order.status !== "CANCELLED";
+
+  const dispatchDelivery = async () => {
+    setIsDispatching(true);
+    try {
+      await api.post(`/admin/orders/${order.id}/dispatch-delivery`);
+      toast.success("Driver berhasil dipanggil");
+      await loadOrder();
+    } catch (error) {
+      toast.error(
+        (error as { response?: { data?: { message?: string } } })?.response
+          ?.data?.message || "Gagal memanggil driver"
+      );
+    } finally {
+      setIsDispatching(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-3xl">
       {/* Header */}
@@ -323,6 +370,136 @@ export default function AdminOrderByNumberPage({
           )}
         </CardContent>
       </Card>
+
+      {/* Delivery / courier */}
+      {order.orderType === "DELIVERY" && (
+        <Card>
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Truck className="h-4 w-4 text-muted-foreground" />
+                <h2 className="font-medium">Pengiriman Kurir</h2>
+              </div>
+              {shipment && (
+                <Badge
+                  className={`${
+                    SHIPMENT_STATUS_META[shipment.status]?.cls ||
+                    "bg-gray-100 text-gray-600"
+                  } border`}
+                >
+                  {SHIPMENT_STATUS_META[shipment.status]?.label ||
+                    shipment.status}
+                </Badge>
+              )}
+            </div>
+
+            {order.deliveryAddress && (
+              <div className="rounded-lg bg-muted/30 border border-border px-3 py-2">
+                <p className="text-xs text-muted-foreground flex items-center gap-1">
+                  <MapPin className="h-3 w-3" /> Alamat antar
+                </p>
+                <p className="text-sm whitespace-pre-line">
+                  {order.deliveryAddress}
+                </p>
+                {order.deliveryNotes && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Catatan: {order.deliveryNotes}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {shipment ? (
+              <div className="space-y-1.5 text-sm">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Kurir</span>
+                  <span className="font-medium capitalize">
+                    {shipment.courierCode} — {shipment.serviceType}
+                  </span>
+                </div>
+                {shipment.driverName && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Driver</span>
+                    <span className="font-medium">
+                      {shipment.driverName}
+                      {shipment.driverPlate
+                        ? ` · ${shipment.driverPlate}`
+                        : ""}
+                    </span>
+                  </div>
+                )}
+                {shipment.driverPhone && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Telepon</span>
+                    <a
+                      href={`tel:${shipment.driverPhone.replace(/[^0-9+]/g, "")}`}
+                      className="inline-flex items-center gap-1 font-medium text-blue-600 hover:underline"
+                    >
+                      <Phone className="h-3.5 w-3.5" />
+                      {shipment.driverPhone}
+                    </a>
+                  </div>
+                )}
+                {shipment.waybillId && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">No. Resi</span>
+                    <span className="font-mono text-xs">
+                      {shipment.waybillId}
+                    </span>
+                  </div>
+                )}
+                {Number(shipment.fee) > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Ongkir</span>
+                    <span className="font-medium tabular-nums">
+                      {rupiah(shipment.fee)}
+                    </span>
+                  </div>
+                )}
+                {shipment.trackingUrl && (
+                  <a
+                    href={shipment.trackingUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:underline"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" /> Buka Live Tracking
+                  </a>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Driver belum dipanggil untuk pesanan ini.
+              </p>
+            )}
+
+            {shipment?.status === "FAILED" && (
+              <p className="text-xs text-red-600">
+                Pemanggilan driver gagal (mis. saldo/API kurir). Periksa
+                pengaturan pengiriman lalu panggil ulang.
+              </p>
+            )}
+
+            {canDispatch && (
+              <Button
+                size="sm"
+                className="bg-green-600 hover:bg-green-700"
+                onClick={dispatchDelivery}
+                disabled={isDispatching}
+              >
+                {isDispatching ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                ) : (
+                  <Truck className="h-4 w-4 mr-1" />
+                )}
+                {shipment?.status === "FAILED"
+                  ? "Panggil Ulang Driver"
+                  : "Panggil Driver"}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Print bill — pure client-side, never mutates the order */}
       <PrintBillDialog
@@ -474,8 +651,16 @@ export default function AdminOrderByNumberPage({
             </div>
             {Number(order.tax) > 0 && (
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Pajak (10%)</span>
+                <span className="text-muted-foreground">Pajak</span>
                 <span className="tabular-nums">{rupiah(order.tax)}</span>
+              </div>
+            )}
+            {Number(order.deliveryFee ?? 0) > 0 && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Ongkir</span>
+                <span className="tabular-nums">
+                  {rupiah(order.deliveryFee ?? 0)}
+                </span>
               </div>
             )}
             {Number(order.serviceCharge) > 0 && (

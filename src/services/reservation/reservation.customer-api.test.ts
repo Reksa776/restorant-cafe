@@ -96,10 +96,16 @@ function authedParams(code: string) {
 
 before(async () => {
   const rA = await prisma.restaurant.create({
-    data: { name: `QA R6 Customer API A ${Date.now()}` },
+    data: {
+      slug: `qa-r6-customer-api-a-${Date.now()}`,
+      name: `QA R6 Customer API A ${Date.now()}`,
+    },
   });
   const rB = await prisma.restaurant.create({
-    data: { name: `QA R6 Customer API B ${Date.now()}` },
+    data: {
+      slug: `qa-r6-customer-api-b-${Date.now()}`,
+      name: `QA R6 Customer API B ${Date.now()}`,
+    },
   });
   restA = rA.id;
   restB = rB.id;

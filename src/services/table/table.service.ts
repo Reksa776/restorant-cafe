@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import QRCode from "qrcode";
+import { appendTenantPath, buildTenantPublicUrl } from "@/lib/tenant-url";
 import { NotFoundError, ValidationError, ConflictError } from "@/lib/errors";
 import { emitRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
@@ -259,9 +260,31 @@ export class TableService {
     // Multi-branch QR: /t/{branchCode}/{tableNumber} disambiguates tables
     // that share the same number across branches. Tables without a branch
     // keep the legacy /t/{tableNumber} payload for backward compatibility.
-    const qrData = table.branch?.code
-      ? `${origin}/t/${encodeURIComponent(table.branch.code)}/${table.number}`
-      : `${origin}/t/${table.number}`;
+    const tablePath = table.branch?.code
+      ? `/t/${encodeURIComponent(table.branch.code)}/${table.number}`
+      : `/t/${table.number}`;
+
+    // The QR must point at the TENANT's own address, not the admin host: a
+    // customer who scans it enters `https://<slug>.<ROOT_DOMAIN>/t/...`
+    // (fallback `…/r/<slug>?next=/t/...` when the app is reached via IP).
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: { slug: true },
+    });
+
+    let qrData = `${origin}${tablePath}`;
+    if (restaurant) {
+      let tenantBaseUrl: string;
+      try {
+        tenantBaseUrl = buildTenantPublicUrl(
+          restaurant.slug,
+          new Headers({ host: new URL(origin).host })
+        );
+      } catch {
+        tenantBaseUrl = `${origin}/r/${restaurant.slug}`;
+      }
+      qrData = appendTenantPath(tenantBaseUrl, restaurant.slug, tablePath);
+    }
 
     const qrCode = await QRCode.toDataURL(qrData, {
       width: 300,

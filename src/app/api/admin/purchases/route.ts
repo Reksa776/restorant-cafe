@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { requirePlanFeature } from "@/services/billing/plan-guard.service";
 import {
   successResponse,
   createdResponse,
@@ -67,6 +68,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const ctx = await requireAdmin();
+    // Phase 4 — purchasing & supplier is a PRO+ feature.
+    await requirePlanFeature(ctx.restaurantId, "purchasing");
+
     const body = await jsonBody(request);
     if (!body || typeof body !== "object") {
       return errorResponse("Invalid request body", "VALIDATION_ERROR", 400);

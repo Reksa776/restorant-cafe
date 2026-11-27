@@ -125,8 +125,7 @@ const CART_STORAGE_KEY = "restaurant_cart";
 const RESTAURANT_STORAGE_KEY = "restaurant_id";
 const TABLE_CONTEXT_STORAGE_KEY = "table_context";
 const CUSTOMER_BRANCH_STORAGE_KEY = "customer_branch_context";
-const TAX_RATE = 0.1; // 10%
-const SERVICE_CHARGE_RATE = 0.05; // 5%
+
 
 // ============================================================
 // localStorage Helpers
@@ -635,9 +634,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
     (sum, item) => sum + (item.displayPrice || item.price) * item.quantity,
     0
   );
-  const tax = Math.round(subtotal * TAX_RATE);
-  const serviceCharge = Math.round(subtotal * SERVICE_CHARGE_RATE);
-  const grandTotal = subtotal + tax + serviceCharge;
+  // H5 — tax and service charge are no longer hardcoded. The server charges
+  // exactly `subtotal − discount`, so the cart must mirror that: keep the
+  // fields (0) for API compatibility, but never invent a percentage here.
+  const tax = 0;
+  const serviceCharge = 0;
+  const grandTotal = subtotal;
   const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
 
   return (

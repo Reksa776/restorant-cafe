@@ -12,6 +12,7 @@ import {
   branchHintFrom,
   authorizedBranches,
 } from "@/lib/auth-helpers";
+import { requirePlanFeature } from "@/services/billing/plan-guard.service";
 
 // ============================================================
 // GET /api/reports/multi-outlet/export
@@ -30,6 +31,9 @@ export async function GET(request: NextRequest) {
     const ctx = await requireAdmin(
       branchIdParam || branchHintFrom(request)
     );
+
+    // Phase 5 — same gate as GET /api/reports/multi-outlet (ENTERPRISE).
+    await requirePlanFeature(ctx.restaurantId, "multiOutletReport");
 
     const periodRaw = searchParams.get("period") || "today";
     const period = REPORT_PERIODS.includes(periodRaw as ReportPeriod)

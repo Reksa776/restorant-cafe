@@ -55,7 +55,7 @@ async function expectReject(name: string, fn: () => Promise<unknown>, Err: new (
 
 async function createTenant(label: string) {
   const restaurant = await prisma.restaurant.create({
-    data: { name: `${label}-Resto`, isActive: true },
+    data: { slug: `${label}-resto-${Date.now()}`, name: `${label}-Resto`, isActive: true },
   });
   const branch = await prisma.branch.create({
     data: { restaurantId: restaurant.id, code: `${label}-BR`, name: `${label} Branch` },

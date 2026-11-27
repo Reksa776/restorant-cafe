@@ -8,6 +8,7 @@ import {
   updateBranding,
   type UpdateBrandingInput,
 } from "@/services/branding/branding.service";
+import { requirePlanFeature } from "@/services/billing/plan-guard.service";
 
 /**
  * GET /api/admin/settings/branding
@@ -53,6 +54,9 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   try {
     const { restaurantId } = await requireRoles(["ADMIN"], undefined);
+    // Phase 4 — full custom branding (colors/logo) is an ENTERPRISE feature.
+    // GET stays open so every plan still renders the default palette.
+    await requirePlanFeature(restaurantId, "customBranding");
 
     const body = (await request.json().catch(() => null)) as
       | (UpdateBrandingInput & Record<string, unknown>)

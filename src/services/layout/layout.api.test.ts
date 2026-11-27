@@ -256,8 +256,18 @@ async function seedFixtures(): Promise<void> {
   pwC = `C-pw-${Math.random().toString(36).slice(2, 10)}`;
 
   const [ra, rb] = await Promise.all([
-    prisma.restaurant.create({ data: { name: `QA Layout API A ${tag}` } }),
-    prisma.restaurant.create({ data: { name: `QA Layout API B ${tag}` } }),
+    prisma.restaurant.create({
+      data: {
+        slug: `qa-layout-api-a-${tag}`.toLowerCase(),
+        name: `QA Layout API A ${tag}`,
+      },
+    }),
+    prisma.restaurant.create({
+      data: {
+        slug: `qa-layout-api-b-${tag}`.toLowerCase(),
+        name: `QA Layout API B ${tag}`,
+      },
+    }),
   ]);
   restA = ra.id;
   restB = rb.id;

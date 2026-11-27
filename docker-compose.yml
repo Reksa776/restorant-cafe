@@ -1,5 +1,20 @@
 version: "3.8"
 
+# ============================================================
+# PRODUCTION STACK (Phase 5)
+#
+# Services: mysql, migrate (one-shot), redis, app, nginx.
+#
+# NOTE — there is NO WhatsApp worker service. The Next.js `app` process is the
+# single owner of the Baileys socket (`src/services/whatsapp/whatsapp-notifier`
+# → `session-manager` → provider). Running a second process against the same
+# `whatsapp_data` volume would steal the session and break sending/QR.
+#
+# SECURITY — database credentials are REQUIRED (no `password` default). Copy
+# `.env.example` to `.env` and replace every placeholder with a strong value
+# (16+ chars, generated with `openssl rand -base64 24`).
+# ============================================================
+
 services:
   # MySQL Database
   mysql:
@@ -7,10 +22,10 @@ services:
     container_name: restaurant-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD wajib diisi di .env (jangan pakai default lemah)}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-restaurant_app}
       MYSQL_USER: ${MYSQL_USER:-restaurant}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-password}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?MYSQL_PASSWORD wajib diisi di .env (jangan pakai default lemah)}
     ports:
       - "3306:3306"
     volumes:
@@ -22,9 +37,9 @@ services:
       timeout: 5s
       retries: 5
 
-  # Applies Prisma migrations once per `docker compose up`.  The app and
-  # worker wait for this service, so a failed migration never starts a new
-  # application version against an old database schema.
+  # Applies Prisma migrations once per `docker compose up`.  The app waits for
+  # this service, so a failed migration never starts a new application version
+  # against an old database schema.
   migrate:
     build:
       context: .
@@ -33,12 +48,13 @@ services:
     container_name: restaurant-migrate
     restart: "no"
     environment:
-      DATABASE_URL: mysql://${MYSQL_USER:-restaurant}:${MYSQL_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-restaurant_app}
+      DATABASE_URL: mysql://${MYSQL_USER:-restaurant}:${MYSQL_PASSWORD:?MYSQL_PASSWORD wajib diisi di .env}@mysql:3306/${MYSQL_DATABASE:-restaurant_app}
     depends_on:
       mysql:
         condition: service_healthy
 
-  # Redis
+  # Redis (kept for the realtime/cache stack; not required by WhatsApp, which
+  # runs in-process on the app container)
   redis:
     image: redis:7-alpine
     container_name: restaurant-redis
@@ -58,16 +74,28 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* must be present at BUILD time (inlined in the bundle).
+        NEXT_PUBLIC_ROOT_DOMAIN: ${NEXT_PUBLIC_ROOT_DOMAIN:-}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
     container_name: restaurant-app
     restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: mysql://${MYSQL_USER:-restaurant}:${MYSQL_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-restaurant_app}
+      DATABASE_URL: mysql://${MYSQL_USER:-restaurant}:${MYSQL_PASSWORD:?MYSQL_PASSWORD wajib diisi di .env}@mysql:3306/${MYSQL_DATABASE:-restaurant_app}
       REDIS_URL: redis://redis:6379
       NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
+      AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-true}
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
+      NEXT_PUBLIC_ROOT_DOMAIN: ${NEXT_PUBLIC_ROOT_DOMAIN:-}
+      # Cron endpoint guard — POST /api/internal/cron/expire-orders stays
+      # disabled (503) until this is set.
+      CRON_SECRET: ${CRON_SECRET:-}
+      # Webhook shared secrets — real provider calls are rejected when unset.
+      SAAS_BILLING_WEBHOOK_SECRET: ${SAAS_BILLING_WEBHOOK_SECRET:-}
+      DELIVERY_WEBHOOK_SECRET: ${DELIVERY_WEBHOOK_SECRET:-}
       IPAYMU_VA: ${IPAYMU_VA:-}
       IPAYMU_API_KEY: ${IPAYMU_API_KEY:-}
       IPAYMU_SANDBOX_VA: ${IPAYMU_SANDBOX_VA:-}
@@ -80,44 +108,11 @@ services:
       IPAYMU_ENVIRONMENT: ${IPAYMU_ENVIRONMENT:-${IPAYMU_ENV:-sandbox}}
       WHATSAPP_SESSION_DIR: /app/whatsapp-session
     volumes:
+      # Single Baileys owner: ONLY the app mounts the session volume.
       - whatsapp_data:/app/whatsapp-session
       # Runtime product image uploads — persists across recreate/rebuild.
       # Served by the app route /uploads/products/... (not Next public/).
       - product_images:/app/uploads
-    depends_on:
-      mysql:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-
-  # WhatsApp Worker
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.worker
-    container_name: restaurant-worker
-    restart: unless-stopped
-    environment:
-      DATABASE_URL: mysql://${MYSQL_USER:-restaurant}:${MYSQL_PASSWORD:-password}@mysql:3306/${MYSQL_DATABASE:-restaurant_app}
-      REDIS_URL: redis://redis:6379
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
-      NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
-      IPAYMU_VA: ${IPAYMU_VA:-}
-      IPAYMU_API_KEY: ${IPAYMU_API_KEY:-}
-      IPAYMU_SANDBOX_VA: ${IPAYMU_SANDBOX_VA:-}
-      IPAYMU_SANDBOX_API_KEY: ${IPAYMU_SANDBOX_API_KEY:-}
-      IPAYMU_PRODUCTION_VA: ${IPAYMU_PRODUCTION_VA:-}
-      IPAYMU_PRODUCTION_API_KEY: ${IPAYMU_PRODUCTION_API_KEY:-}
-      IPAYMU_SANDBOX_BASE_URL: ${IPAYMU_SANDBOX_BASE_URL:-}
-      IPAYMU_PRODUCTION_BASE_URL: ${IPAYMU_PRODUCTION_BASE_URL:-}
-      IPAYMU_ENV: ${IPAYMU_ENV:-${IPAYMU_ENVIRONMENT:-sandbox}}
-      IPAYMU_ENVIRONMENT: ${IPAYMU_ENVIRONMENT:-${IPAYMU_ENV:-sandbox}}
-      WHATSAPP_SESSION_DIR: /app/whatsapp-session
-    volumes:
-      - whatsapp_data:/app/whatsapp-session
     depends_on:
       mysql:
         condition: service_healthy

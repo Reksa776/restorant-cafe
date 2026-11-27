@@ -91,6 +91,8 @@ function isNavGroup(entry: NavEntry): entry is NavGroup {
  */
 const navigation: NavEntry[] = [
   { name: "Ringkasan", href: "/admin/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "CASHIER"] },
+  // Phase 4 — subscription plans, branch add-ons and invoices (ADMIN only).
+  { name: "Paket & Billing", href: "/admin/billing", icon: CreditCard, roles: ["ADMIN"] },
   {
     name: "Operasional",
     icon: ClipboardList,

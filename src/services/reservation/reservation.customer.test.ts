@@ -109,10 +109,16 @@ async function transitionTo(
 
 before(async () => {
   const rA = await prisma.restaurant.create({
-    data: { name: `QA R6 Customer A ${Date.now()}` },
+    data: {
+      slug: `qa-r6-customer-a-${Date.now()}`,
+      name: `QA R6 Customer A ${Date.now()}`,
+    },
   });
   const rB = await prisma.restaurant.create({
-    data: { name: `QA R6 Customer B ${Date.now()}` },
+    data: {
+      slug: `qa-r6-customer-b-${Date.now()}`,
+      name: `QA R6 Customer B ${Date.now()}`,
+    },
   });
   restA = rA.id;
   restB = rB.id;

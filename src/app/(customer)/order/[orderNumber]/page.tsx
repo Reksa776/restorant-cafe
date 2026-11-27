@@ -13,6 +13,9 @@ import {
   Loader2,
   Table2,
   Users,
+  Truck,
+  Phone,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import api from "@/lib/axios";
@@ -53,9 +56,24 @@ interface OrderData {
   tax: string;
   serviceCharge: string;
   discount: string;
+  deliveryFee?: number | string;
+  deliveryAddress?: string | null;
+  deliveryNotes?: string | null;
   visitorCount: number | null;
   notes?: string;
   createdAt: string;
+  shipment?: {
+    provider: string;
+    courierCode: string;
+    serviceType: string;
+    status: string;
+    fee: number;
+    waybillId: string | null;
+    driverName: string | null;
+    driverPhone: string | null;
+    driverPlate: string | null;
+    trackingUrl: string | null;
+  } | null;
   customer: { name?: string; phone?: string };
   table?: { number: number; name: string };
   items: Array<{
@@ -85,6 +103,19 @@ interface OrderData {
 // ============================================================
 // Status Config
 // ============================================================
+
+const SHIPMENT_STATUS_META: Record<
+  string,
+  { label: string; cls: string }
+> = {
+  PENDING: { label: "Menunggu Kurir", cls: "bg-gray-100 text-gray-600" },
+  ALLOCATING: { label: "Mencari Driver", cls: "bg-yellow-100 text-yellow-700" },
+  PICKING_UP: { label: "Driver Menuju Resto", cls: "bg-blue-100 text-blue-700" },
+  IN_DELIVERY: { label: "Sedang Diantar", cls: "bg-indigo-100 text-indigo-700" },
+  DELIVERED: { label: "Terkirim", cls: "bg-green-100 text-green-700" },
+  CANCELLED: { label: "Dibatalkan", cls: "bg-red-100 text-red-700" },
+  FAILED: { label: "Gagal Memanggil Driver", cls: "bg-red-100 text-red-700" },
+};
 
 const STATUS_STEPS = [
   { key: "PENDING", label: "Pesanan Diterima", icon: Clock },
@@ -619,6 +650,106 @@ export default function OrderTrackingPage({
         </div>
       </div>
 
+      {/* Delivery / courier tracking */}
+      {order.orderType === "DELIVERY" && (
+        <div className="bg-white rounded-lg border border-gray-200 p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Truck className="h-4 w-4 text-gray-500" />
+              <h2 className="font-medium">Pengiriman</h2>
+            </div>
+            {order.shipment && (
+              <span
+                className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                  SHIPMENT_STATUS_META[order.shipment.status]?.cls ||
+                  "bg-gray-100 text-gray-600"
+                }`}
+              >
+                {SHIPMENT_STATUS_META[order.shipment.status]?.label ||
+                  order.shipment.status}
+              </span>
+            )}
+          </div>
+
+          {order.deliveryAddress && (
+            <div>
+              <p className="text-xs text-gray-500">Alamat Antar</p>
+              <p className="text-sm text-gray-700 whitespace-pre-line">
+                {order.deliveryAddress}
+              </p>
+            </div>
+          )}
+
+          {order.shipment ? (
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-500">Kurir</span>
+                <span className="font-medium capitalize">
+                  {order.shipment.courierCode} — {order.shipment.serviceType}
+                </span>
+              </div>
+
+              {order.shipment.driverName && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Driver</span>
+                  <span className="font-medium">
+                    {order.shipment.driverName}
+                    {order.shipment.driverPlate
+                      ? ` · ${order.shipment.driverPlate}`
+                      : ""}
+                  </span>
+                </div>
+              )}
+
+              {order.shipment.driverPhone && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Telepon Driver</span>
+                  <a
+                    href={`tel:${order.shipment.driverPhone.replace(/[^0-9+]/g, "")}`}
+                    className="inline-flex items-center gap-1 font-medium text-brand-primary hover:underline"
+                  >
+                    <Phone className="h-3.5 w-3.5" />
+                    {order.shipment.driverPhone}
+                  </a>
+                </div>
+              )}
+
+              {order.shipment.waybillId && (
+                <div className="flex justify-between">
+                  <span className="text-gray-500">No. Resi</span>
+                  <span className="font-mono text-xs">
+                    {order.shipment.waybillId}
+                  </span>
+                </div>
+              )}
+
+              {order.shipment.trackingUrl && (
+                <a
+                  href={order.shipment.trackingUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-1 inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand-primary px-3 py-2 text-xs font-medium text-brand-primary-foreground hover:bg-brand-primary/90"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Lacak Kurir (Live Tracking)
+                </a>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400">
+              Driver belum dipanggil. Status akan diperbarui otomatis setelah
+              pembayaran/kesiapan pesanan.
+            </p>
+          )}
+
+          {order.deliveryNotes && (
+            <p className="text-xs text-gray-500">
+              Catatan kurir: {order.deliveryNotes}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Status Timeline */}
       {!isCancelled && (
         <div className="bg-white rounded-lg border border-gray-200 p-4">
@@ -728,10 +859,16 @@ export default function OrderTrackingPage({
               </span>
             </div>
           )}
+          {Number(order.deliveryFee ?? 0) > 0 && (
+            <div className="flex justify-between">
+              <span className="text-gray-500">Ongkir</span>
+              <span>Rp{Number(order.deliveryFee).toLocaleString("id-ID")}</span>
+            </div>
+          )}
           {/* Tax/service rows only when they apply (DINE_IN orders are free) */}
           {Number(order.tax) > 0 && (
             <div className="flex justify-between">
-              <span className="text-gray-500">Pajak (10%)</span>
+              <span className="text-gray-500">Pajak</span>
               <span>
                 Rp{Number(order.tax).toLocaleString("id-ID")}
               </span>
@@ -739,7 +876,7 @@ export default function OrderTrackingPage({
           )}
           {Number(order.serviceCharge) > 0 && (
             <div className="flex justify-between">
-              <span className="text-gray-500">Service Charge (5%)</span>
+              <span className="text-gray-500">Service Charge</span>
               <span>
                 Rp{Number(order.serviceCharge).toLocaleString("id-ID")}
               </span>

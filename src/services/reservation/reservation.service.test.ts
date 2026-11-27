@@ -148,10 +148,16 @@ async function table(number: number, cap: number, overrides: Record<string, unkn
 
 before(async () => {
   const restA = await prisma.restaurant.create({
-    data: { name: `QA Reservation A ${Date.now()}` },
+    data: {
+      slug: `qa-reservation-a-${Date.now()}`,
+      name: `QA Reservation A ${Date.now()}`,
+    },
   });
   const restB = await prisma.restaurant.create({
-    data: { name: `QA Reservation B ${Date.now()}` },
+    data: {
+      slug: `qa-reservation-b-${Date.now()}`,
+      name: `QA Reservation B ${Date.now()}`,
+    },
   });
   restAId = restA.id;
   restBId = restB.id;

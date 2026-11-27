@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { requireRequestTenant } from "@/lib/tenant";
 
 /**
  * GET /api/public/payments/[orderNumber]
@@ -26,10 +27,13 @@ export async function GET(
       60_000
     );
 
+    // Phase 2 — payment status is tenant-scoped: the order number alone is
+    // not a cross-merchant capability.
+    const tenant = await requireRequestTenant(request);
     const { orderNumber } = await params;
 
     const order = await prisma.order.findFirst({
-      where: { orderNumber },
+      where: { orderNumber, restaurantId: tenant.id },
       select: {
         id: true,
         orderType: true,

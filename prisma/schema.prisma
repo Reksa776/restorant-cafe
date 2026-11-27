@@ -181,43 +181,46 @@ enum NotificationType {
 // ============================================================
 
 model User {
-  id           String   @id @default(cuid())
-  restaurantId String
-  name         String
-  email        String   @unique
-  password     String
-  role         Role     @default(ADMIN)
-  isActive     Boolean  @default(true)
+  id             String   @id @default(cuid())
+  restaurantId   String
+  name           String
+  email          String   @unique
+  password       String
+  role           Role     @default(ADMIN)
+  isActive       Boolean  @default(true)
   // Bumped on password change / deactivation; JWTs carry the version from
   // sign-in time and are rejected when it no longer matches (session
   // revocation, M3).
-  sessionVersion Int     @default(0)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  sessionVersion Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
-  orderHistory OrderStatusHistory[]
-  cashierShifts CashierShift[]
-  auditLogs    AuditLog[]
-  branchAssignments UserBranch[]
-  shiftOverridesRequested ShiftOverride[] @relation("ShiftOverrideRequester")
-  shiftOverridesApproved  ShiftOverride[] @relation("ShiftOverrideApprover")
-  shiftOverridesRejected  ShiftOverride[] @relation("ShiftOverrideRejecter")
-  refundsRequested Refund[] @relation("RefundRequester")
-  refundsApproved  Refund[] @relation("RefundApprover")
-  refundsRejected  Refund[] @relation("RefundRejecter")
-  cancellationsRequested CancellationRequest[] @relation("CancellationRequester")
-  cancellationsApproved  CancellationRequest[] @relation("CancellationApprover")
-  cancellationsRejected  CancellationRequest[] @relation("CancellationRejecter")
-  stockMovements StockMovement[]
+  restaurant               Restaurant                @relation(fields: [restaurantId], references: [id])
+  orderHistory             OrderStatusHistory[]
+  cashierShifts            CashierShift[]
+  auditLogs                AuditLog[]
+  branchAssignments        UserBranch[]
+  shiftOverridesRequested  ShiftOverride[]           @relation("ShiftOverrideRequester")
+  shiftOverridesApproved   ShiftOverride[]           @relation("ShiftOverrideApprover")
+  shiftOverridesRejected   ShiftOverride[]           @relation("ShiftOverrideRejecter")
+  refundsRequested         Refund[]                  @relation("RefundRequester")
+  refundsApproved          Refund[]                  @relation("RefundApprover")
+  refundsRejected          Refund[]                  @relation("RefundRejecter")
+  cancellationsRequested   CancellationRequest[]     @relation("CancellationRequester")
+  cancellationsApproved    CancellationRequest[]     @relation("CancellationApprover")
+  cancellationsRejected    CancellationRequest[]     @relation("CancellationRejecter")
+  stockMovements           StockMovement[]
   ingredientStockMovements IngredientStockMovement[]
-  expensesCreated Expense[] @relation("ExpenseCreator")
+  expensesCreated          Expense[]                 @relation("ExpenseCreator")
 
   @@map("user")
 }
 
 model Restaurant {
   id        String   @id @default(cuid())
+  /// Public multi-tenant identifier (URL segment /r/<slug>, public API ?slug=).
+  /// Unique across ALL tenants — it is the public tenant key.
+  slug      String   @unique
   name      String
   address   String?
   phone     String?
@@ -226,33 +229,37 @@ model Restaurant {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users        User[]
-  branches     Branch[]
-  tables       Table[]
-  tableLayouts TableLayout[]
-  categories   Category[]
-  products     Product[]
-  customers    Customer[]
-  orders       Order[]
-  payments     Payment[]
-  cashierShifts CashierShift[]
-  shiftOverrides ShiftOverride[]
-  refunds      Refund[]
-  cancellations CancellationRequest[]
-  auditLogs    AuditLog[]
-  promos       Promo[]
-  settings     RestaurantSettings?
-  productRecommendations ProductRecommendation[]
-  suppliers    Supplier[]
-  purchases    Purchase[]
-  stockMovements StockMovement[]
-  ingredients Ingredient[]
+  users                    User[]
+  branches                 Branch[]
+  tables                   Table[]
+  tableLayouts             TableLayout[]
+  categories               Category[]
+  products                 Product[]
+  customers                Customer[]
+  orders                   Order[]
+  payments                 Payment[]
+  cashierShifts            CashierShift[]
+  shiftOverrides           ShiftOverride[]
+  refunds                  Refund[]
+  cancellations            CancellationRequest[]
+  auditLogs                AuditLog[]
+  promos                   Promo[]
+  settings                 RestaurantSettings?
+  productRecommendations   ProductRecommendation[]
+  suppliers                Supplier[]
+  purchases                Purchase[]
+  stockMovements           StockMovement[]
+  ingredients              Ingredient[]
   ingredientStockMovements IngredientStockMovement[]
-  recipes     Recipe[]
-  orderItemCostSnapshots OrderItemCostSnapshot[]
-  expenses    Expense[]
-  expenseCategories ExpenseCategory[]
+  recipes                  Recipe[]
+  orderItemCostSnapshots   OrderItemCostSnapshot[]
+  expenses                 Expense[]
+  expenseCategories        ExpenseCategory[]
+  shipments                OrderShipment[]
+  subscription             RestaurantSubscription?
+  saasInvoices             SaasInvoice[]
 
+  @@index([isActive])
   @@map("restaurant")
 }
 
@@ -263,32 +270,38 @@ model Branch {
   name         String
   address      String?
   phone        String?
+  // Courier PICKUP ORIGIN for instant delivery (GrabExpress / Biteship).
+  // Optional so existing branches keep working; an order can only be sent
+  // for delivery from a branch that has both coordinates set.
+  latitude     Float?
+  longitude    Float?
+  postalCode   String?
+  contactPhone String?
   isActive     Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  restaurant Restaurant       @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  tables     Table[]
-  tableLayout TableLayout?
-  orders     Order[]
-  payments   Payment[]
-  shifts     CashierShift[]
-  products   BranchProduct[]
-  users      UserBranch[]
-  promos     Promo[]
-  promoUsages PromoUsage[]
-  notifications Notification[]
-  purchases  Purchase[]
-  stockMovements StockMovement[]
-  branchIngredients BranchIngredient[]
+  restaurant               Restaurant                @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  tables                   Table[]
+  tableLayout              TableLayout?
+  orders                   Order[]
+  payments                 Payment[]
+  shifts                   CashierShift[]
+  products                 BranchProduct[]
+  users                    UserBranch[]
+  promos                   Promo[]
+  promoUsages              PromoUsage[]
+  notifications            Notification[]
+  purchases                Purchase[]
+  stockMovements           StockMovement[]
+  branchIngredients        BranchIngredient[]
   ingredientStockMovements IngredientStockMovement[]
-  orderItemCostSnapshots OrderItemCostSnapshot[]
-  expenses   Expense[]
+  orderItemCostSnapshots   OrderItemCostSnapshot[]
+  expenses                 Expense[]
 
   @@unique([restaurantId, code])
   @@index([restaurantId])
   @@index([isActive])
-
   @@map("branch")
 }
 
@@ -304,27 +317,26 @@ model UserBranch {
   @@unique([userId, branchId])
   @@index([userId])
   @@index([branchId])
-
   @@map("userbranch")
 }
 
 model BranchProduct {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   branchId      String
   productId     String
-  isAvailable   Boolean  @default(true)
-  priceOverride Decimal? @db.Decimal(10, 2)
+  isAvailable   Boolean     @default(true)
+  priceOverride Decimal?    @db.Decimal(10, 2)
   // Per-branch inventory quantity (inventory count managed by staff/admin).
   // Orders/payments do NOT auto-decrement this; it is a manual stock level.
-  stock         Int      @default(0)
+  stock         Int         @default(0)
   // Per-branch HPP method (Phase G.1). Default INGREDIENT keeps every
   // existing row on the untouched F.4 automatic costing path.
   costingMode   CostingMode @default(INGREDIENT)
   // Manual HPP for this branch, used only when costingMode = MANUAL.
   // Decimal(12,2); NULL = unset. A literal 0 IS a valid manual cost.
-  manualHpp     Decimal? @db.Decimal(12, 2)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  manualHpp     Decimal?    @db.Decimal(12, 2)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   branch  Branch  @relation(fields: [branchId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -332,7 +344,6 @@ model BranchProduct {
   @@unique([branchId, productId])
   @@index([branchId])
   @@index([productId])
-
   @@map("branchproduct")
 }
 
@@ -340,24 +351,113 @@ model BranchProduct {
 // fields nullable: when unset, the app falls back to Restaurant.name and the
 // default theme colors, so existing restaurants keep working untouched.
 model RestaurantSettings {
-  id             String   @id @default(cuid())
-  restaurantId   String   @unique
+  id                     String   @id @default(cuid())
+  restaurantId           String   @unique
   // Website/brand display name; null → Restaurant.name
-  siteName       String?
+  siteName               String?
   // Locally managed upload: /uploads/branding/<restaurantId>/<uuid>.<ext>
-  logoUrl        String?
+  logoUrl                String?
   // Validated #RRGGBB hex values; null → default theme colors
-  primaryColor   String?
-  secondaryColor String?
-  accentColor    String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  primaryColor           String?
+  secondaryColor         String?
+  accentColor            String?
+  // ------------------------------------------------------------
+  // Instant delivery (BYOK — Bring Your Own Key per tenant).
+  // deliveryApiKey is a SECRET: it is never returned in full by the API
+  // (masked as "****1234"); only the delivery provider client reads it.
+  // ------------------------------------------------------------
+  deliveryEnabled        Boolean  @default(false)
+  /// "MOCK" | "BITESHIP" | "GRABEXPRESS"
+  deliveryProvider       String   @default("MOCK")
+  deliveryApiKey         String?  @db.Text
+  /// "PAID" (dispatch on payment webhook) | "READY" (dispatch when kitchen ready)
+  deliveryAutoDispatchOn String   @default("PAID")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id])
 
   @@index([restaurantId])
-
   @@map("restaurantsettings")
+}
+
+// ============================================================
+// PHASE 4 — SaaS SUBSCRIPTION PLANS & BILLING
+//
+// One subscription row per tenant (1-to-1 with Restaurant). `extraBranchesCount`
+// is the PAID branch add-on quota on top of the single main branch, so the
+// effective branch limit is `1 + extraBranchesCount`. Prices/limits live in
+// `src/lib/subscription.ts` (single source of truth) — the DB only stores the
+// commercial state, never a client-supplied amount.
+// ============================================================
+
+enum SubscriptionPlanCode {
+  STARTER
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}
+
+model RestaurantSubscription {
+  id                 String               @id @default(cuid())
+  restaurantId       String               @unique
+  planCode           SubscriptionPlanCode @default(STARTER)
+  billingCycle       BillingCycle         @default(MONTHLY)
+  status             SubscriptionStatus   @default(TRIAL)
+  /// Paid branch add-ons (quota = 1 main branch + this count).
+  extraBranchesCount Int                  @default(0)
+  currentPeriodStart DateTime             @default(now())
+  /// Trial defaults to +14 days; paid plans get +1/+12 months on payment.
+  currentPeriodEnd   DateTime
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("restaurantsubscription")
+}
+
+/// SaaS billing invoice (plan upgrade, branch add-on, renewal). `amount` is
+/// ALWAYS computed server-side from PLAN_CATALOG — never trusted from input.
+model SaasInvoice {
+  id               String               @id @default(cuid())
+  /// INV-SAAS-YYYYMMDD-XXXXXX
+  invoiceNumber    String               @unique
+  restaurantId     String
+  /// "PLAN_UPGRADE" | "BRANCH_ADDON" | "RENEWAL"
+  type             String
+  targetPlanCode   SubscriptionPlanCode
+  billingCycle     BillingCycle
+  addonBranchesQty Int                  @default(0)
+  amount           Int
+  /// "PENDING" | "PAID" | "EXPIRED" | "FAILED"
+  status           String               @default("PENDING")
+  paymentUrl       String?
+  externalRef      String?
+  paidAt           DateTime?
+  rawResponse      Json?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId, status])
+  @@index([status])
+  @@map("saasinvoice")
 }
 
 model CashierShift {
@@ -377,9 +477,9 @@ model CashierShift {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
-  branch     Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  user       User       @relation(fields: [userId], references: [id])
+  restaurant Restaurant      @relation(fields: [restaurantId], references: [id])
+  branch     Branch?         @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  user       User            @relation(fields: [userId], references: [id])
   payments   Payment[]
   refunds    Refund[]
   overrides  ShiftOverride[]
@@ -389,26 +489,25 @@ model CashierShift {
   @@index([branchId])
   @@index([userId])
   @@index([status])
-
   @@map("cashiershift")
 }
 
 model ShiftOverride {
-  id                    String        @id @default(cuid())
-  restaurantId          String
-  branchId              String?
-  shiftId               String
-  requestedByCashierId  String
-  reason                String        @db.Text
-  proposedClosingCash   Decimal?      @db.Decimal(12, 2)
-  status                RequestStatus @default(PENDING)
-  approvedByAdminId     String?
-  rejectedByAdminId     String?
-  decisionNote          String?       @db.Text
-  requestedAt           DateTime      @default(now())
-  decidedAt             DateTime?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  id                   String        @id @default(cuid())
+  restaurantId         String
+  branchId             String?
+  shiftId              String
+  requestedByCashierId String
+  reason               String        @db.Text
+  proposedClosingCash  Decimal?      @db.Decimal(12, 2)
+  status               RequestStatus @default(PENDING)
+  approvedByAdminId    String?
+  rejectedByAdminId    String?
+  decisionNote         String?       @db.Text
+  requestedAt          DateTime      @default(now())
+  decidedAt            DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   restaurant Restaurant   @relation(fields: [restaurantId], references: [id])
   shift      CashierShift @relation(fields: [shiftId], references: [id])
@@ -420,37 +519,36 @@ model ShiftOverride {
   @@index([branchId])
   @@index([shiftId])
   @@index([status])
-
   @@map("shiftoverride")
 }
 
 model Refund {
-  id                    String        @id @default(cuid())
-  restaurantId          String
-  branchId              String?
-  orderId               String
-  paymentId             String?
-  shiftId               String?
-  amount                Decimal       @db.Decimal(12, 2)
-  reason                String        @db.Text
-  status                RequestStatus @default(PENDING)
-  requestedByCashierId  String
-  approvedByAdminId     String?
-  rejectedByAdminId     String?
-  decisionNote          String?       @db.Text
-  requestedAt           DateTime      @default(now())
-  decidedAt             DateTime?
-  approvedAt            DateTime?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  id                   String        @id @default(cuid())
+  restaurantId         String
+  branchId             String?
+  orderId              String
+  paymentId            String?
+  shiftId              String?
+  amount               Decimal       @db.Decimal(12, 2)
+  reason               String        @db.Text
+  status               RequestStatus @default(PENDING)
+  requestedByCashierId String
+  approvedByAdminId    String?
+  rejectedByAdminId    String?
+  decisionNote         String?       @db.Text
+  requestedAt          DateTime      @default(now())
+  decidedAt            DateTime?
+  approvedAt           DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
-  restaurant Restaurant       @relation(fields: [restaurantId], references: [id])
-  order      Order            @relation(fields: [orderId], references: [id])
-  payment    Payment?         @relation(fields: [paymentId], references: [id])
-  shift      CashierShift?    @relation(fields: [shiftId], references: [id])
-  requester  User             @relation("RefundRequester", fields: [requestedByCashierId], references: [id])
-  approver   User?            @relation("RefundApprover", fields: [approvedByAdminId], references: [id])
-  rejecter   User?            @relation("RefundRejecter", fields: [rejectedByAdminId], references: [id])
+  restaurant Restaurant    @relation(fields: [restaurantId], references: [id])
+  order      Order         @relation(fields: [orderId], references: [id])
+  payment    Payment?      @relation(fields: [paymentId], references: [id])
+  shift      CashierShift? @relation(fields: [shiftId], references: [id])
+  requester  User          @relation("RefundRequester", fields: [requestedByCashierId], references: [id])
+  approver   User?         @relation("RefundApprover", fields: [approvedByAdminId], references: [id])
+  rejecter   User?         @relation("RefundRejecter", fields: [rejectedByAdminId], references: [id])
   items      RefundItem[]
 
   @@index([restaurantId])
@@ -459,7 +557,6 @@ model Refund {
   @@index([paymentId])
   @@index([status])
   @@index([shiftId])
-
   @@map("refund")
 }
 
@@ -493,26 +590,25 @@ model RefundItem {
   @@unique([refundId, orderItemId])
   @@index([refundId])
   @@index([orderItemId])
-
   @@map("refunditem")
 }
 
 model CancellationRequest {
-  id                    String        @id @default(cuid())
-  restaurantId          String
-  branchId              String?
-  orderId               String
-  reason                String        @db.Text
-  status                RequestStatus @default(PENDING)
-  requestedByCashierId  String
-  approvedByAdminId     String?
-  rejectedByAdminId     String?
-  decisionNote          String?       @db.Text
-  requestedAt           DateTime      @default(now())
-  decidedAt             DateTime?
-  approvedAt            DateTime?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  id                   String        @id @default(cuid())
+  restaurantId         String
+  branchId             String?
+  orderId              String
+  reason               String        @db.Text
+  status               RequestStatus @default(PENDING)
+  requestedByCashierId String
+  approvedByAdminId    String?
+  rejectedByAdminId    String?
+  decisionNote         String?       @db.Text
+  requestedAt          DateTime      @default(now())
+  decidedAt            DateTime?
+  approvedAt           DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id])
   order      Order      @relation(fields: [orderId], references: [id])
@@ -524,7 +620,6 @@ model CancellationRequest {
   @@index([branchId])
   @@index([orderId])
   @@index([status])
-
   @@map("cancellationrequest")
 }
 
@@ -548,10 +643,8 @@ model AuditLog {
   @@index([userId])
   @@index([action])
   @@index([createdAt])
-
   @@map("auditlog")
 }
-
 
 model Table {
   id           String      @id @default(cuid())
@@ -566,8 +659,8 @@ model Table {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
-  branch     Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  restaurant Restaurant       @relation(fields: [restaurantId], references: [id])
+  branch     Branch?          @relation(fields: [branchId], references: [id], onDelete: SetNull)
   orders     Order[]
   layoutItem TableLayoutItem?
 
@@ -579,7 +672,6 @@ model Table {
   @@index([restaurantId])
   @@index([branchId])
   @@index([status])
-
   @@map("table")
 }
 
@@ -611,41 +703,39 @@ model TableLayout {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  restaurant Restaurant      @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
-  branch     Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  restaurant Restaurant        @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  branch     Branch            @relation(fields: [branchId], references: [id], onDelete: Cascade)
   items      TableLayoutItem[]
   zones      TableLayoutZone[]
 
   @@index([restaurantId])
-
   @@map("tablelayout")
 }
 
 model TableLayoutItem {
-  id        String     @id @default(cuid())
+  id        String         @id @default(cuid())
   layoutId  String
-  tableId   String     @unique
+  tableId   String         @unique
   x         Float
   y         Float
   width     Float
   height    Float
-  rotation  Float      @default(0)
-  shape     TableShape @default(RECTANGLE)
+  rotation  Float          @default(0)
+  shape     TableShape     @default(RECTANGLE)
   areaType  TableAreaType?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
 
   layout TableLayout @relation(fields: [layoutId], references: [id], onDelete: Cascade)
   table  Table       @relation(fields: [tableId], references: [id], onDelete: Cascade)
 
   @@unique([layoutId, tableId])
   @@index([tableId])
-
   @@map("tablelayoutitem")
 }
 
 model TableLayoutZone {
-  id       String   @id @default(cuid())
+  id       String      @id @default(cuid())
   layoutId String
   name     String
   type     String
@@ -685,40 +775,40 @@ model TableLayoutZone {
 // the client. No relations are declared here so R1 stays purely additive.
 // ============================================================
 model Reservation {
-  id              String   @id @default(cuid())
-  restaurantId    String
-  branchId        String
-  code            String
+  id           String @id @default(cuid())
+  restaurantId String
+  branchId     String
+  code         String
 
-  customerId      String?
-  tableId         String?
+  customerId String?
+  tableId    String?
 
-  guestName       String
-  guestPhone      String
+  guestName  String
+  guestPhone String
 
-  partySize       Int
+  partySize Int
 
   reservationDate DateTime @db.Date
   startMinutes    Int
   durationMinutes Int      @default(90)
 
-  status          ReservationStatus @default(PENDING)
+  status ReservationStatus @default(PENDING)
 
-  notes           String?  @db.Text
-  source          String   @default("PUBLIC")
+  notes  String? @db.Text
+  source String  @default("PUBLIC")
 
   // Set when the reservation is converted to a real order at check-in.
   // Scalar only — the Order model is intentionally untouched.
-  orderId         String?
+  orderId String?
 
-  confirmedAt     DateTime?
-  seatedAt        DateTime?
-  completedAt     DateTime?
-  cancelledAt     DateTime?
-  cancelReason    String?  @db.Text
+  confirmedAt  DateTime?
+  seatedAt     DateTime?
+  completedAt  DateTime?
+  cancelledAt  DateTime?
+  cancelReason String?   @db.Text
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Human-friendly, non-sequential booking code, unique per restaurant.
   @@unique([restaurantId, code])
@@ -728,7 +818,6 @@ model Reservation {
   @@index([tableId, reservationDate, status])
   @@index([customerId])
   @@index([guestPhone])
-
   @@map("reservation")
 }
 
@@ -747,7 +836,6 @@ model Category {
 
   @@unique([restaurantId, name])
   @@index([restaurantId])
-
   @@map("category")
 }
 
@@ -764,24 +852,23 @@ model Product {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
-  category     Category             @relation(fields: [categoryId], references: [id])
-  orderItems   OrderItem[]
-  optionGroups ProductOptionGroup[]
-  addons       ProductAddon[]
-  branchProducts BranchProduct[]
+  restaurant          Restaurant              @relation(fields: [restaurantId], references: [id])
+  category            Category                @relation(fields: [categoryId], references: [id])
+  orderItems          OrderItem[]
+  optionGroups        ProductOptionGroup[]
+  addons              ProductAddon[]
+  branchProducts      BranchProduct[]
   // Admin-curated "recommend for this product" rows (F3).
   recommendationsFrom ProductRecommendation[] @relation("RecommendationSource")
   recommendationsTo   ProductRecommendation[] @relation("RecommendationTarget")
-  purchaseItems PurchaseItem[]
-  stockMovements StockMovement[]
-  recipe         Recipe?
-  costSnapshots   OrderItemCostSnapshot[]
+  purchaseItems       PurchaseItem[]
+  stockMovements      StockMovement[]
+  recipe              Recipe?
+  costSnapshots       OrderItemCostSnapshot[]
 
   @@index([restaurantId])
   @@index([categoryId])
   @@index([isAvailable])
-
   @@map("product")
 }
 
@@ -803,18 +890,18 @@ model Product {
 // ============================================================
 
 model ProductRecommendation {
-  id                  String   @id @default(cuid())
-  restaurantId        String
-  productId           String
+  id                   String   @id @default(cuid())
+  restaurantId         String
+  productId            String
   recommendedProductId String
-  sortOrder           Int      @default(0)
-  isActive            Boolean  @default(true)
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  sortOrder            Int      @default(0)
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
-  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
-  product    Product    @relation("RecommendationSource", fields: [productId], references: [id], onDelete: Cascade)
-  recommendedProduct Product @relation("RecommendationTarget", fields: [recommendedProductId], references: [id], onDelete: Cascade)
+  restaurant         Restaurant @relation(fields: [restaurantId], references: [id])
+  product            Product    @relation("RecommendationSource", fields: [productId], references: [id], onDelete: Cascade)
+  recommendedProduct Product    @relation("RecommendationTarget", fields: [recommendedProductId], references: [id], onDelete: Cascade)
 
   // Explicit short name: MySQL limits identifiers to 64 chars and the
   // auto-generated name exceeds it (P3018 / error 1059).
@@ -822,7 +909,6 @@ model ProductRecommendation {
   @@index([restaurantId])
   @@index([productId])
   @@index([recommendedProductId])
-
   @@map("productrecommendation")
 }
 
@@ -840,7 +926,7 @@ model Customer {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  restaurant  Restaurant  @relation(fields: [restaurantId], references: [id])
+  restaurant  Restaurant   @relation(fields: [restaurantId], references: [id])
   orders      Order[]
   promoUsages PromoUsage[]
 
@@ -848,35 +934,44 @@ model Customer {
   @@unique([restaurantId, email])
   @@index([restaurantId])
   @@index([phone])
-
   @@map("customer")
 }
 
 model Order {
-  id            String        @id @default(cuid())
-  restaurantId  String
-  branchId      String?
-  orderNumber   String
-  customerId    String
-  tableId       String?
-  status        OrderStatus   @default(PENDING)
-  paymentStatus PaymentStatus @default(UNPAID)
-  subtotal      Decimal       @db.Decimal(10, 2)
-  discount      Decimal       @default(0) @db.Decimal(10, 2)
-  tax           Decimal       @default(0) @db.Decimal(10, 2)
-  serviceCharge Decimal       @default(0) @db.Decimal(10, 2)
-  grandTotal    Decimal       @db.Decimal(10, 2)
-  orderType     OrderType     @default(DINE_IN)
-  visitorCount  Int?
-  notes         String?       @db.Text
-  notifiedAt    DateTime?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id                String        @id @default(cuid())
+  restaurantId      String
+  branchId          String?
+  orderNumber       String
+  customerId        String
+  tableId           String?
+  status            OrderStatus   @default(PENDING)
+  paymentStatus     PaymentStatus @default(UNPAID)
+  subtotal          Decimal       @db.Decimal(10, 2)
+  discount          Decimal       @default(0) @db.Decimal(10, 2)
+  tax               Decimal       @default(0) @db.Decimal(10, 2)
+  serviceCharge     Decimal       @default(0) @db.Decimal(10, 2)
+  grandTotal        Decimal       @db.Decimal(10, 2)
+  orderType         OrderType     @default(DINE_IN)
+  visitorCount      Int?
+  notes             String?       @db.Text
+  // ------------------------------------------------------------
+  // DELIVERY (courier) — the fee is ALWAYS recomputed server-side from the
+  // tenant's delivery provider quote; a client-supplied amount is ignored.
+  // grandTotal = subtotal - discount + deliveryFee.
+  // ------------------------------------------------------------
+  deliveryFee       Int           @default(0)
+  deliveryAddress   String?       @db.Text
+  deliveryLatitude  Float?
+  deliveryLongitude Float?
+  deliveryNotes     String?       @db.Text
+  notifiedAt        DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
-  restaurant    Restaurant           @relation(fields: [restaurantId], references: [id])
-  branch        Branch?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  customer      Customer             @relation(fields: [customerId], references: [id])
-  table         Table?               @relation(fields: [tableId], references: [id])
+  restaurant    Restaurant              @relation(fields: [restaurantId], references: [id])
+  branch        Branch?                 @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  customer      Customer                @relation(fields: [customerId], references: [id])
+  table         Table?                  @relation(fields: [tableId], references: [id])
   items         OrderItem[]
   statusHistory OrderStatusHistory[]
   payments      Payment[]
@@ -886,8 +981,9 @@ model Order {
   // Promo applied to this order (F3) — null when no promo was used.
   promoId       String?
   promoCode     String?
-  promo         Promo?               @relation(fields: [promoId], references: [id])
+  promo         Promo?                  @relation(fields: [promoId], references: [id])
   promoUsages   PromoUsage[]
+  shipment      OrderShipment?
 
   @@unique([restaurantId, orderNumber])
   @@index([restaurantId])
@@ -898,8 +994,47 @@ model Order {
   @@index([createdAt])
   // Customer lookup for stats/aggregations (LOW-8).
   @@index([customerId])
-
   @@map("order")
+}
+
+// ============================================================
+// INSTANT DELIVERY — one courier booking per DELIVERY order.
+//
+// orderId is @unique: an order can never hold two live bookings (the
+// dispatch service additionally serializes on the order row, so repeated
+// webhooks / double clicks never book a second driver).
+//
+// status lifecycle:
+//   PENDING → ALLOCATING → PICKING_UP → IN_DELIVERY → DELIVERED
+//                        ↘ CANCELLED / FAILED
+// FAILED is retryable from the admin dashboard (same row is reused).
+// ============================================================
+model OrderShipment {
+  id                 String   @id @default(cuid())
+  restaurantId       String
+  orderId            String   @unique
+  provider           String
+  courierCode        String
+  serviceType        String
+  externalShipmentId String?
+  waybillId          String?
+  status             String   @default("PENDING")
+  fee                Int      @default(0)
+  driverName         String?
+  driverPhone        String?
+  driverPlate        String?
+  trackingUrl        String?  @db.Text
+  rawResponse        Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([restaurantId])
+  @@index([restaurantId, status])
+  @@index([externalShipmentId])
+  @@map("ordershipment")
 }
 
 model ProductOptionGroup {
@@ -919,7 +1054,6 @@ model ProductOptionGroup {
   options ProductOption[]
 
   @@index([productId])
-
   @@map("productoptiongroup")
 }
 
@@ -933,12 +1067,11 @@ model ProductOption {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  group ProductOptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
+  group       ProductOptionGroup @relation(fields: [optionGroupId], references: [id], onDelete: Cascade)
   // H4.1 — optional mini-BOM (composition per ONE option selection).
   ingredients OptionIngredient[]
 
   @@index([optionGroupId])
-
   @@map("productoption")
 }
 
@@ -952,12 +1085,11 @@ model ProductAddon {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product     Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
   // H4.1 — optional mini-BOM (composition per ONE addon unit).
   ingredients AddonIngredient[]
 
   @@index([productId])
-
   @@map("productaddon")
 }
 
@@ -995,7 +1127,6 @@ model AddonIngredient {
   @@unique([addonId, ingredientId])
   @@index([addonId])
   @@index([ingredientId])
-
   @@map("addoningredient")
 }
 
@@ -1014,7 +1145,6 @@ model OptionIngredient {
   @@unique([optionId, ingredientId])
   @@index([optionId])
   @@index([ingredientId])
-
   @@map("optioningredient")
 }
 
@@ -1030,14 +1160,13 @@ model OrderItem {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id])
+  order        Order                  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product      Product                @relation(fields: [productId], references: [id])
   costSnapshot OrderItemCostSnapshot?
-  refundItems RefundItem[]
+  refundItems  RefundItem[]
 
   @@index([orderId])
   @@index([productId])
-
   @@map("orderitem")
 }
 
@@ -1053,31 +1182,30 @@ model OrderItem {
 // as Decimal(12,2); incomplete cost statuses store NULL (never 0).
 // ============================================================
 model OrderItemCostSnapshot {
-  id           String               @id @default(cuid())
+  id           String              @id @default(cuid())
   restaurantId String
   orderId      String
-  orderItemId  String               @unique
+  orderItemId  String              @unique
   branchId     String?
   productId    String
   quantity     Int
-  hppUnit      Decimal?             @db.Decimal(12, 2)
-  hppTotal     Decimal?             @db.Decimal(12, 2)
+  hppUnit      Decimal?            @db.Decimal(12, 2)
+  hppTotal     Decimal?            @db.Decimal(12, 2)
   status       OrderItemCostStatus
-  completedAt  DateTime             @default(now())
-  createdAt    DateTime             @default(now())
-  updatedAt    DateTime             @updatedAt
+  completedAt  DateTime            @default(now())
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
 
-  restaurant Restaurant     @relation(fields: [restaurantId], references: [id])
-  order      Order          @relation(fields: [orderId], references: [id])
-  orderItem  OrderItem      @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
-  branch     Branch?        @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  product    Product        @relation(fields: [productId], references: [id])
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  order      Order      @relation(fields: [orderId], references: [id])
+  orderItem  OrderItem  @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  branch     Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  product    Product    @relation(fields: [productId], references: [id])
 
   @@index([orderId])
   @@index([productId])
   @@index([completedAt])
   @@index([status])
-
   @@map("orderitemcostsnapshot")
 }
 
@@ -1094,35 +1222,34 @@ model OrderStatusHistory {
 
   @@index([orderId])
   @@index([status])
-
   @@map("orderstatushistory")
 }
 
 model Payment {
-  id           String        @id @default(cuid())
-  restaurantId String
-  branchId     String?
-  orderId      String
+  id                   String        @id @default(cuid())
+  restaurantId         String
+  branchId             String?
+  orderId              String
   // Cash drawer shift that collected this payment (KASIR only). Null for
   // online payments (QRIS/VA) and for legacy admin entries without a shift.
-  shiftId      String?
-  status       PaymentStatus @default(UNPAID)
-  amount       Decimal       @db.Decimal(10, 2)
-  method       String?
-  provider     String?
-  providerRef  String?
+  shiftId              String?
+  status               PaymentStatus @default(UNPAID)
+  amount               Decimal       @db.Decimal(10, 2)
+  method               String?
+  provider             String?
+  providerRef          String?
   // Unique iPaymu transaction ID (not the merchant/order reference).
   gatewayTransactionId String?
-  paymentUrl   String?       @db.Text
+  paymentUrl           String?       @db.Text
   // Raw QR data returned by the gateway at payment-creation time (QRIS
   // channel). qrImage is the QR image (URL or data URI) from iPaymu;
   // qrString is the QR payload used only as a fallback to re-render.
-  qrImage      String?       @db.Text
-  qrString     String?       @db.Text
-  paidAt       DateTime?
-  expiresAt    DateTime?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
+  qrImage              String?       @db.Text
+  qrString             String?       @db.Text
+  paidAt               DateTime?
+  expiresAt            DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
 
   restaurant   Restaurant           @relation(fields: [restaurantId], references: [id])
   branch       Branch?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
@@ -1137,7 +1264,6 @@ model Payment {
   @@index([status])
   @@index([providerRef])
   @@index([shiftId])
-
   @@map("payment")
 }
 
@@ -1146,29 +1272,29 @@ model Payment {
 // ============================================================
 
 model Promo {
-  id          String   @id @default(cuid())
-  restaurantId String
-  branchId    String?
-  code        String
-  name        String
-  description String?  @db.Text
-  type        String   @default("PERCENT") // PERCENT | FIXED
-  value       Decimal  @db.Decimal(10, 2)
-  minOrder    Decimal  @default(0) @db.Decimal(10, 2)
+  id               String    @id @default(cuid())
+  restaurantId     String
+  branchId         String?
+  code             String
+  name             String
+  description      String?   @db.Text
+  type             String    @default("PERCENT") // PERCENT | FIXED
+  value            Decimal   @db.Decimal(10, 2)
+  minOrder         Decimal   @default(0) @db.Decimal(10, 2)
   // Cap for PERCENT promos (e.g. 10% max Rp10.000).
-  maxDiscount Decimal? @db.Decimal(10, 2)
-  startsAt    DateTime?
-  expiresAt   DateTime?
+  maxDiscount      Decimal?  @db.Decimal(10, 2)
+  startsAt         DateTime?
+  expiresAt        DateTime?
   // Global usage quota (0 = unlimited). Enforced server-side.
-  maxUsage    Int      @default(0)
+  maxUsage         Int       @default(0)
   // Max times ONE customer may use this promo (0 = unlimited).
-  perCustomerLimit Int  @default(1)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  perCustomerLimit Int       @default(1)
+  isActive         Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
-  branch     Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  restaurant Restaurant   @relation(fields: [restaurantId], references: [id])
+  branch     Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
   usages     PromoUsage[]
   orders     Order[]
 
@@ -1176,7 +1302,6 @@ model Promo {
   @@index([restaurantId])
   @@index([branchId])
   @@index([isActive])
-
   @@map("promo")
 }
 
@@ -1204,7 +1329,6 @@ model PromoUsage {
   @@index([customerId])
   @@index([orderId])
   @@index([branchId])
-
   @@map("promousage")
 }
 
@@ -1222,7 +1346,6 @@ model PaymentTransaction {
 
   @@index([paymentId])
   @@index([provider])
-
   @@map("paymenttransaction")
 }
 
@@ -1243,7 +1366,6 @@ model WhatsAppMessage {
   @@index([from])
   @@index([messageId])
   @@index([createdAt])
-
   @@map("whatsappmessage")
 }
 
@@ -1270,7 +1392,6 @@ model WhatsAppSession {
 
   @@index([restaurantId])
   @@index([status])
-
   @@map("whatsappsession")
 }
 
@@ -1291,7 +1412,6 @@ model Notification {
   @@index([branchId])
   @@index([isRead])
   @@index([createdAt])
-
   @@map("notification")
 }
 
@@ -1321,7 +1441,6 @@ model Supplier {
   @@unique([restaurantId, name])
   @@index([restaurantId])
   @@index([restaurantId, isActive])
-
   @@map("supplier")
 }
 
@@ -1340,17 +1459,16 @@ model Purchase {
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
-  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
-  branch     Branch     @relation(fields: [branchId], references: [id])
-  supplier   Supplier   @relation(fields: [supplierId], references: [id])
-  items      PurchaseItem[]
+  restaurant          Restaurant           @relation(fields: [restaurantId], references: [id])
+  branch              Branch               @relation(fields: [branchId], references: [id])
+  supplier            Supplier             @relation(fields: [supplierId], references: [id])
+  items               PurchaseItem[]
   purchaseIngredients PurchaseIngredient[]
 
   @@index([restaurantId, createdAt])
   @@index([restaurantId, branchId, createdAt])
   @@index([restaurantId, supplierId, createdAt])
   @@index([restaurantId, status])
-
   @@map("purchase")
 }
 
@@ -1371,7 +1489,6 @@ model PurchaseItem {
 
   @@index([purchaseId])
   @@index([productId])
-
   @@map("purchaseitem")
 }
 
@@ -1383,14 +1500,14 @@ model PurchaseItem {
 // master. quantity is Decimal(18,3) for fractional units (KG, GRAM, ML, etc.).
 // unitCost is the historical purchase cost; lineTotal = quantity × unitCost.
 model PurchaseIngredient {
-  id              String         @id @default(cuid())
-  purchaseId      String
-  ingredientId    String
-  quantity        Decimal        @db.Decimal(18, 3)
-  unit            IngredientUnit
-  unitCost        Decimal        @db.Decimal(12, 2)
-  lineTotal       Decimal        @db.Decimal(12, 2)
-  createdAt       DateTime       @default(now())
+  id           String         @id @default(cuid())
+  purchaseId   String
+  ingredientId String
+  quantity     Decimal        @db.Decimal(18, 3)
+  unit         IngredientUnit
+  unitCost     Decimal        @db.Decimal(12, 2)
+  lineTotal    Decimal        @db.Decimal(12, 2)
+  createdAt    DateTime       @default(now())
 
   purchase   Purchase   @relation(fields: [purchaseId], references: [id])
   ingredient Ingredient @relation(fields: [ingredientId], references: [id])
@@ -1435,7 +1552,6 @@ model StockMovement {
   @@index([restaurantId, productId, createdAt])
   @@index([restaurantId, type, createdAt])
   @@index([refType, refId])
-
   @@map("stockmovement")
 }
 
@@ -1444,73 +1560,70 @@ model StockMovement {
 // ============================================================
 
 model Ingredient {
-  id              String         @id @default(cuid())
-  restaurantId    String
-  name            String
-  baseUnit        IngredientUnit @default(PCS)
-  isActive        Boolean        @default(true)
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id           String         @id @default(cuid())
+  restaurantId String
+  name         String
+  baseUnit     IngredientUnit @default(PCS)
+  isActive     Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
-  restaurant        Restaurant              @relation(fields: [restaurantId], references: [id])
-  branchIngredients BranchIngredient[]
+  restaurant               Restaurant                @relation(fields: [restaurantId], references: [id])
+  branchIngredients        BranchIngredient[]
   ingredientStockMovements IngredientStockMovement[]
-  purchaseIngredients PurchaseIngredient[]
-  recipeItems     RecipeItem[]
-  addonIngredients  AddonIngredient[]
-  optionIngredients OptionIngredient[]
+  purchaseIngredients      PurchaseIngredient[]
+  recipeItems              RecipeItem[]
+  addonIngredients         AddonIngredient[]
+  optionIngredients        OptionIngredient[]
 
   @@unique([restaurantId, name])
   @@index([restaurantId])
   @@index([restaurantId, isActive])
-
   @@map("ingredient")
 }
 
 model BranchIngredient {
-  id              String   @id @default(cuid())
-  branchId        String
-  ingredientId    String
-  stock              Decimal  @db.Decimal(18, 3) @default(0)
-  averageCost        Decimal? @db.Decimal(12, 2)
-  lastPurchaseCost   Decimal? @db.Decimal(12, 2)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id               String   @id @default(cuid())
+  branchId         String
+  ingredientId     String
+  stock            Decimal  @default(0) @db.Decimal(18, 3)
+  averageCost      Decimal? @db.Decimal(12, 2)
+  lastPurchaseCost Decimal? @db.Decimal(12, 2)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  branch          Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  ingredient      Ingredient      @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
+  branch     Branch     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
 
   @@unique([branchId, ingredientId])
   @@index([branchId])
   @@index([ingredientId])
-
   @@map("branchingredient")
 }
 
 model IngredientStockMovement {
-  id              String            @id @default(cuid())
-  restaurantId    String
-  branchId        String
-  ingredientId    String
-  type            StockMovementType
-  quantity        Decimal           @db.Decimal(18, 3)
-  balanceAfter    Decimal           @db.Decimal(18, 3)
-  refType         String?
-  refId           String?
-  reason          String?           @db.Text
-  userId          String?
-  createdAt       DateTime          @default(now())
+  id           String            @id @default(cuid())
+  restaurantId String
+  branchId     String
+  ingredientId String
+  type         StockMovementType
+  quantity     Decimal           @db.Decimal(18, 3)
+  balanceAfter Decimal           @db.Decimal(18, 3)
+  refType      String?
+  refId        String?
+  reason       String?           @db.Text
+  userId       String?
+  createdAt    DateTime          @default(now())
 
-  restaurant Restaurant        @relation(fields: [restaurantId], references: [id])
-  branch     Branch            @relation(fields: [branchId], references: [id])
-  ingredient Ingredient        @relation(fields: [ingredientId], references: [id])
-  user       User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  branch     Branch     @relation(fields: [branchId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+  user       User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([restaurantId, branchId, createdAt])
   @@index([restaurantId, ingredientId, createdAt])
   @@index([restaurantId, type, createdAt])
   @@index([refType, refId])
-
   @@map("ingredientstockmovement")
 }
 
@@ -1528,20 +1641,19 @@ model IngredientStockMovement {
 // ============================================================
 
 model Recipe {
-  id            String   @id @default(cuid())
-  restaurantId  String
-  productId     String   @unique
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id           String   @id @default(cuid())
+  restaurantId String
+  productId    String   @unique
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  restaurant Restaurant  @relation(fields: [restaurantId], references: [id])
-  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  restaurant Restaurant   @relation(fields: [restaurantId], references: [id])
+  product    Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
   items      RecipeItem[]
 
   @@unique([restaurantId, productId])
   @@index([restaurantId])
-
   @@map("recipe")
 }
 
@@ -1560,7 +1672,6 @@ model RecipeItem {
   @@unique([recipeId, ingredientId])
   @@index([recipeId])
   @@index([ingredientId])
-
   @@map("recipeitem")
 }
 
@@ -1605,7 +1716,6 @@ model ExpenseCategory {
   @@unique([restaurantId, name])
   @@index([restaurantId])
   @@index([restaurantId, isActive])
-
   @@map("expensecategory")
 }
 
@@ -1634,6 +1744,5 @@ model Expense {
   @@index([restaurantId, spentAt])
   @@index([restaurantId, branchId, spentAt])
   @@index([restaurantId, categoryId, spentAt])
-
   @@map("expense")
 }

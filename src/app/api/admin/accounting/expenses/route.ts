@@ -16,6 +16,7 @@ import {
   listExpenses,
   createExpense,
 } from "@/services/accounting/expense.service";
+import { requirePlanFeature } from "@/services/billing/plan-guard.service";
 
 // ============================================================
 // GET  /api/admin/accounting/expenses   — list + summary (ADMIN only)
@@ -69,6 +70,9 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const ctx = await requireAdmin();
+    // Phase 4 — operational-expense accounting is part of the PRO+ P&L suite.
+    await requirePlanFeature(ctx.restaurantId, "accountingPl");
+
     const body = (await request.json().catch(() => null)) as
       | Record<string, unknown>
       | null;

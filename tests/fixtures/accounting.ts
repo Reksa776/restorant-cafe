@@ -245,7 +245,7 @@ export async function createRestaurantFixture(
   input: { id: string; name: string }
 ): Promise<void> {
   await prisma.restaurant.create({
-    data: { id: input.id, name: input.name },
+    data: { id: input.id, slug: `fixture-${input.id}`, name: input.name },
   });
 }
 

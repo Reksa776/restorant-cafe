@@ -7,6 +7,7 @@ import {
 import { AppError } from "@/lib/errors";
 import { requireAdmin } from "@/lib/auth-helpers";
 import { userService } from "@/services/user/user.service";
+import { assertCanCreateStaff } from "@/services/billing/plan-guard.service";
 
 /**
  * GET /api/users — list staff users (ADMIN only).
@@ -33,6 +34,9 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const { restaurantId, userId } = await requireAdmin();
+    // Phase 4 — staff quota (STARTER 2, BASIC 5, PRO/ENTERPRISE unlimited).
+    await assertCanCreateStaff(restaurantId);
+
     const body = await request.json();
 
     const user = await userService.createUser({

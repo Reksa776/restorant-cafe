@@ -40,6 +40,7 @@ import {
 } from "./reservation.types";
 import { dispatchReservationWhatsApp } from "./reservation-whatsapp";
 import { orderService } from "@/services/order/order.service";
+import { isPlanFeatureActive } from "@/services/billing/plan-guard.service";
 import type { ReservationOrderItemInput } from "./reservation.types";
 
 // ============================================================
@@ -456,6 +457,14 @@ export class ReservationService {
    */
   private async notifyReservationWhatsApp(view: ReservationView): Promise<void> {
     try {
+      // Phase 5 — `whatsappNotif` is a PRO+ feature. When the tenant's plan
+      // does not include it (or the subscription lapsed), skip the WhatsApp
+      // send silently — the reservation is already committed and stays
+      // authoritative either way.
+      if (!(await isPlanFeatureActive(view.restaurantId, "whatsappNotif"))) {
+        return;
+      }
+
       await dispatchReservationWhatsApp(view, view.status);
     } catch (error) {
       console.error(

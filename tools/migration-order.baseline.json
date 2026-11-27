@@ -5,12 +5,12 @@
   "prismaVersion": "7.10.0",
   "generatedBy": "tools/preflight-migrations.mjs --update",
   "capturedWith": {
-    "node": "v24.20.0",
+    "node": "v26.13.0",
     "icu": "78.3",
     "unicode": "17.0",
     "icuSmall": false,
     "i18nSupport": 1,
-    "defaultLocale": "en-NZ"
+    "defaultLocale": "en-US"
   },
   "order": [
     "0000_init_schema",
@@ -35,7 +35,12 @@
     "20260915_add_reservation",
     "20260920_add_floor_layout",
     "20261009_add_expense_management",
-    "20261112000000_add_table_area_type"
+    "20261112000000_add_table_area_type",
+    "20261113000000_add_layout_zones",
+    "20261114000000_add_gateway_transaction_id",
+    "20261126000000_add_restaurant_slug",
+    "20261127000000_add_delivery_shipment",
+    "20261128000000_add_saas_billing"
   ],
   "checksums": {
     "0000_init_schema": "6788090d6cf15380a77819e0ac0d6975d47edf0f01a45fd33ae829dd367322ee",
@@ -60,6 +65,11 @@
     "20260915_add_reservation": "0b33ba057de665abdb97f46449f642ddd48d842a25a1fcae186c1bf2042596f8",
     "20260920_add_floor_layout": "194edac1b88193ca26f926c21395fc98d8632f8e731bc249c1acc5f1fd1504f7",
     "20261009_add_expense_management": "a9ef70832f6aae116b6587aa0b604828bb7064bc8b8b88dc5a088c810001b4cf",
-    "20261112000000_add_table_area_type": "4f3d317dca53a9277e077e373157c3ea991c9aa9b778fbbeadc19a0ce0b80f8b"
+    "20261112000000_add_table_area_type": "4f3d317dca53a9277e077e373157c3ea991c9aa9b778fbbeadc19a0ce0b80f8b",
+    "20261113000000_add_layout_zones": "0e791ebd2b60a0e4a16fc52af0781b5da50576954e1aba4cf43ef5927660eb10",
+    "20261114000000_add_gateway_transaction_id": "686ca92af6a8537275ee0ee25ea35cd78c741b217049a77ad7f47fe7fa26106f",
+    "20261126000000_add_restaurant_slug": "7e0c0e52e86acdecff8f250b62bd0ab9b7f0013e2188bca8f46e6d51511c7582",
+    "20261127000000_add_delivery_shipment": "f960bc6e436f3ce2936d3afc4dc76d5099291df936330a24bc2e9a6509aacc69",
+    "20261128000000_add_saas_billing": "ff4d072a4a1c44e01220f1e628880bcd9cfb621f0372f47b4192419a9e00bd37"
   }
 }

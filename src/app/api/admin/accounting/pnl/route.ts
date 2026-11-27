@@ -8,6 +8,7 @@ import {
   assertBranchInScope,
 } from "@/lib/auth-helpers";
 import { getPnlReport } from "@/services/accounting/pnl.service";
+import { requirePlanFeature } from "@/services/billing/plan-guard.service";
 
 // ============================================================
 // GET /api/admin/accounting/pnl
@@ -25,6 +26,9 @@ export async function GET(request: NextRequest) {
   try {
     const branchId = branchHintFrom(request);
     const ctx = await requireAdmin(branchId);
+    // Phase 4 — P&L reporting is a PRO+ feature.
+    await requirePlanFeature(ctx.restaurantId, "accountingPl");
+
     const params = request.nextUrl.searchParams;
 
     // A client-supplied branch filter must be authorized, never trusted.

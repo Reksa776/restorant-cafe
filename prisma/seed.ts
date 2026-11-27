@@ -24,6 +24,9 @@ async function main() {
   // Create restaurant
   const restaurant = await prisma.restaurant.create({
     data: {
+      // Phase 2 — public tenant identifier. This is the demo tenant's store
+      // URL: /r/demo-resto
+      slug: "demo-resto",
       name: "Restoran Bahagia",
       address: "Jl. Contoh No. 123, Jakarta",
       phone: "+6281234567890",
@@ -31,7 +34,71 @@ async function main() {
     },
   });
 
-  console.log(`✅ Restaurant created: ${restaurant.name}`);
+  console.log(`✅ Restaurant created: ${restaurant.name} (/r/${restaurant.slug})`);
+
+  // Phase 2 — default finance categories so the demo tenant can record
+  // expenses immediately (the self-service registration creates the same set).
+  await prisma.expenseCategory.createMany({
+    data: [
+      { restaurantId: restaurant.id, name: "Bahan Baku" },
+      { restaurantId: restaurant.id, name: "Operasional" },
+      { restaurantId: restaurant.id, name: "Gaji" },
+      { restaurantId: restaurant.id, name: "Sewa & Utilitas" },
+      { restaurantId: restaurant.id, name: "Lainnya" },
+    ],
+  });
+  console.log(`✅ Expense categories created: 5`);
+
+  // Phase 2 — the demo tenant's first branch (same shape the self-service
+  // registration creates). Tables are assigned to it below so the branch
+  // selector and branch-scoped menu work out of the box.
+  const mainBranch = await prisma.branch.create({
+    data: {
+      restaurantId: restaurant.id,
+      code: "PUSAT",
+      name: "Cabang Utama",
+      address: "Jl. Contoh No. 123, Jakarta",
+      phone: "+6281234567890",
+      // Phase 3 — courier pickup origin (Monas, Jakarta Pusat). The delivery
+      // flow is usable out of the box with the MOCK provider (no API key).
+      latitude: -6.1753924,
+      longitude: 106.8271528,
+      postalCode: "10110",
+      contactPhone: "+6281234567890",
+      isActive: true,
+    },
+  });
+  console.log(`✅ Branch created: ${mainBranch.name} (${mainBranch.code})`);
+
+  // Phase 3 — demo delivery configuration (BYOK mock provider, dispatch when
+  // paid). Tenants can switch to Biteship + their own API key in
+  // /admin/settings.
+  await prisma.restaurantSettings.create({
+    data: {
+      restaurantId: restaurant.id,
+      deliveryEnabled: true,
+      deliveryProvider: "MOCK",
+      deliveryAutoDispatchOn: "PAID",
+    },
+  });
+  console.log("✅ Delivery settings created: MOCK (dispatch on PAID)");
+
+  // Phase 4 — the demo tenant runs PRO for a full year with 2 paid branch
+  // add-ons (quota = 1 main + 2 = 3 branches) so every paid feature (QR
+  // self-order, layout, BOM/HPP, purchasing, P&L, reservations, WhatsApp,
+  // multi-outlet reports, custom branding) can be explored out of the box.
+  await prisma.restaurantSubscription.create({
+    data: {
+      restaurantId: restaurant.id,
+      planCode: "PRO",
+      billingCycle: "YEARLY",
+      status: "ACTIVE",
+      extraBranchesCount: 2,
+      currentPeriodStart: new Date(),
+      currentPeriodEnd: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+    },
+  });
+  console.log("✅ Subscription created: PRO (yearly, +2 branch add-ons)");
 
   // Create admin user
   const hashedPassword = await bcrypt.hash("admin123", 12);
@@ -59,6 +126,16 @@ async function main() {
     },
   });
   console.log(`✅ Cashier user created: ${cashier.email}`);
+
+  // Explicit branch assignments (multi-branch RBAC) — both demo staff users
+  // belong to the main branch.
+  await prisma.userBranch.createMany({
+    data: [
+      { userId: admin.id, branchId: mainBranch.id },
+      { userId: cashier.id, branchId: mainBranch.id },
+    ],
+  });
+  console.log(`✅ UserBranch assignments created: 2`);
 
   // Create categories
   const categories = await Promise.all([
@@ -166,6 +243,7 @@ async function main() {
       prisma.table.create({
         data: {
           restaurantId: restaurant.id,
+          branchId: mainBranch.id,
           number: i + 1,
           name: `Table ${String(i + 1).padStart(2, "0")}`,
           capacity: i < 6 ? 4 : 6,

@@ -1,15 +1,17 @@
 import { NextRequest } from "next/server";
 import { ValidationError } from "@/lib/errors";
 import { tryGetCustomerSessionFromRequest } from "@/lib/customer-session.server";
+import { resolveRequestTenant } from "@/lib/tenant";
 
 /**
  * Shared public restaurant resolution for the reservation public routes.
  * Mirrors `POST /api/public/orders` — the client NEVER dictates the tenant:
  *   1. tableId wins (server-validated via Prisma; branch derives from it)
  *   2. the authenticated customer-session restaurant (only when ACTIVE)
- *   3. the client-claimed restaurantId (only when it maps to an ACTIVE
- *      restaurant)
- *   4. legacy fallback: the first active restaurant
+ *   3. an explicit restaurantId/slug (body/query) or the tenant cookie
+ *
+ * Phase 2: the legacy "first active restaurant" fallback is REMOVED — no
+ * tenant context is a 400, never another merchant's booking page.
  */
 export async function resolvePublicReservationRestaurant(
   request: NextRequest,
@@ -29,21 +31,13 @@ export async function resolvePublicReservationRestaurant(
   }
 
   const session = tryGetCustomerSessionFromRequest(request);
-  for (const candidate of [session?.restaurantId, hints.restaurantId]) {
-    if (!candidate) continue;
-    const restaurant = await prisma.restaurant.findUnique({
-      where: { id: candidate },
-      select: { id: true, isActive: true },
-    });
-    if (restaurant?.isActive) return restaurant.id;
-  }
-
-  const fallback = await prisma.restaurant.findFirst({
-    where: { isActive: true },
-    select: { id: true },
+  const tenant = await resolveRequestTenant(request, {
+    id: session?.restaurantId ?? hints.restaurantId ?? null,
   });
-  if (!fallback) {
-    throw new ValidationError("Tidak ada restoran aktif");
+  if (!tenant) {
+    throw new ValidationError(
+      "Konteks restoran tidak ditemukan. Pindai QR meja atau gunakan link restoran."
+    );
   }
-  return fallback.id;
+  return tenant.id;
 }

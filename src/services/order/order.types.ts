@@ -65,6 +65,18 @@ export const CreateCustomerOrderSchema = z.object({
   branchCode: z.string().trim().min(1).max(50).optional(),
   visitorCount: z.number().int().min(1).max(100).optional(),
   notes: z.string().optional(),
+  /**
+   * DELIVERY destination. Required when orderType = DELIVERY: the server
+   * validates the branch has an origin, quotes the courier and RECOMPUTES the
+   * fee — the client can never send its own deliveryFee.
+   */
+  deliveryAddress: z.string().trim().min(5).max(500).optional(),
+  deliveryLatitude: z.coerce.number().min(-90).max(90).optional(),
+  deliveryLongitude: z.coerce.number().min(-180).max(180).optional(),
+  deliveryNotes: z.string().trim().max(300).optional(),
+  /** Courier/service the customer picked from the server quote (hints only). */
+  deliveryCourier: z.string().trim().max(40).optional(),
+  deliveryService: z.string().trim().max(40).optional(),
   items: z
     .array(OrderItemInputSchema)
     .min(1, "Minimal 1 item harus dipilih"),

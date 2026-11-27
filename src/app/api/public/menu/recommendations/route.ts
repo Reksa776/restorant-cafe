@@ -5,6 +5,7 @@ import { AppError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { tryGetCustomerSessionFromRequest } from "@/lib/customer-session.server";
 import { recommendationService } from "@/services/recommendation/recommendation.service";
+import { resolveRequestTenant } from "@/lib/tenant";
 
 // ============================================================
 // GET /api/public/menu/recommendations
@@ -37,7 +38,8 @@ export async function GET(request: NextRequest) {
     );
 
     const { searchParams } = new URL(request.url);
-    const restaurantId = searchParams.get("restaurantId");
+    const restaurantIdParam = searchParams.get("restaurantId");
+    const slugParam = searchParams.get("slug");
     const categoryId = searchParams.get("categoryId") || undefined;
     const productId = searchParams.get("productId") || undefined;
     const branchCode = searchParams.get("branchCode") || undefined;
@@ -46,17 +48,21 @@ export async function GET(request: NextRequest) {
       MAX_LIMIT
     );
 
-    if (!restaurantId) {
-      throw new AppError("restaurantId is required", 400, "VALIDATION_ERROR");
-    }
-
-    const restaurant = await prisma.restaurant.findFirst({
-      where: { id: restaurantId, isActive: true },
-      select: { id: true },
+    // Phase 2 — explicit tenant only (id/slug/cookie); no global fallback.
+    const tenant = await resolveRequestTenant(request, {
+      id: restaurantIdParam,
+      slug: slugParam,
     });
-    if (!restaurant) {
-      throw new AppError("Restaurant not found", 404, "NOT_FOUND");
+    if (!tenant) {
+      throw restaurantIdParam || slugParam
+        ? new AppError("Restaurant not found", 404, "NOT_FOUND")
+        : new AppError(
+            "restaurantId atau slug wajib diisi",
+            400,
+            "VALIDATION_ERROR"
+          );
     }
+    const restaurantId = tenant.id;
 
     // Resolve the branch context (branchCode from the table QR URL) so
     // recommendations only surface products available at this branch.

@@ -3,6 +3,7 @@ import { tableService } from "@/services/table/table.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { requireRoles, branchHintFrom, authorizedBranches } from "@/lib/auth-helpers";
+import { requirePlanFeature } from "@/services/billing/plan-guard.service";
 
 export async function POST(
   request: NextRequest,
@@ -11,6 +12,9 @@ export async function POST(
   try {
     const branchId = branchHintFrom(request);
     const ctx = await requireRoles(["ADMIN", "CASHIER"], branchId);
+    // Phase 4 — QR self-order meja is a PRO+ feature.
+    await requirePlanFeature(ctx.restaurantId, "qrOrder");
+
     const { id } = await params;
     // Optional baseUrl from the client (current origin) keeps the QR payload
     // identical to the customer link shown in the admin UI.

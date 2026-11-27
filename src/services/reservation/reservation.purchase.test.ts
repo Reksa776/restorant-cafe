@@ -113,8 +113,12 @@ async function linkedOrder(reservationId: string) {
 
 before(async () => {
   const tag = `QAPUR${Date.now()}`;
-  const ra = await prisma.restaurant.create({ data: { name: `${tag} A` } });
-  const rb = await prisma.restaurant.create({ data: { name: `${tag} B` } });
+  const ra = await prisma.restaurant.create({
+    data: { slug: `${tag}-a`.toLowerCase(), name: `${tag} A` },
+  });
+  const rb = await prisma.restaurant.create({
+    data: { slug: `${tag}-b`.toLowerCase(), name: `${tag} B` },
+  });
   restA = ra.id;
   restB = rb.id;
 

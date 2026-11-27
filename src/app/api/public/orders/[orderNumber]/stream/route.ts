@@ -1,4 +1,6 @@
+import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { resolveRequestTenant } from "@/lib/tenant";
 import { subscribeRealtime } from "@/lib/realtime/bus";
 import { REALTIME_EVENT_TYPES } from "@/lib/realtime/types";
 import type {
@@ -55,13 +57,21 @@ const CUSTOMER_EVENT_TYPES = new Set<RealtimeEventType>([
  * on reconnect (open event) so nothing is missed while disconnected.
  */
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ orderNumber: string }> }
 ) {
+  // Phase 2 — same tenant boundary as the order GET: the stream subscribes to
+  // the bus of the tenant resolved from the customer's QR/link context, so an
+  // order number from another merchant never resolves here.
+  const tenant = await resolveRequestTenant(request);
+  if (!tenant) {
+    return new Response("Tenant context required", { status: 400 });
+  }
+
   const { orderNumber } = await params;
 
   const order = await prisma.order.findFirst({
-    where: { orderNumber },
+    where: { orderNumber, restaurantId: tenant.id },
     select: { id: true, restaurantId: true, orderNumber: true },
   });
 

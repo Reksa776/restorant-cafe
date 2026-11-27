@@ -14,6 +14,10 @@ import type { PaymentProvider } from "./payment.types";
 import {
   RESERVATION_PAYMENT_HOLD_MINUTES,
 } from "@/services/reservation/reservation.slots";
+import {
+  ensureOrderStockReserved,
+  releaseOrderStock,
+} from "@/services/stock/order-stock.service";
 
 export class PaymentService {
   private provider: PaymentProvider;
@@ -168,6 +172,23 @@ customer: { select: { id: true, name: true, phone: true } },
       if (paidPayment) {
         throw new ConflictError("Order already paid");
       }
+
+      // K5 — make sure the product stock is still held for this order before a
+      // new collectable intent exists. The hold normally happens at order
+      // creation; this re-acquires it when a dead intent released it (expired
+      // QRIS → retry) and is a no-op while the hold is intact. A shortage
+      // aborts the intent under the same order lock, before any gateway call.
+      const stockLines = await tx.orderItem.findMany({
+        where: { orderId: lockedOrder.id },
+        select: { productId: true, quantity: true },
+      });
+      await ensureOrderStockReserved(tx, {
+        restaurantId: lockedOrder.restaurantId,
+        orderId: lockedOrder.id,
+        branchId: lockedOrder.branchId,
+        items: stockLines,
+        reason: "Stok dipegang saat pembayaran dibuat",
+      });
 
       // ------------------------------------------------------------
       // KASIR — no gateway call. Record UNPAID and let a cashier collect.
@@ -768,6 +789,27 @@ customer: { select: { id: true, name: true, phone: true } },
     // Guarded update: only an UNPAID row can flip to PAID, so two cashiers
     // clicking at the same time can never double-pay.
     const result = await prisma.$transaction(async (tx) => {
+      // K5 — take the same order row lock every other stock-hold writer takes,
+      // so a concurrent webhook release cannot free the stock between the
+      // re-hold below and the PAID flip.
+      await tx.$queryRaw`SELECT id FROM \`order\` WHERE id = ${payment.orderId} FOR UPDATE`;
+
+      // K5 — collecting cash must (re)acquire the product stock hold before
+      // money moves: an expired online intent may have released it. No-op when
+      // the hold is intact; a shortage throws and nothing is collected.
+      const stockLines = await tx.orderItem.findMany({
+        where: { orderId: payment.orderId },
+        select: { productId: true, quantity: true },
+      });
+      await ensureOrderStockReserved(tx, {
+        restaurantId,
+        orderId: payment.orderId,
+        branchId: payment.branchId,
+        items: stockLines,
+        reason: "Stok dipegang saat pembayaran kasir diterima",
+        userId: changedBy ?? null,
+      });
+
       const updated = await tx.payment.updateMany({
         where: {
           id: payment.id,
@@ -1117,6 +1159,13 @@ customer: { select: { id: true, name: true, phone: true } },
     // existing confirmation WhatsApp is dispatched AFTER the commit.
     let confirmedReservationId: string | null = null;
     const updatedPayment = await prisma.$transaction(async (tx) => {
+      // K5 — serialize against payment creation / cashier collection on the
+      // SAME order row (both take this lock first). Without it, an EXPIRED
+      // callback could release the stock hold at the exact moment a new
+      // collectable intent is being created, leaving a live intent with no
+      // hold. Lock order is always order → payment → branchproduct.
+      await tx.$queryRaw`SELECT id FROM \`order\` WHERE id = ${payment.orderId} FOR UPDATE`;
+
       // Webhook race protection (M1): the old QRIS payment may already have
       // been CANCELLED server-side (e.g. the cashier switched to CASH) while
       // this callback was in flight. A cancelled row is history — this
@@ -1228,6 +1277,32 @@ customer: { select: { id: true, name: true, phone: true } },
           },
           data: { paymentStatus: webhookData.status },
         });
+
+        // K5 — a dead online intent gives the stock hold back so the units can
+        // be sold again. Guarded: only when NO other live intent exists (a
+        // freshly created retry must keep the hold) and the order is not in a
+        // terminal state. A later retry/cashier collection re-acquires it.
+        const [livePending, orderState] = await Promise.all([
+          tx.payment.count({
+            where: { orderId: payment.orderId, status: "PENDING" },
+          }),
+          tx.order.findUnique({
+            where: { id: payment.orderId },
+            select: { id: true, restaurantId: true, status: true },
+          }),
+        ]);
+        if (
+          livePending === 0 &&
+          orderState &&
+          orderState.status !== "COMPLETED" &&
+          orderState.status !== "CANCELLED"
+        ) {
+          await releaseOrderStock(tx, {
+            restaurantId: orderState.restaurantId,
+            orderId: orderState.id,
+            reason: `Pembayaran ${webhookData.status}`,
+          });
+        }
       }
 
       // Re-read inside the transaction so the caller gets the final row.
@@ -1258,6 +1333,42 @@ customer: { select: { id: true, name: true, phone: true } },
       } catch (error) {
         console.error(
           "[Payment] Reservation confirmation notification failed:",
+          error
+        );
+      }
+    }
+
+    // ============================================================
+    // DELIVERY — auto-dispatch on PAID (best-effort, AFTER commit).
+    //
+    // The PAID status is already committed, so a courier/API failure can never
+    // roll it back: dispatch marks the shipment FAILED and the dashboard
+    // offers "Panggil Ulang Driver". Runs only when the tenant chose PAID.
+    // ============================================================
+    if (
+      webhookData.status === "PAID" &&
+      updatedPayment.order?.orderType === "DELIVERY"
+    ) {
+      try {
+        const settings = await prisma.restaurantSettings.findUnique({
+          where: { restaurantId: payment.restaurantId },
+          select: { deliveryEnabled: true, deliveryAutoDispatchOn: true },
+        });
+        if (
+          settings?.deliveryEnabled &&
+          settings.deliveryAutoDispatchOn === "PAID"
+        ) {
+          const { deliveryService } = await import(
+            "@/services/delivery/delivery.service"
+          );
+          await deliveryService.dispatchOrderShipment(
+            payment.orderId,
+            payment.restaurantId
+          );
+        }
+      } catch (error) {
+        console.error(
+          `[Payment] Delivery auto-dispatch failed for order ${payment.orderId} (PAID stays committed; retry from the dashboard):`,
           error
         );
       }

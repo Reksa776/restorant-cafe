@@ -13,6 +13,19 @@ import {
 const CODE_RE = /^[A-Za-z0-9_-]{1,20}$/;
 const NAME_RE = /^.{2,100}$/;
 
+/** Pickup-origin coordinate validation (nullable = "not set"). */
+function assertCoordinate(
+  value: number | null | undefined,
+  label: string,
+  min: number,
+  max: number
+): void {
+  if (value === undefined || value === null) return;
+  if (!Number.isFinite(value) || value < min || value > max) {
+    throw new ValidationError(`${label} tidak valid`);
+  }
+}
+
 export class BranchService {
   /**
    * List branches for a restaurant. When `allowedBranchIds` is provided,
@@ -53,6 +66,10 @@ export class BranchService {
     name: string;
     address?: string;
     phone?: string;
+    latitude?: number | null;
+    longitude?: number | null;
+    postalCode?: string | null;
+    contactPhone?: string | null;
   }) {
     const { restaurantId } = input;
     const code = (input.code || "").trim().toUpperCase();
@@ -66,6 +83,9 @@ export class BranchService {
         "Kode cabang wajib diisi, maksimal 20 karakter (huruf, angka, -, _, tanpa spasi)"
       );
     }
+
+    assertCoordinate(input.latitude, "Latitude", -90, 90);
+    assertCoordinate(input.longitude, "Longitude", -180, 180);
 
     const existing = await prisma.branch.findFirst({
       where: { restaurantId, code },
@@ -81,6 +101,10 @@ export class BranchService {
         name,
         address: input.address?.trim() || null,
         phone: input.phone?.trim() || null,
+        latitude: input.latitude ?? null,
+        longitude: input.longitude ?? null,
+        postalCode: input.postalCode?.trim() || null,
+        contactPhone: input.contactPhone?.trim() || null,
         isActive: true,
       },
     });
@@ -107,6 +131,10 @@ export class BranchService {
       name?: string;
       address?: string;
       phone?: string;
+      latitude?: number | null;
+      longitude?: number | null;
+      postalCode?: string | null;
+      contactPhone?: string | null;
     }
   ) {
     const branch = await this.getBranch(id, restaurantId);
@@ -116,12 +144,26 @@ export class BranchService {
       throw new ValidationError("Nama cabang minimal 2 karakter");
     }
 
+    assertCoordinate(data.latitude, "Latitude", -90, 90);
+    assertCoordinate(data.longitude, "Longitude", -180, 180);
+
+    // `null` explicitly clears a coordinate; `undefined` leaves it untouched.
     const updated = await prisma.branch.update({
       where: { id: branch.id },
       data: {
         name: name ?? undefined,
         address: data.address?.trim() || undefined,
         phone: data.phone?.trim() || undefined,
+        latitude: data.latitude === undefined ? undefined : data.latitude,
+        longitude: data.longitude === undefined ? undefined : data.longitude,
+        postalCode:
+          data.postalCode === undefined
+            ? undefined
+            : data.postalCode?.trim() || null,
+        contactPhone:
+          data.contactPhone === undefined
+            ? undefined
+            : data.contactPhone?.trim() || null,
       },
     });
 

@@ -5,6 +5,7 @@ import { createdResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { tryGetCustomerSessionFromRequest } from "@/lib/customer-session.server";
+import { resolveRequestTenant } from "@/lib/tenant";
 
 /**
  * POST /api/public/orders
@@ -38,7 +39,8 @@ export async function POST(request: NextRequest) {
     let branchId: string | null = null;
 
     if (input.tableId) {
-      // Look up table to get restaurantId + branchId
+      // Look up table to get restaurantId + branchId. The table's restaurant
+      // must be ACTIVE — a deactivated tenant cannot receive orders.
       const { prisma } = await import("@/lib/prisma");
       const table = await prisma.table.findUnique({
         where: { id: input.tableId },
@@ -46,10 +48,11 @@ export async function POST(request: NextRequest) {
           restaurantId: true,
           branchId: true,
           isActive: true,
+          restaurant: { select: { isActive: true } },
         },
       });
 
-      if (!table || !table.isActive) {
+      if (!table || !table.isActive || !table.restaurant?.isActive) {
         throw new ValidationError("Meja tidak valid");
       }
 
@@ -58,36 +61,24 @@ export async function POST(request: NextRequest) {
     }
 
     if (!restaurantId) {
-      const { prisma } = await import("@/lib/prisma");
-      const candidates = [
-        session?.restaurantId,
-        typeof input.restaurantId === "string" ? input.restaurantId : null,
-      ];
-      for (const candidate of candidates) {
-        if (!candidate) continue;
-        const restaurant = await prisma.restaurant.findUnique({
-          where: { id: candidate },
-          select: { id: true, isActive: true },
-        });
-        if (restaurant?.isActive) {
-          restaurantId = restaurant.id;
-          break;
-        }
+      // Phase 2 — EXPLICIT tenant only: the authenticated customer session,
+      // an explicit restaurantId/slug from the body, ?slug= or the tenant
+      // cookie set by the tenant's QR/store link. The dangerous "first active
+      // restaurant" fallback is gone: no tenant context → 400.
+      const tenant = await resolveRequestTenant(request, {
+        slug: typeof body.slug === "string" ? body.slug : null,
+        id:
+          session?.restaurantId ??
+          (typeof input.restaurantId === "string" ? input.restaurantId : null),
+      });
+
+      if (!tenant) {
+        throw new ValidationError(
+          "Konteks restoran tidak ditemukan. Pindai QR meja atau gunakan link restoran."
+        );
       }
 
-      if (!restaurantId) {
-        // Legacy helper: no table + no session restaurant — first active one.
-        const restaurant = await prisma.restaurant.findFirst({
-          where: { isActive: true },
-          select: { id: true },
-        });
-
-        if (!restaurant) {
-          throw new ValidationError("Tidak ada restoran aktif");
-        }
-
-        restaurantId = restaurant.id;
-      }
+      restaurantId = tenant.id;
     }
 
     // Resolve a client-hinted branchCode only when the table did not already
@@ -145,6 +136,9 @@ export async function POST(request: NextRequest) {
         paymentStatus: order.paymentStatus,
         orderType: order.orderType,
         grandTotal: order.grandTotal,
+        deliveryFee: order.deliveryFee,
+        deliveryAddress: order.deliveryAddress,
+        deliveryNotes: order.deliveryNotes,
         items: order.items,
         payment,
         customer: {

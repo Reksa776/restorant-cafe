@@ -159,8 +159,12 @@ async function callPost(
 
 before(async () => {
   const tag = `QAP2${Date.now()}`;
-  const a = await prisma.restaurant.create({ data: { name: `${tag} A` } });
-  const b = await prisma.restaurant.create({ data: { name: `${tag} B` } });
+  const a = await prisma.restaurant.create({
+    data: { slug: `${tag}-a`.toLowerCase(), name: `${tag} A` },
+  });
+  const b = await prisma.restaurant.create({
+    data: { slug: `${tag}-b`.toLowerCase(), name: `${tag} B` },
+  });
   restA = a.id;
   restB = b.id;
   const br = await prisma.branch.create({

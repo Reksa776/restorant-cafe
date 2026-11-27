@@ -4,6 +4,7 @@ import { AppError, ValidationError } from "@/lib/errors";
 import { requireRoles, requireAdmin } from "@/lib/auth-helpers";
 import { recipeService } from "@/services/recipe/recipe.service";
 import { SaveRecipeSchema } from "@/services/recipe/recipe.types";
+import { requirePlanFeature } from "@/services/billing/plan-guard.service";
 
 /**
  * GET /api/admin/menu/products/[productId]/recipe
@@ -39,6 +40,9 @@ export async function PUT(
 ) {
   try {
     const ctx = await requireAdmin();
+    // Phase 4 — BOM/HPP is a PRO+ feature.
+    await requirePlanFeature(ctx.restaurantId, "recipeHpp");
+
     const { productId } = await params;
     const body = await request.json();
     const parsed = SaveRecipeSchema.safeParse(body);

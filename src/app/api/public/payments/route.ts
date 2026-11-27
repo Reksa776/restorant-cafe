@@ -4,6 +4,7 @@ import { paymentService } from "@/services/payment/payment.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { requireRequestTenant } from "@/lib/tenant";
 
 /**
  * POST /api/public/payments
@@ -28,9 +29,17 @@ export async function POST(request: NextRequest) {
       throw new ValidationError("Metode pembayaran tidak valid");
     }
 
-    // Find order by order number
+    // Phase 2 — resolve the tenant from the customer's QR/link context
+    // (tenant cookie, ?slug= or explicit restaurantId) and require the order
+    // to belong to it. No cross-tenant order-number lookup.
+    const tenant = await requireRequestTenant(request, {
+      slug: typeof body.slug === "string" ? body.slug : null,
+      id: typeof body.restaurantId === "string" ? body.restaurantId : null,
+    });
+
+    // Find order by order number WITHIN the tenant
     const order = await prisma.order.findFirst({
-      where: { orderNumber: body.orderNumber },
+      where: { orderNumber: body.orderNumber, restaurantId: tenant.id },
       select: {
         id: true,
         restaurantId: true,

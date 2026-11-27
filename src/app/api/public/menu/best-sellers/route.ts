@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { resolveRequestTenant } from "@/lib/tenant";
 import { recommendationService } from "@/services/recommendation/recommendation.service";
 
 // ============================================================
@@ -33,7 +34,8 @@ export async function GET(request: NextRequest) {
     );
 
     const { searchParams } = new URL(request.url);
-    const restaurantId = searchParams.get("restaurantId");
+    const restaurantIdParam = searchParams.get("restaurantId");
+    const slugParam = searchParams.get("slug");
     const categoryId = searchParams.get("categoryId") || undefined;
     const branchCode = searchParams.get("branchCode") || undefined;
     const limit = Math.min(
@@ -45,17 +47,21 @@ export async function GET(request: NextRequest) {
       .map((s) => s.trim())
       .filter(Boolean);
 
-    if (!restaurantId) {
-      throw new AppError("restaurantId is required", 400, "VALIDATION_ERROR");
-    }
-
-    const restaurant = await prisma.restaurant.findFirst({
-      where: { id: restaurantId, isActive: true },
-      select: { id: true },
+    // Phase 2 — explicit tenant only (id/slug/cookie); no global fallback.
+    const tenant = await resolveRequestTenant(request, {
+      id: restaurantIdParam,
+      slug: slugParam,
     });
-    if (!restaurant) {
-      throw new AppError("Restaurant not found", 404, "NOT_FOUND");
+    if (!tenant) {
+      throw restaurantIdParam || slugParam
+        ? new AppError("Restaurant not found", 404, "NOT_FOUND")
+        : new AppError(
+            "restaurantId atau slug wajib diisi",
+            400,
+            "VALIDATION_ERROR"
+          );
     }
+    const restaurantId = tenant.id;
 
     // Resolve the branch context (branchCode from the table QR URL).
     let branchId: string | null = null;

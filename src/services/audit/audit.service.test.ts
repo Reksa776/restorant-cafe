@@ -47,8 +47,12 @@ async function log(input: {
 before(async () => {
   const tag = `QAAUD${Date.now()}`;
   const [ra, rb] = await Promise.all([
-    prisma.restaurant.create({ data: { name: `${tag} A` } }),
-    prisma.restaurant.create({ data: { name: `${tag} B` } }),
+    prisma.restaurant.create({
+      data: { slug: `${tag}-a`.toLowerCase(), name: `${tag} A` },
+    }),
+    prisma.restaurant.create({
+      data: { slug: `${tag}-b`.toLowerCase(), name: `${tag} B` },
+    }),
   ]);
   restA = ra.id;
   restB = rb.id;

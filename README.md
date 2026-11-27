@@ -14,7 +14,7 @@ BullMQ), product image uploads, and realtime admin dashboards (SSE).
 | Database   | MySQL 8 / MariaDB via Prisma 7 (`@prisma/adapter-mariadb`) |
 | Auth       | Auth.js / NextAuth v5 (Credentials, JWT strategy) |
 | HTTP       | Axios (client), fetch (server) |
-| Queues     | BullMQ + Redis (WhatsApp worker) |
+| Cache      | Redis (realtime/cache stack) |
 | Payments   | iPaymu v2 (VA + QRIS), HMAC-signed webhook |
 | WhatsApp   | Baileys (per-restaurant sessions) |
 | Realtime   | Server-Sent Events (in-memory bus, single instance) |
@@ -52,21 +52,20 @@ npm install          # runs `prisma generate` via postinstall
 npm run db:migrate   # apply migrations (prisma migrate dev)
 npm run db:seed      # seed restaurant + admin/cashier users
 npm run dev          # Next.js dev server (default :3000)
-npm run worker:dev   # WhatsApp BullMQ worker (tsx)
 ```
 
-To run the full local stack with Docker (MySQL, Redis, app, WhatsApp worker,
-and the migration runner), copy the example environment file, replace every
-`change-this-...` value, then run:
+To run the full local stack with Docker (MySQL, Redis, app, and the migration
+runner), copy the example environment file, replace every `change-this-...`
+value, then run:
 
 ```bash
 cp .env.example .env
 docker compose up --build
 ```
 
-The `migrate` service runs `npm run db:deploy` after MySQL is healthy. Both
-the app and worker wait for it to finish successfully, so they do not start
-against an outdated schema. To re-run only migrations after pulling code:
+The `migrate` service runs `npm run db:deploy` after MySQL is healthy. The
+app waits for it to finish successfully, so it never starts against an
+outdated schema. To re-run only migrations after pulling code:
 
 ```bash
 docker compose run --rm migrate
@@ -119,7 +118,7 @@ preflight or deploy fails.
 assume otherwise): a manual `npx prisma migrate deploy` typed by hand;
 `npm run db:migrate` (`prisma migrate dev`, dev-only and forbidden on a live DB);
 `npm run db:push`; and the Docker images, which run **no** migration step at all
-(`CMD ["node", "server.js"]`, worker `CMD ["npx", "tsx", ...]`) — provisioning
+(`CMD ["node", "server.js"]`) — provisioning
 is a manual operator step. Always use `npm run db:deploy` for provisioning.
 
 ## Payments
@@ -160,18 +159,28 @@ Admin → Settings → **Website Branding**:
 - The customer site (menu header, QR table page, buttons) reads branding
   from `GET /api/public/restaurant` — no extra requests, no stale caching.
 
-## WhatsApp worker
+## WhatsApp (single owner)
 
-## WhatsApp worker
+The Next.js **app process is the only owner of the Baileys socket**. Messages
+are sent in-process:
 
-The WhatsApp send path uses a BullMQ worker:
-
-```bash
-npm run worker:dev
+```
+order READY / reservation status
+  └─ whatsapp-notifier.sendWhatsAppNotification()
+       └─ session-manager ──► Baileys provider (WHATSAPP_SESSION_DIR)
 ```
 
-or via PM2. The queue requires a reachable `REDIS_URL`. WhatsApp connection
-lifecycle is managed through the admin UI (`/admin/whatsapp`).
+There is **no WhatsApp worker container and no BullMQ `whatsapp` queue** —
+the former worker shared the `whatsapp_data` volume and would steal the
+session. Deploy only `app` (+ mysql / redis / nginx / migrate).
+
+The connection lifecycle (pair via QR, reconnect, disconnect) is managed in
+Admin → `/admin/whatsapp`; persisted sessions are restored lazily on the
+first status poll after an app restart.
+
+WhatsApp notifications are a **PRO+ plan feature** (`whatsappNotif`). On a
+lower plan the send is skipped silently and the order/reservation still
+succeeds.
 
 ## Realtime
 

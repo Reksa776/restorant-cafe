@@ -39,6 +39,25 @@ export interface Order {
    * the discount amount always stays the server value on the order.
    */
   promoCode?: string | null;
+  /** Server-quoted delivery fee (integer rupiah) — 0 for non-delivery. */
+  deliveryFee?: number;
+  deliveryAddress?: string | null;
+  deliveryNotes?: string | null;
+  /** Courier booking for a DELIVERY order (null until created). */
+  shipment?: {
+    id: string;
+    provider: string;
+    courierCode: string;
+    serviceType: string;
+    status: string;
+    fee: number;
+    waybillId: string | null;
+    externalShipmentId: string | null;
+    driverName: string | null;
+    driverPhone: string | null;
+    driverPlate: string | null;
+    trackingUrl: string | null;
+  } | null;
   visitorCount?: number | null;
   notes?: string;
   createdAt: string;

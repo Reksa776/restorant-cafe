@@ -353,7 +353,7 @@ export function OrderDetail({
             )}
             {Number(order.tax) > 0 && (
               <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Pajak (10%)</span>
+                <span className="text-muted-foreground">Pajak</span>
                 <span className="tabular-nums">
                   Rp{Number(order.tax).toLocaleString("id-ID")}
                 </span>

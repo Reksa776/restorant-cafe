@@ -3,6 +3,7 @@ import { orderService } from "@/services/order/order.service";
 import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
+import { requireRequestTenant } from "@/lib/tenant";
 
 /**
  * GET /api/public/orders/[orderNumber]
@@ -27,8 +28,12 @@ export async function GET(
       60_000
     );
 
+    // Phase 2 — the order MUST belong to the tenant resolved from the QR
+    // scan / store link (tenant cookie or explicit slug). Without a tenant
+    // context a bare order number could read another merchant's order.
+    const tenant = await requireRequestTenant(request);
     const { orderNumber } = await params;
-    const order = await orderService.getOrderByNumber(orderNumber);
+    const order = await orderService.getOrderByNumber(orderNumber, tenant.id);
 
     // Explicit public DTO — nothing is spread from the Prisma object.
     return successResponse({
@@ -41,6 +46,9 @@ export async function GET(
       tax: order.tax,
       serviceCharge: order.serviceCharge,
       discount: order.discount,
+      deliveryFee: order.deliveryFee,
+      deliveryAddress: order.deliveryAddress,
+      deliveryNotes: order.deliveryNotes,
       visitorCount: order.visitorCount,
       notes: order.notes,
       createdAt: order.createdAt,
@@ -82,6 +90,21 @@ export async function GET(
         notes: h.notes,
         createdAt: h.createdAt,
       })),
+      // Courier tracking — public-safe fields only (no raw provider payload).
+      shipment: order.shipment
+        ? {
+            provider: order.shipment.provider,
+            courierCode: order.shipment.courierCode,
+            serviceType: order.shipment.serviceType,
+            status: order.shipment.status,
+            fee: order.shipment.fee,
+            waybillId: order.shipment.waybillId,
+            driverName: order.shipment.driverName,
+            driverPhone: order.shipment.driverPhone,
+            driverPlate: order.shipment.driverPlate,
+            trackingUrl: order.shipment.trackingUrl,
+          }
+        : null,
     });
   } catch (error) {
     if (error instanceof AppError) {

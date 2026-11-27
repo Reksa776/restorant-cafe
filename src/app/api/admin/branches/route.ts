@@ -3,6 +3,7 @@ import { successResponse, errorResponse, createdResponse } from "@/lib/api-respo
 import { AppError } from "@/lib/errors";
 import { requireAdmin } from "@/lib/auth-helpers";
 import { branchService } from "@/services/branch/branch.service";
+import { assertCanCreateBranch } from "@/services/billing/plan-guard.service";
 
 /**
  * GET /api/admin/branches
@@ -33,6 +34,10 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const ctx = await requireAdmin();
+    // Phase 4 — branch quota (1 main branch + paid add-ons).
+    // 403 PLAN_LIMIT_REACHED when the quota is exhausted.
+    await assertCanCreateBranch(ctx.restaurantId);
+
     const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
 
     if (!body || typeof body !== "object") {
@@ -46,6 +51,26 @@ export async function POST(request: NextRequest) {
       name: typeof body.name === "string" ? body.name : "",
       address: typeof body.address === "string" ? body.address : undefined,
       phone: typeof body.phone === "string" ? body.phone : undefined,
+      latitude:
+        typeof body.latitude === "number" && Number.isFinite(body.latitude)
+          ? body.latitude
+          : body.latitude === null
+            ? null
+            : undefined,
+      longitude:
+        typeof body.longitude === "number" && Number.isFinite(body.longitude)
+          ? body.longitude
+          : body.longitude === null
+            ? null
+            : undefined,
+      postalCode:
+        typeof body.postalCode === "string" || body.postalCode === null
+          ? (body.postalCode as string | null)
+          : undefined,
+      contactPhone:
+        typeof body.contactPhone === "string" || body.contactPhone === null
+          ? (body.contactPhone as string | null)
+          : undefined,
     });
 
     return createdResponse(branch, "Cabang berhasil dibuat");

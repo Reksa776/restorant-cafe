@@ -886,9 +886,9 @@ export default function KasirManualOrderPage() {
   // ============================================================
   const subtotal = cart.reduce((s, l) => s + lineTotal(l), 0);
   const isDineIn = orderType === "DINE_IN";
-  const tax = isDineIn ? 0 : Math.round(subtotal * 0.1);
-  const serviceCharge = isDineIn ? 0 : Math.round(subtotal * 0.05);
-  const grandTotal = subtotal + tax + serviceCharge;
+  // H5 — the server no longer applies a hardcoded tax/service charge; the
+  // bill is exactly the subtotal, so the preview matches what is persisted.
+  const grandTotal = subtotal;
 
   const filteredProducts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -1433,18 +1433,6 @@ export default function KasirManualOrderPage() {
                 <span className="text-gray-500">Subtotal</span>
                 <span className="tabular-nums">{rupiah(subtotal)}</span>
               </div>
-              {!isDineIn && (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Pajak (10%)</span>
-                    <span className="tabular-nums">{rupiah(tax)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-500">Service Charge (5%)</span>
-                    <span className="tabular-nums">{rupiah(serviceCharge)}</span>
-                  </div>
-                </>
-              )}
               <div className="flex justify-between font-bold text-base pt-1">
                 <span>Total Tagihan</span>
                 <span className="tabular-nums">{rupiah(grandTotal)}</span>

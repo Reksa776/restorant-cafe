@@ -7,6 +7,10 @@ import { auditService } from "@/services/audit/audit.service";
 import { round2, MONEY_EPSILON } from "@/lib/money";
 import { applyStockMovement } from "@/services/stock/stock.service";
 import {
+  orderHasStockDeduction,
+  releaseOrderStock,
+} from "@/services/stock/order-stock.service";
+import {
   applyIngredientStockMovement,
   IngredientStockRefType,
 } from "@/services/ingredient/ingredient-stock.service";
@@ -534,11 +538,11 @@ export class ApprovalService {
           data: { paymentStatus: netPaid > MONEY_EPSILON ? "PAID" : "UNPAID" },
         });
 
-        // H5 — STOCK RESTORE on refund approval.
+        // H5 / K5 — STOCK RESTORE on refund approval.
         // Restore product + ingredient stock for the refunded quantities.
-        // Only when: (a) the order has a branchId (stock was deducted at
-        // READY time), (b) the order reached READY/COMPLETED (stock was actually
-        // consumed), and (c) the refund has quantity-based allocations.
+        // The stock is held from order creation in the new flow, so the guard
+        // is "a deduction actually exists" (hold, or the legacy READY
+        // deduction) rather than the old READY/COMPLETED status check.
         // Idempotency: the guarded PENDING→APPROVED transition above
         // guarantees this block runs exactly once per refund.
         if (
@@ -548,11 +552,15 @@ export class ApprovalService {
             where: { id: refund.orderId },
             select: { id: true, branchId: true, status: true, restaurantId: true },
           });
-          if (
-            fullOrder &&
-            fullOrder.branchId &&
-            ["READY", "COMPLETED"].includes(fullOrder.status)
-          ) {
+          const stockWasDeducted =
+            fullOrder != null &&
+            (["READY", "COMPLETED"].includes(fullOrder.status) ||
+              (await orderHasStockDeduction(
+                tx,
+                input.restaurantId,
+                refund.orderId
+              )));
+          if (fullOrder && fullOrder.branchId && stockWasDeducted) {
             await this.restoreStockForRefund(tx, {
               restaurantId: input.restaurantId,
               branchId: fullOrder.branchId,
@@ -592,6 +600,16 @@ export class ApprovalService {
                   data: { status: "AVAILABLE" },
                 });
               }
+
+              // K5 — the order is now CANCELLED: give back any stock it still
+              // holds. The refund restorations written above are already
+              // netted out by the ledger reconciliation.
+              await releaseOrderStock(tx, {
+                restaurantId: input.restaurantId,
+                orderId: refund.orderId,
+                reason: "Refund penuh — pesanan dibatalkan",
+                userId: input.adminId,
+              });
             }
           }
         }
@@ -844,17 +862,27 @@ export class ApprovalService {
           data: { status: "FAILED" },
         });
 
-        // H5 — STOCK RESTORE on cancellation after the order reached READY.
-        // Restore product + ingredient stock for ALL order items.
-        // Only when the order reached READY/COMPLETED (stock was consumed).
-        // Orders cancelled before READY never had product stock deducted.
-        // Idempotency: the guarded PENDING→APPROVED transition above
-        // guarantees this block runs exactly once per cancellation.
+        // K5 / H5 — STOCK RELEASE on cancellation.
+        // The ledger reconciliation gives back exactly what this order still
+        // holds: the hold written at creation (new flow), the legacy READY
+        // deduction, minus anything an approved refund already restored. It is
+        // a no-op for an order that never deducted stock, and idempotent.
+        await releaseOrderStock(tx, {
+          restaurantId: input.restaurantId,
+          orderId: order.id,
+          reason: `Pembatalan disetujui — ${input.decisionNote || request.reason}`,
+          userId: input.adminId,
+        });
+
+        // H5 — ingredient stock was consumed at COMPLETED; reverse exactly the
+        // historical ORDER_COMPLETED ledger (the current BOM is never read).
         if (["READY", "COMPLETED"].includes(order.status) && order.branchId) {
-          await this.restoreStockForCancellation(tx, {
+          await this.reverseHistoricalIngredientConsumption(tx, {
             restaurantId: input.restaurantId,
-            branchId: order.branchId,
             orderId: order.id,
+            fractionBefore: new Prisma.Decimal(0),
+            fractionAfter: new Prisma.Decimal(1),
+            refType: "CANCELLATION_RESTORE",
             adminId: input.adminId,
           });
         }
@@ -1027,69 +1055,6 @@ export class ApprovalService {
         adminId,
       });
     }
-  }
-
-  /**
-   * H5 — Restore product + ingredient stock for an order cancelled after READY.
-   *
-   * Called inside the decideCancellation transaction. Restores ALL order
-   * items' product stock (the full order was consumed at READY time).
-   *
-   * Idempotency: guaranteed by the guarded PENDING→APPROVED transition.
-   */
-  private async restoreStockForCancellation(
-    tx: Prisma.TransactionClient,
-    input: {
-      restaurantId: string;
-      branchId: string;
-      orderId: string;
-      adminId: string;
-    }
-  ): Promise<void> {
-    const { restaurantId, branchId, orderId, adminId } = input;
-
-    // Load ALL order items (full order restoration).
-    const orderItems = await tx.orderItem.findMany({
-      where: { orderId },
-      select: { id: true, productId: true, quantity: true },
-    });
-
-    // Aggregate quantity per product.
-    const qtyByProduct = new Map<string, number>();
-    for (const item of orderItems) {
-      qtyByProduct.set(
-        item.productId,
-        (qtyByProduct.get(item.productId) ?? 0) + item.quantity
-      );
-    }
-
-    // 1. Restore BranchProduct.stock via atomic StockMovement IN.
-    for (const [pid, qty] of qtyByProduct) {
-      if (qty <= 0) continue;
-      await applyStockMovement(tx, {
-        restaurantId,
-        branchId,
-        productId: pid,
-        type: "IN",
-        quantity: qty,
-        refType: "CANCELLATION_RESTORE",
-        refId: orderId,
-        reason: `Cancellation restore — order ${orderId}`,
-        userId: adminId,
-      });
-    }
-
-    // 2. Restore BranchIngredient.stock — EXACT reversal of the historical
-    // ORDER_COMPLETED ledger (the entire order was consumed at COMPLETED
-    // time). No current BOM is resolved; a missing ledger is a no-op.
-    await this.reverseHistoricalIngredientConsumption(tx, {
-      restaurantId,
-      orderId,
-      fractionBefore: new Prisma.Decimal(0),
-      fractionAfter: new Prisma.Decimal(1),
-      refType: "CANCELLATION_RESTORE",
-      adminId,
-    });
   }
 
   /**

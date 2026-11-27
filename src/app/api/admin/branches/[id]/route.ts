@@ -58,6 +58,27 @@ export async function PUT(request: NextRequest, { params }: Params) {
       name: typeof body.name === "string" ? body.name : undefined,
       address: typeof body.address === "string" ? body.address : undefined,
       phone: typeof body.phone === "string" ? body.phone : undefined,
+      // Courier pickup origin. `null` clears a coordinate; omitted = unchanged.
+      latitude:
+        typeof body.latitude === "number" && Number.isFinite(body.latitude)
+          ? body.latitude
+          : body.latitude === null
+            ? null
+            : undefined,
+      longitude:
+        typeof body.longitude === "number" && Number.isFinite(body.longitude)
+          ? body.longitude
+          : body.longitude === null
+            ? null
+            : undefined,
+      postalCode:
+        typeof body.postalCode === "string" || body.postalCode === null
+          ? (body.postalCode as string | null)
+          : undefined,
+      contactPhone:
+        typeof body.contactPhone === "string" || body.contactPhone === null
+          ? (body.contactPhone as string | null)
+          : undefined,
     });
 
     return successResponse(branch, "Cabang berhasil diperbarui");

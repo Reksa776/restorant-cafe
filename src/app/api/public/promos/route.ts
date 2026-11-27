@@ -5,6 +5,7 @@ import { AppError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { promoService } from "@/services/promo/promo.service";
 import { tryGetCustomerSessionFromRequest } from "@/lib/customer-session.server";
+import { resolveRequestTenant } from "@/lib/tenant";
 
 // ============================================================
 // GET /api/public/promos?restaurantId=xxx&branchCode=xxx
@@ -21,20 +22,25 @@ export async function GET(request: NextRequest) {
     assertRateLimit(rateLimitKey("public-promos", request), 240, 60_000);
 
     const { searchParams } = new URL(request.url);
-    const restaurantId = searchParams.get("restaurantId");
+    const restaurantIdParam = searchParams.get("restaurantId");
+    const slugParam = searchParams.get("slug");
     const branchCode = searchParams.get("branchCode");
 
-    if (!restaurantId) {
-      throw new AppError("restaurantId is required", 400, "VALIDATION_ERROR");
-    }
-
-    const restaurant = await prisma.restaurant.findFirst({
-      where: { id: restaurantId, isActive: true },
-      select: { id: true },
+    // Phase 2 — explicit tenant only (id/slug/cookie); no global fallback.
+    const tenant = await resolveRequestTenant(request, {
+      id: restaurantIdParam,
+      slug: slugParam,
     });
-    if (!restaurant) {
-      throw new AppError("Restaurant not found", 404, "NOT_FOUND");
+    if (!tenant) {
+      throw restaurantIdParam || slugParam
+        ? new AppError("Restaurant not found", 404, "NOT_FOUND")
+        : new AppError(
+            "restaurantId atau slug wajib diisi",
+            400,
+            "VALIDATION_ERROR"
+          );
     }
+    const restaurantId = tenant.id;
 
     let branchId: string | null = null;
     if (branchCode) {

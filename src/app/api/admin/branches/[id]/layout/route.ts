@@ -6,6 +6,7 @@ import {
   authorizedBranches,
 } from "@/lib/auth-helpers";
 import { layoutService } from "@/services/layout/layout.service";
+import { requirePlanFeature } from "@/services/billing/plan-guard.service";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -24,6 +25,8 @@ export async function GET(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
     const ctx = await requireRoles(["ADMIN", "CASHIER"], id);
+    // Phase 4 — floor layout is a PRO+ feature.
+    await requirePlanFeature(ctx.restaurantId, "floorLayout");
 
     const layout = await layoutService.getBranchLayout(
       ctx.restaurantId,
@@ -43,7 +46,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 
 /**
  * PUT /api/admin/branches/[id]/layout
- * CASHIER. Full-state replace of the branch floor plan with an
+ * ADMIN or CASHIER. Full-state replace of the branch floor plan with an
  * optimistic version lock (409 on conflict).
  *
  * The `[id]` segment (the branchId) comes from the URL; restaurantId is
@@ -60,7 +63,9 @@ export async function GET(request: NextRequest, { params }: Params) {
 export async function PUT(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
-    const ctx = await requireRoles(["CASHIER"], id);
+    const ctx = await requireRoles(["ADMIN", "CASHIER"], id);
+    // Phase 4 — floor layout is a PRO+ feature.
+    await requirePlanFeature(ctx.restaurantId, "floorLayout");
 
     // Only guard against a non-JSON body here; every real field validation is
     // delegated to the service's Zod schema (no duplicated rules).

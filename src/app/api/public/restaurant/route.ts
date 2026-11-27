@@ -4,11 +4,17 @@ import { successResponse, errorResponse } from "@/lib/api-response";
 import { AppError } from "@/lib/errors";
 import { assertRateLimit, rateLimitKey } from "@/lib/rate-limit";
 import { resolveBranding } from "@/services/branding/branding.service";
+import { resolveRequestTenant, tenantSlugFromHost } from "@/lib/tenant";
 
 /**
- * GET /api/public/restaurant
- * Get restaurant info. Optional ?id= parameter.
- * Returns the first active restaurant if no ID specified.
+ * GET /api/public/restaurant?slug=demo-resto   (or ?id=<restaurantId>)
+ * Get the PUBLIC profile of ONE explicit tenant.
+ *
+ * Phase 2 (True SaaS): the previous "return the first active restaurant"
+ * fallback is GONE. The tenant is resolved from (in order) ?slug=, ?id=,
+ * ?restaurantId=, or the tenant cookie set by /r/[slug] / a table QR scan.
+ * No tenant context → 400; unknown/inactive tenant → 404. A customer can
+ * therefore never see another merchant's profile/branding by omission.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -19,39 +25,54 @@ export async function GET(request: NextRequest) {
     );
 
     const { searchParams } = new URL(request.url);
-    const id = searchParams.get("id");
+    const idParam = searchParams.get("id");
+    const slugParam = searchParams.get("slug");
 
-    const baseSelect = {
-      id: true,
-      name: true,
-      address: true,
-      phone: true,
-      email: true,
-      settings: {
-        select: {
-          siteName: true,
-          logoUrl: true,
-          primaryColor: true,
-          secondaryColor: true,
-          accentColor: true,
+    const tenant = await resolveRequestTenant(request, {
+      id: idParam,
+      slug: slugParam,
+    });
+
+    if (!tenant) {
+      const hasExplicitHint =
+        Boolean(idParam) ||
+        Boolean(slugParam) ||
+        Boolean(searchParams.get("restaurantId"));
+      // An unknown merchant SUBDOMAIN (ngasal.domainlo.com) is a missing
+      // storefront → 404, exactly like an unknown ?slug=. Only a request with
+      // no tenant context at all gets 400.
+      const hasSubdomain =
+        tenantSlugFromHost(request.headers) !== null ||
+        Boolean(request.headers.get("x-tenant-slug"));
+      throw hasExplicitHint || hasSubdomain
+        ? new AppError("Restaurant not found", 404, "NOT_FOUND")
+        : new AppError(
+            "slug atau id restoran wajib diisi",
+            400,
+            "TENANT_REQUIRED"
+          );
+    }
+
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id: tenant.id },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        address: true,
+        phone: true,
+        email: true,
+        settings: {
+          select: {
+            siteName: true,
+            logoUrl: true,
+            primaryColor: true,
+            secondaryColor: true,
+            accentColor: true,
+          },
         },
       },
-    } as const;
-
-    let restaurant;
-
-    if (id) {
-      restaurant = await prisma.restaurant.findFirst({
-        where: { id, isActive: true },
-        select: baseSelect,
-      });
-    } else {
-      // Return first active restaurant
-      restaurant = await prisma.restaurant.findFirst({
-        where: { isActive: true },
-        select: baseSelect,
-      });
-    }
+    });
 
     if (!restaurant) {
       throw new AppError("Restaurant not found", 404, "NOT_FOUND");
@@ -60,6 +81,7 @@ export async function GET(request: NextRequest) {
     const { settings, ...restaurantInfo } = restaurant;
     return successResponse({
       ...restaurantInfo,
+      storeUrl: `/r/${restaurant.slug}`,
       // Website branding with safe defaults — never exposes internal
       // settings rows or admin config.
       branding: resolveBranding(restaurant.name, settings),
