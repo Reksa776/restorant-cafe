@@ -1,5 +1,5 @@
 import axios from "axios";
-import { signOut } from "next-auth/react";
+import { performLogout } from "./logout-client";
 
 const api = axios.create({
   baseURL: "/api",
@@ -20,37 +20,16 @@ delete api.defaults.headers.common["Content-Type"];
 //   -> middleware sees the same valid JWT -> 307 back to /admin/dashboard
 //   -> same 401 -> repeat forever.
 //
-// Fix: on 401, clear the Auth.js/NextAuth session cookie FIRST via the
-// project's existing sign-out mechanism, then navigate to /login. With the
-// cookie gone, the middleware allows /login through and the loop is broken.
-
-const LOGIN_PATH = "/login";
-
-/**
- * Absolute `/login` destination for the CURRENT origin.
- *
- * The recovery navigation must stay a full page load: a soft
- * `router.push` would keep the just-purged React tree alive and can re-enter
- * the 401 loop this guard exists to break. It is resolved to an absolute URL
- * because a relative destination is resolved against the current URL, so the
- * same path behaves differently on preview/mixed-host deployments.
- */
-function loginDestination(): string {
-  return new URL(LOGIN_PATH, window.location.origin).href;
-}
+// Fix: on 401, purge the session FIRST through the same cross-domain logout
+// path the sidebar uses (`@/lib/logout-client` → POST /api/auth/logout) and
+// only then hard-navigate to /login. With the cookie gone, the middleware
+// allows /login through and the loop is broken.
 
 // True while a 401-driven session clear is in progress, so several
 // simultaneous 401s (e.g. the dashboard firing /auth/session, /orders and
 // /orders/dashboard/stats at once) trigger exactly ONE session clear and
 // ONE navigation instead of a cascade of signouts/redirects.
 let authRecoveryInFlight = false;
-
-// Auth.js/NextAuth session cookie names (JWT strategy) for the client-side
-// fallback purge — dev and production (`__Secure-` prefix) variants.
-const SESSION_COOKIE_NAMES = [
-  "authjs.session-token",
-  "__Secure-authjs.session-token",
-];
 
 /**
  * Public/customer endpoints never trigger admin session recovery: they are
@@ -61,51 +40,20 @@ function isPublicRequest(url: string | undefined): boolean {
   return !!url && url.includes("/public/");
 }
 
-/** Client-side cookie purge used only when the sign-out endpoint is unusable. */
-function clearSessionCookies(): void {
-  for (const name of SESSION_COOKIE_NAMES) {
-    document.cookie = `${name}=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
-  }
-}
-
 /**
- * One-shot session recovery: sign out through the project's existing Auth.js
- * mechanism (next-auth/react `signOut`). It uses native fetch internally —
- * never this axios instance — so it cannot recursively re-enter this
- * interceptor. Navigation happens only AFTER the server has cleared the
- * session cookie.
+ * One-shot session recovery: `performLogout()` deletes every Auth.js cookie
+ * in both the host-only and the shared root-domain scope, signs the Auth.js
+ * client out, then hard-navigates to `/login?signedOut=1`. It uses native
+ * fetch and a full page load — never this axios instance — so it cannot
+ * recursively re-enter this interceptor, and the middleware will not bounce
+ * the just-purged session back to /admin/dashboard.
  */
 function recoverFromUnauthorized(): void {
-  // Use relative path - Auth.js will handle the redirect correctly
-  // regardless of the current host (localhost or production domain)
   if (authRecoveryInFlight) return;
   authRecoveryInFlight = true;
-
-  signOut({ redirect: false })
-    .then((result) => {
-      // On success Auth.js clears the session cookie server-side.
-      // Navigate to relative /login path - this works on any host.
-      if (result?.url) {
-        window.location.href = loginDestination();
-        return;
-      }
-      // Sign-out responded but not with the expected target (e.g. a CSRF or
-      // server error page), so the cookie may still be present. Purge it
-      // client-side before navigating, or the middleware would bounce /login
-      // back to /admin/dashboard again.
-      clearSessionCookies();
-      window.location.href = loginDestination();
-    })
-    .catch(() => {
-      // Sign-out endpoint unreachable/failed: purge the cookie client-side
-      // and still land on /login. Without the session cookie the middleware
-      // lets /login through, so there is no redirect loop.
-      clearSessionCookies();
-      window.location.href = loginDestination();
-    })
-    .finally(() => {
-      authRecoveryInFlight = false;
-    });
+  void performLogout().finally(() => {
+    authRecoveryInFlight = false;
+  });
 }
 
 // ============================================================

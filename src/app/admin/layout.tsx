@@ -39,9 +39,10 @@ import {
   RotateCcw,
   Landmark,
   Monitor,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { signOut } from "next-auth/react";
+import { performLogout } from "@/lib/logout-client";
 import { useUserRole, type StaffRole } from "@/hooks/use-user-role";
 import { AdminBrandingProvider } from "@/hooks/use-admin-branding";
 import { useBranding } from "@/hooks/use-branding";
@@ -239,6 +240,16 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         : !role || entry.roles.includes(role)
     );
 
+  // Logout disables the button while the cookie purge + hard navigation run,
+  // so a double click cannot fire two sign-outs.
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    await performLogout();
+  };
+
   // Groups start collapsed, except the one containing the current route.
   // Manual toggles win for the rest of the session (no reload, no storage).
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
@@ -362,10 +373,16 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         <Button
           variant="ghost"
           className="w-full justify-start"
-          onClick={() => signOut({ callbackUrl: "/login" })}
+          onClick={handleLogout}
+          disabled={isLoggingOut}
+          aria-busy={isLoggingOut}
         >
-          <LogOut className="mr-2 h-5 w-5" />
-          Keluar
+          {isLoggingOut ? (
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+          ) : (
+            <LogOut className="mr-2 h-5 w-5" />
+          )}
+          {isLoggingOut ? "Mengeluarkan…" : "Keluar"}
         </Button>
       </div>
     </div>

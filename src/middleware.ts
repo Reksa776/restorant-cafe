@@ -99,6 +99,16 @@ export default auth((req) => {
   const isPublicApi = pathname.startsWith("/api/webhooks");
   const isAdminRoute = pathname.startsWith("/admin");
 
+  // The user arrived on /login because a cookie was JUST removed:
+  //   • `signedOut=1` — explicit logout (POST /api/auth/logout)
+  //   • `switch=1`    — a cross-tenant session was rejected and purged above
+  // Never bounce back to /admin/dashboard in that case, even if a stale token
+  // survived the purge (e.g. a cookie written with a different Domain).
+  const isPostLogoutLanding =
+    isAuthPage &&
+    (req.nextUrl.searchParams.get("signedOut") === "1" ||
+      req.nextUrl.searchParams.get("switch") === "1");
+
   const host =
     req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? null;
   const subdomainSlug = extractSubdomainSlug(
@@ -135,7 +145,7 @@ export default auth((req) => {
     url.searchParams.set("switch", "1");
     response = NextResponse.redirect(url);
     clearSessionCookies(response);
-  } else if (isAuthPage && isLoggedIn) {
+  } else if (isAuthPage && isLoggedIn && !isPostLogoutLanding) {
     // Already signed in (and on the right host) → straight to the dashboard.
     response = NextResponse.redirect(loggedInDestination(req));
   } else if (isAdminRoute && !isLoggedIn) {
