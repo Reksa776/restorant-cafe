@@ -1762,21 +1762,34 @@ enum WalletTxType {
 }
 
 model RestaurantWallet {
-  id                String   @id @default(cuid())
-  restaurantId      String   @unique
+  id                String    @id @default(cuid())
+  restaurantId      String    @unique
   /// Saldo siap tarik (Rupiah).
-  availableBalance  Int      @default(0)
+  availableBalance  Int       @default(0)
   /// Saldo yang sedang ditahan oleh pengajuan pencairan.
-  pendingBalance    Int      @default(0)
+  pendingBalance    Int       @default(0)
   /// Akumulasi pendapatan BERSIH yang pernah masuk.
-  totalEarned       Int      @default(0)
+  totalEarned       Int       @default(0)
   /// Akumulasi dana yang sudah benar-benar dicairkan.
-  totalWithdrawn    Int      @default(0)
+  totalWithdrawn    Int       @default(0)
   bankName          String?
   bankAccountNumber String?
   bankAccountHolder String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  /// ------------------------------------------------------------
+  /// OWNER KYC (Data Diri Pemilik) — required before any payout.
+  /// Stored on the wallet (one owner per merchant) and snapshotted onto
+  /// every WithdrawalRequest so a payout proof records who withdrew.
+  /// ------------------------------------------------------------
+  ownerFullName     String?
+  /// NIK / KTP — exactly 16 digits (validated in wallet.service).
+  ownerNik          String?
+  /// Active WhatsApp / phone number of the owner.
+  ownerPhone        String?
+  ownerAddress      String?   @db.VarChar(255)
+  /// Last time the owner profile + bank account was saved as complete.
+  kycUpdatedAt      DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
   restaurant  Restaurant          @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
   ledger      WalletLedger[]
@@ -1830,6 +1843,11 @@ model WithdrawalRequest {
   bankName          String
   bankAccountNumber String
   bankAccountHolder String
+  /// Snapshot of the owner KYC at withdrawal time (immutable proof of who
+  /// withdrew the money, even if the wallet profile changes later).
+  ownerFullName     String?
+  ownerNik          String?
+  ownerPhone        String?
   status            WithdrawalStatus @default(PENDING)
   /// Nomor resi/bukti transfer dari Super Admin.
   transferReference String?

@@ -42,7 +42,8 @@
     "20261127000000_add_delivery_shipment",
     "20261128000000_add_saas_billing",
     "20261129000000_add_merchant_wallet",
-    "20261130000000_self_service_payout_kitchen_role"
+    "20261130000000_self_service_payout_kitchen_role",
+    "20261201000000_add_wallet_owner_kyc"
   ],
   "checksums": {
     "0000_init_schema": "6788090d6cf15380a77819e0ac0d6975d47edf0f01a45fd33ae829dd367322ee",
@@ -74,6 +75,7 @@
     "20261127000000_add_delivery_shipment": "f960bc6e436f3ce2936d3afc4dc76d5099291df936330a24bc2e9a6509aacc69",
     "20261128000000_add_saas_billing": "ff4d072a4a1c44e01220f1e628880bcd9cfb621f0372f47b4192419a9e00bd37",
     "20261129000000_add_merchant_wallet": "3b327abc425b88f83c08aa8da4d4bf2d718c437218ba7d6be6b2cb71d428cb17",
-    "20261130000000_self_service_payout_kitchen_role": "5e3cbfe8bc10cd0b8f826f5401f09380124ea547e0552ffa782feeb474d9cfea"
+    "20261130000000_self_service_payout_kitchen_role": "5e3cbfe8bc10cd0b8f826f5401f09380124ea547e0552ffa782feeb474d9cfea",
+    "20261201000000_add_wallet_owner_kyc": "1354730629e31c1210f769937d68b0e07018eb68472061946a71edcf21aedc06"
   }
 }

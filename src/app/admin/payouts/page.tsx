@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   Building2,
@@ -11,6 +11,9 @@ import {
   Landmark,
   Loader2,
   RefreshCw,
+  ShieldCheck,
+  TriangleAlert,
+  UserRound,
   Wallet,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -28,10 +31,12 @@ import {
 import { cn } from "@/lib/utils";
 
 // ============================================================
-// /admin/payouts — merchant wallet, bank account and withdrawals.
+// /admin/payouts — merchant wallet, owner KYC, bank account and withdrawals.
 //
-// Every number shown here is informational: the server recomputes the fee and
-// net amount, and performs the balance move atomically.
+// Payouts are locked until the owner completes Data Diri Pemilik (KTP/WA/
+// Alamat) AND the destination bank account. The server is the source of truth
+// (`wallet.profileComplete`) and re-validates on every withdrawal; this page
+// only mirrors that state in the UI.
 // ============================================================
 
 const BANKS = [
@@ -95,6 +100,13 @@ function formatDateTime(value: string | null): string {
   });
 }
 
+function maskNik(nik: string | null): string | null {
+  if (!nik) return null;
+  const digits = nik.replace(/\D/g, "");
+  if (digits.length < 4) return nik;
+  return `•••• •••• •••• ${digits.slice(-4)}`;
+}
+
 function errorMessage(error: unknown, fallback: string): string {
   return (
     (error as { response?: { data?: { message?: string } } })?.response?.data
@@ -154,23 +166,57 @@ function StatusBadge({ status }: { status: WithdrawalStatus }) {
   );
 }
 
+function SectionHeading({
+  step,
+  title,
+  description,
+}: {
+  step: string;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-900 text-[11px] font-bold text-white">
+        {step}
+      </span>
+      <div>
+        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+    </div>
+  );
+}
+
 export default function PayoutsPage() {
   const [data, setData] = useState<WalletOverview | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [tab, setTab] = useState<"withdrawals" | "ledger">("withdrawals");
 
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerNik, setOwnerNik] = useState("");
+  const [ownerPhone, setOwnerPhone] = useState("");
+  const [ownerAddress, setOwnerAddress] = useState("");
+
   const [bankName, setBankName] = useState<string>(BANKS[0]);
   const [accountNumber, setAccountNumber] = useState("");
   const [accountHolder, setAccountHolder] = useState("");
-  const [savingBank, setSavingBank] = useState(false);
+  const [savingProfile, setSavingProfile] = useState(false);
 
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const profileRef = useRef<HTMLDivElement>(null);
+  const ownerNameRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     try {
       const overview = await walletService.getOverview();
       setData(overview);
+      setOwnerName(overview.wallet.ownerFullName ?? "");
+      setOwnerNik(overview.wallet.ownerNik ?? "");
+      setOwnerPhone(overview.wallet.ownerPhone ?? "");
+      setOwnerAddress(overview.wallet.ownerAddress ?? "");
       if (overview.wallet.bankName) {
         setBankName(overview.wallet.bankName);
         setAccountNumber(overview.wallet.bankAccountNumber ?? "");
@@ -196,6 +242,7 @@ export default function PayoutsPage() {
 
   const wallet = data?.wallet;
   const config = data?.config;
+  const isProfileComplete = Boolean(wallet?.profileComplete);
   const hasBank = Boolean(
     wallet?.bankName && wallet?.bankAccountNumber && wallet?.bankAccountHolder
   );
@@ -209,33 +256,54 @@ export default function PayoutsPage() {
     ? Math.max(0, numericAmount - config.payoutFlatFee)
     : 0;
 
-  const saveBank = async () => {
-    setSavingBank(true);
+  const canSaveProfile =
+    ownerName.trim().length >= 3 &&
+    ownerNik.replace(/\D/g, "").length === 16 &&
+    ownerPhone.replace(/\D/g, "").length >= 9 &&
+    ownerAddress.trim().length >= 5 &&
+    accountNumber.replace(/\D/g, "").length >= 6 &&
+    accountHolder.trim().length >= 3;
+
+  const focusProfile = () => {
+    profileRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "center",
+    });
+    ownerNameRef.current?.focus({ preventScroll: true });
+  };
+
+  const saveProfile = async () => {
+    setSavingProfile(true);
     try {
-      await walletService.updateBank({
+      await walletService.updateProfile({
+        ownerFullName: ownerName,
+        ownerNik,
+        ownerPhone,
+        ownerAddress,
         bankName,
         bankAccountNumber: accountNumber,
         bankAccountHolder: accountHolder,
       });
-      toast.success("Rekening pencairan tersimpan");
+      toast.success("Data diri pemilik & rekening pencairan tersimpan");
       await load();
     } catch (error) {
-      toast.error(errorMessage(error, "Gagal menyimpan rekening"));
+      toast.error(errorMessage(error, "Gagal menyimpan profil pencairan"));
     } finally {
-      setSavingBank(false);
+      setSavingProfile(false);
     }
   };
 
   const withdraw = async () => {
     if (!config) return;
-    if (!hasBank) {
-      toast.error("Simpan rekening bank tujuan terlebih dahulu");
+    if (!isProfileComplete) {
+      toast.error(
+        "Lengkapi Data Diri Pemilik (KTP/WA/Alamat) dan Rekening Bank terlebih dahulu."
+      );
+      focusProfile();
       return;
     }
     if (numericAmount < config.minWithdrawal) {
-      toast.error(
-        `Minimal penarikan ${rupiah(config.minWithdrawal)}`
-      );
+      toast.error(`Minimal penarikan ${rupiah(config.minWithdrawal)}`);
       return;
     }
     if (numericAmount > (wallet?.availableBalance ?? 0)) {
@@ -320,6 +388,49 @@ export default function PayoutsPage() {
         </Button>
       </div>
 
+      {/* Completeness badge */}
+      {isProfileComplete ? (
+        <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+          <div>
+            <p className="text-sm font-semibold text-emerald-900">
+              Profil Pemilik &amp; Rekening Terverifikasi
+            </p>
+            <p className="text-sm leading-relaxed text-emerald-800">
+              Data diri pemilik dan rekening tujuan sudah lengkap. Pencairan
+              dana dapat dilakukan kapan saja
+              {wallet.kycUpdatedAt
+                ? ` (terakhir diperbarui ${formatDateTime(wallet.kycUpdatedAt)})`
+                : ""}
+              .
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+            <div>
+              <p className="text-sm font-semibold text-amber-900">
+                Profil &amp; Rekening Belum Lengkap
+              </p>
+              <p className="text-sm leading-relaxed text-amber-800">
+                Lengkapi Data Diri Pemilik (KTP/WA/Alamat) dan Rekening Bank
+                terlebih dahulu sebelum melakukan pencairan.
+              </p>
+            </div>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0 border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+            onClick={focusProfile}
+          >
+            Lengkapi Sekarang
+          </Button>
+        </div>
+      )}
+
       <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
         <Info className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
         <p className="text-sm leading-relaxed text-emerald-900">
@@ -357,87 +468,169 @@ export default function PayoutsPage() {
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        {/* Bank destination */}
-        <Card>
-          <CardHeader className="border-b">
-            <CardTitle className="flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-muted-foreground" />
-              Rekening Bank Tujuan
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-2">
-              <Label htmlFor="bankName">Bank</Label>
-              <select
-                id="bankName"
-                value={bankName}
-                onChange={(event) => setBankName(event.target.value)}
-                className="h-10 w-full rounded-lg border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-              >
-                {BANKS.map((bank) => (
-                  <option key={bank} value={bank}>
-                    {bank}
-                  </option>
-                ))}
-              </select>
-            </div>
+      <div className="grid gap-6 xl:grid-cols-3">
+        {/* Unified payout profile: owner KYC + bank destination */}
+        <div ref={profileRef} className="xl:col-span-2">
+          <Card>
+            <CardHeader className="border-b">
+              <CardTitle className="flex items-center gap-2">
+                <UserRound className="h-4 w-4 text-muted-foreground" />
+                Profil Pencairan — Data Diri Pemilik &amp; Rekening Bank
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {/* Section A — owner identity */}
+              <section className="space-y-3">
+                <SectionHeading
+                  step="A"
+                  title="Data Diri Pemilik (Owner)"
+                  description="Wajib sesuai KTP/identitas resmi pemilik kafe."
+                />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <Label htmlFor="ownerName">Nama Lengkap sesuai KTP</Label>
+                    <Input
+                      id="ownerName"
+                      ref={ownerNameRef}
+                      placeholder="Contoh: Budi Santoso"
+                      value={ownerName}
+                      onChange={(event) => setOwnerName(event.target.value)}
+                      className="h-10"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="ownerNik">Nomor KTP (NIK 16 digit)</Label>
+                    <Input
+                      id="ownerNik"
+                      inputMode="numeric"
+                      maxLength={16}
+                      placeholder="16 digit angka"
+                      value={ownerNik}
+                      onChange={(event) => setOwnerNik(event.target.value)}
+                      className="h-10 font-mono"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="ownerPhone">Nomor WhatsApp Pemilik</Label>
+                    <Input
+                      id="ownerPhone"
+                      inputMode="tel"
+                      placeholder="Contoh: 081234567890"
+                      value={ownerPhone}
+                      onChange={(event) => setOwnerPhone(event.target.value)}
+                      className="h-10"
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="ownerAddress">Alamat Domisili</Label>
+                    <Input
+                      id="ownerAddress"
+                      placeholder="Alamat sesuai KTP"
+                      value={ownerAddress}
+                      onChange={(event) => setOwnerAddress(event.target.value)}
+                      className="h-10"
+                    />
+                  </div>
+                </div>
+              </section>
 
-            <div className="grid gap-2">
-              <Label htmlFor="accountNumber">Nomor Rekening</Label>
-              <Input
-                id="accountNumber"
-                inputMode="numeric"
-                placeholder="Contoh: 1234567890"
-                value={accountNumber}
-                onChange={(event) => setAccountNumber(event.target.value)}
-                className="h-10"
-              />
-            </div>
+              <div className="h-px bg-gray-100" />
 
-            <div className="grid gap-2">
-              <Label htmlFor="accountHolder">Nama Pemilik Rekening</Label>
-              <Input
-                id="accountHolder"
-                placeholder="Sesuai buku tabungan"
-                value={accountHolder}
-                onChange={(event) => setAccountHolder(event.target.value)}
-                className="h-10"
-              />
-            </div>
+              {/* Section B — destination bank account */}
+              <section className="space-y-3">
+                <SectionHeading
+                  step="B"
+                  title="Rekening Bank Tujuan"
+                  description="Dana pencairan hanya ditransfer ke rekening ini."
+                />
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-2">
+                    <Label htmlFor="bankName">Bank</Label>
+                    <select
+                      id="bankName"
+                      value={bankName}
+                      onChange={(event) => setBankName(event.target.value)}
+                      className="h-10 w-full rounded-lg border border-input bg-transparent px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                    >
+                      {BANKS.map((bank) => (
+                        <option key={bank} value={bank}>
+                          {bank}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="accountNumber">Nomor Rekening</Label>
+                    <Input
+                      id="accountNumber"
+                      inputMode="numeric"
+                      placeholder="Contoh: 1234567890"
+                      value={accountNumber}
+                      onChange={(event) => setAccountNumber(event.target.value)}
+                      className="h-10"
+                    />
+                  </div>
+                  <div className="grid gap-2 sm:col-span-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Label htmlFor="accountHolder">
+                        Nama Pemilik Rekening
+                      </Label>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        disabled={ownerName.trim().length < 3}
+                        onClick={() => setAccountHolder(ownerName.trim())}
+                      >
+                        <Copy className="mr-1.5 h-3.5 w-3.5" />
+                        Samakan dengan Nama KTP
+                      </Button>
+                    </div>
+                    <Input
+                      id="accountHolder"
+                      placeholder="Sesuai buku tabungan"
+                      value={accountHolder}
+                      onChange={(event) => setAccountHolder(event.target.value)}
+                      className="h-10"
+                    />
+                  </div>
+                </div>
+              </section>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                onClick={() => void saveBank()}
-                disabled={
-                  savingBank ||
-                  !accountNumber.trim() ||
-                  accountHolder.trim().length < 3
-                }
-              >
-                {savingBank && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Simpan Rekening
-              </Button>
-              {hasBank && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-4">
                 <Button
-                  variant="ghost"
-                  onClick={() =>
-                    void copyAccount(wallet.bankAccountNumber ?? "")
-                  }
+                  onClick={() => void saveProfile()}
+                  disabled={savingProfile || !canSaveProfile}
                 >
-                  <Copy className="mr-2 h-4 w-4" />
-                  Salin No. Rekening
+                  {savingProfile && (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  )}
+                  Simpan Profil &amp; Rekening
                 </Button>
-              )}
-            </div>
+                {hasBank && (
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      void copyAccount(wallet.bankAccountNumber ?? "")
+                    }
+                  >
+                    <Copy className="mr-2 h-4 w-4" />
+                    Salin No. Rekening
+                  </Button>
+                )}
+              </div>
 
-            {!hasBank && (
-              <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-amber-200">
-                Rekening wajib dilengkapi sebelum saldo bisa dicairkan.
-              </p>
-            )}
-          </CardContent>
-        </Card>
+              {!isProfileComplete && (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-amber-200">
+                  Nama lengkap (min. 3 karakter), NIK 16 digit, WhatsApp aktif,
+                  alamat domisili, serta rekening bank wajib lengkap sebelum
+                  saldo bisa dicairkan.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Withdraw */}
         <Card>
@@ -460,6 +653,7 @@ export default function PayoutsPage() {
                 value={amount}
                 onChange={(event) => setAmount(event.target.value)}
                 className="h-11 text-lg font-semibold"
+                disabled={!isProfileComplete}
               />
             </div>
 
@@ -471,7 +665,10 @@ export default function PayoutsPage() {
                 onClick={() =>
                   setAmount(String(Math.floor(wallet.availableBalance / 2)))
                 }
-                disabled={wallet.availableBalance < config.minWithdrawal * 2}
+                disabled={
+                  !isProfileComplete ||
+                  wallet.availableBalance < config.minWithdrawal * 2
+                }
               >
                 50%
               </Button>
@@ -480,7 +677,10 @@ export default function PayoutsPage() {
                 variant="outline"
                 size="sm"
                 onClick={() => setAmount(String(wallet.availableBalance))}
-                disabled={wallet.availableBalance < config.minWithdrawal}
+                disabled={
+                  !isProfileComplete ||
+                  wallet.availableBalance < config.minWithdrawal
+                }
               >
                 Tarik Semua
               </Button>
@@ -509,12 +709,31 @@ export default function PayoutsPage() {
               </div>
             </div>
 
+            {!isProfileComplete && (
+              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+                <p className="flex items-start gap-2 text-xs leading-relaxed text-amber-800">
+                  <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                  Form tarik dana terkunci. Lengkapi Data Diri Pemilik dan
+                  Rekening Bank terlebih dahulu.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="w-full border-amber-300 bg-white text-amber-900 hover:bg-amber-100"
+                  onClick={focusProfile}
+                >
+                  Isi Data Diri &amp; Rekening
+                </Button>
+              </div>
+            )}
+
             <Button
               className="h-11 w-full"
               onClick={() => void withdraw()}
               disabled={
                 submitting ||
-                !hasBank ||
+                !isProfileComplete ||
                 numericAmount < config.minWithdrawal ||
                 numericAmount > wallet.availableBalance
               }
@@ -525,9 +744,11 @@ export default function PayoutsPage() {
 
             <p className="text-xs text-muted-foreground">
               Minimal {rupiah(config.minWithdrawal)}. Saldo langsung dipotong
-              dan ditransfer ke rekening {hasBank
+              dan ditransfer ke rekening{" "}
+              {hasBank
                 ? `${wallet.bankName} ${wallet.bankAccountNumber} a.n. ${wallet.bankAccountHolder}`
-                : "yang Anda simpan"}.
+                : "yang Anda simpan"}
+              .
             </p>
           </CardContent>
         </Card>
@@ -592,9 +813,21 @@ export default function PayoutsPage() {
                         <StatusBadge status={item.status} />
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {formatDateTime(item.createdAt)} ·{" "}
-                        {item.bankName} · {item.bankAccountNumber} ·{" "}
-                        {item.bankAccountHolder}
+                        {formatDateTime(item.createdAt)}
+                      </p>
+                      <p className="mt-0.5 flex items-center gap-1 text-xs text-gray-700">
+                        <Building2 className="h-3 w-3 shrink-0 text-gray-400" />
+                        <span>
+                          <span className="font-medium">Pemilik:</span>{" "}
+                          {item.ownerFullName ?? item.bankAccountHolder}
+                          {item.ownerNik
+                            ? ` · NIK ${maskNik(item.ownerNik)}`
+                            : ""}
+                        </span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Rekening tujuan: {item.bankName} ·{" "}
+                        {item.bankAccountNumber} · a.n. {item.bankAccountHolder}
                       </p>
                       {item.status === "COMPLETED" &&
                         item.transferReference && (

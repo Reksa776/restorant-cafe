@@ -26,6 +26,14 @@ export interface WalletSummary {
   bankName: string | null;
   bankAccountNumber: string | null;
   bankAccountHolder: string | null;
+  /** Owner KYC — required before any payout (server-validated). */
+  ownerFullName: string | null;
+  ownerNik: string | null;
+  ownerPhone: string | null;
+  ownerAddress: string | null;
+  kycUpdatedAt: string | null;
+  /** true only when owner KYC AND bank details are both valid. */
+  profileComplete: boolean;
   updatedAt: string;
 }
 
@@ -48,6 +56,10 @@ export interface WithdrawalRecord {
   bankName: string;
   bankAccountNumber: string;
   bankAccountHolder: string;
+  /** Snapshot of the owner identity at withdrawal time. */
+  ownerFullName: string | null;
+  ownerNik: string | null;
+  ownerPhone: string | null;
   status: WithdrawalStatus;
   transferReference: string | null;
   rejectionReason: string | null;
@@ -83,18 +95,28 @@ export interface SuperAdminWithdrawalOverview {
   };
 }
 
+export interface WalletProfileInput {
+  ownerFullName: string;
+  ownerNik: string;
+  ownerPhone: string;
+  ownerAddress: string;
+  bankName: string;
+  bankAccountNumber: string;
+  bankAccountHolder: string;
+}
+
 export const walletService = {
   async getOverview(): Promise<WalletOverview> {
     const res = await api.get("/admin/wallet");
     return res.data.data as WalletOverview;
   },
 
-  async updateBank(input: {
-    bankName: string;
-    bankAccountNumber: string;
-    bankAccountHolder: string;
-  }): Promise<WalletSummary> {
-    const res = await api.put("/admin/wallet/bank", input);
+  /**
+   * Save Data Diri Pemilik (KTP/WA/Alamat) + Rekening Bank in one request.
+   * The server validates every field and stamps `kycUpdatedAt`.
+   */
+  async updateProfile(input: WalletProfileInput): Promise<WalletSummary> {
+    const res = await api.put("/admin/wallet/profile", input);
     return res.data.data as WalletSummary;
   },
 

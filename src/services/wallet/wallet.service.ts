@@ -10,6 +10,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "@/lib/errors";
+import { z } from "zod";
 
 // ============================================================
 // MERCHANT WALLET & PAYOUT — server-side money movement
@@ -42,6 +43,114 @@ export const SUPPORTED_BANKS = [
   "Bank Jago",
   "SeaBank",
 ] as const;
+
+// ============================================================
+// OWNER KYC — the merchant must complete identity + bank details before
+// ANY money leaves the wallet. Kept in one place so the UI flag, the API
+// validation and the withdrawal guard can never disagree.
+// ============================================================
+
+export const WALLET_PROFILE_INCOMPLETE_MESSAGE =
+  "Lengkapi Data Diri Pemilik (KTP/WA/Alamat) dan Rekening Bank terlebih dahulu sebelum melakukan pencairan.";
+
+/**
+ * Fields the completeness check needs. Structural so a `RestaurantWallet` row,
+ * an API payload or a projected select can all be passed in.
+ */
+export interface WalletProfileFields {
+  ownerFullName?: string | null;
+  ownerNik?: string | null;
+  ownerPhone?: string | null;
+  ownerAddress?: string | null;
+  bankName?: string | null;
+  bankAccountNumber?: string | null;
+  bankAccountHolder?: string | null;
+}
+
+function digitsOnly(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+/**
+ * true only when BOTH halves of the payout profile are valid:
+ * owner identity (name >= 3, NIK = 16 digits, phone >= 9, address >= 5) and
+ * the destination bank account (bank set, account >= 6 digits, holder >= 3).
+ */
+export function isWalletProfileComplete(
+  wallet: WalletProfileFields | null | undefined
+): boolean {
+  if (!wallet) return false;
+
+  const fullName = wallet.ownerFullName?.trim() ?? "";
+  const nik = digitsOnly(wallet.ownerNik ?? "");
+  const phone = digitsOnly(wallet.ownerPhone ?? "");
+  const address = wallet.ownerAddress?.trim() ?? "";
+  const bankName = wallet.bankName?.trim() ?? "";
+  const accountNumber = digitsOnly(wallet.bankAccountNumber ?? "");
+  const accountHolder = wallet.bankAccountHolder?.trim() ?? "";
+
+  return (
+    fullName.length >= 3 &&
+    /^\d{16}$/.test(nik) &&
+    phone.length >= 9 &&
+    address.length >= 5 &&
+    bankName.length > 0 &&
+    /^\d{6,32}$/.test(accountNumber) &&
+    accountHolder.length >= 3
+  );
+}
+
+/**
+ * Single Zod contract for the unified payout profile form: Data Diri Pemilik
+ * + Rekening Bank Tujuan. NIK/phone/account numbers are normalised to digits
+ * before validation so "0812-3456-7890" and "0812 3456 7890" are accepted.
+ */
+export const walletProfileSchema = z.object({
+  ownerFullName: z
+    .string()
+    .trim()
+    .min(3, "Nama lengkap sesuai KTP minimal 3 karakter")
+    .max(120, "Nama lengkap sesuai KTP maksimal 120 karakter"),
+  ownerNik: z
+    .string()
+    .trim()
+    .transform(digitsOnly)
+    .refine((value) => /^\d{16}$/.test(value), "NIK (KTP) harus 16 digit angka"),
+  ownerPhone: z
+    .string()
+    .trim()
+    .transform(digitsOnly)
+    .refine(
+      (value) => value.length >= 9 && value.length <= 15,
+      "Nomor WhatsApp pemilik harus 9–15 digit angka"
+    ),
+  ownerAddress: z
+    .string()
+    .trim()
+    .min(5, "Alamat domisili pemilik minimal 5 karakter")
+    .max(255, "Alamat domisili pemilik maksimal 255 karakter"),
+  bankName: z
+    .string()
+    .trim()
+    .refine(
+      (value) => (SUPPORTED_BANKS as readonly string[]).includes(value),
+      "Bank tidak didukung"
+    ),
+  bankAccountNumber: z
+    .string()
+    .trim()
+    .transform(digitsOnly)
+    .refine(
+      (value) => /^\d{6,32}$/.test(value),
+      "Nomor rekening harus 6–32 digit angka"
+    ),
+  bankAccountHolder: z
+    .string()
+    .trim()
+    .min(3, "Nama pemilik rekening minimal 3 karakter")
+    .max(120, "Nama pemilik rekening maksimal 120 karakter"),
+});
+export type WalletProfileInput = z.infer<typeof walletProfileSchema>;
 
 export interface PayoutConfig {
   /** Platform MDR percent withheld from each order credit (0 = none). */
@@ -485,10 +594,16 @@ async function requestWithdrawalInTransaction(
     where: { restaurantId: input.restaurantId },
   });
 
-  if (!wallet.bankName || !wallet.bankAccountNumber || !wallet.bankAccountHolder) {
-    throw new ValidationError(
-      "Lengkapi rekening bank tujuan terlebih dahulu sebelum mencairkan saldo"
-    );
+  // Payout gate: owner KYC + bank account must both be complete. Legacy
+  // wallets without owner data are blocked until the unified profile form is
+  // saved, so a transfer can never go to an unidentified destination.
+  if (
+    !isWalletProfileComplete(wallet) ||
+    !wallet.bankName ||
+    !wallet.bankAccountNumber ||
+    !wallet.bankAccountHolder
+  ) {
+    throw new ValidationError(WALLET_PROFILE_INCOMPLETE_MESSAGE);
   }
   if (wallet.availableBalance < amount) {
     throw new ValidationError(
@@ -539,6 +654,11 @@ async function requestWithdrawalInTransaction(
       bankName: wallet.bankName,
       bankAccountNumber: wallet.bankAccountNumber,
       bankAccountHolder: wallet.bankAccountHolder,
+      // Immutable owner snapshot: the payout proof keeps the identity that
+      // existed when the money left, not whatever the wallet holds later.
+      ownerFullName: wallet.ownerFullName,
+      ownerNik: wallet.ownerNik,
+      ownerPhone: wallet.ownerPhone,
       // Self-service: an instant payout is final the moment it is created.
       status: isInstant ? "COMPLETED" : "PENDING",
       transferReference,
@@ -918,6 +1038,13 @@ export async function getWalletOverview(restaurantId: string) {
       bankName: wallet.bankName,
       bankAccountNumber: wallet.bankAccountNumber,
       bankAccountHolder: wallet.bankAccountHolder,
+      ownerFullName: wallet.ownerFullName,
+      ownerNik: wallet.ownerNik,
+      ownerPhone: wallet.ownerPhone,
+      ownerAddress: wallet.ownerAddress,
+      kycUpdatedAt: wallet.kycUpdatedAt,
+      /** Server-side truth used by the UI to lock the withdraw form. */
+      profileComplete: isWalletProfileComplete(wallet),
       updatedAt: wallet.updatedAt,
     },
     ledger,
@@ -930,46 +1057,49 @@ export async function getWalletOverview(restaurantId: string) {
   };
 }
 
-export interface UpdateWalletBankInput {
-  bankName: string;
-  bankAccountNumber: string;
-  bankAccountHolder: string;
-}
-
-export async function updateWalletBank(
+/**
+ * Save the unified payout profile (owner KYC + destination bank account) in
+ * ONE write. Validation happens here with Zod — never in the route — so every
+ * caller (bank alias, profile alias, future UI) is validated identically.
+ */
+export async function updateWalletProfile(
   restaurantId: string,
-  input: UpdateWalletBankInput
+  input: unknown
 ) {
-  const bankName = input.bankName.trim();
-  if (!(SUPPORTED_BANKS as readonly string[]).includes(bankName)) {
-    throw new ValidationError("Bank tidak didukung");
-  }
-
-  // Allow spaces/dashes while typing, store digits only.
-  const bankAccountNumber = input.bankAccountNumber.replace(/[\s-]/g, "");
-  if (!/^\d{6,32}$/.test(bankAccountNumber)) {
-    throw new ValidationError("Nomor rekening harus 6–32 digit angka");
-  }
-
-  const bankAccountHolder = input.bankAccountHolder.trim();
-  if (bankAccountHolder.length < 3 || bankAccountHolder.length > 120) {
-    throw new ValidationError("Nama pemilik rekening harus 3–120 karakter");
+  const parsed = walletProfileSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ValidationError(
+      parsed.error.issues[0]?.message ?? "Data profil pencairan tidak valid"
+    );
   }
 
   await getOrCreateWallet(restaurantId);
 
-  const wallet = await prisma.restaurantWallet.update({
+  return prisma.restaurantWallet.update({
     where: { restaurantId },
-    data: { bankName, bankAccountNumber, bankAccountHolder },
+    data: {
+      ownerFullName: parsed.data.ownerFullName,
+      ownerNik: parsed.data.ownerNik,
+      ownerPhone: parsed.data.ownerPhone,
+      ownerAddress: parsed.data.ownerAddress,
+      bankName: parsed.data.bankName,
+      bankAccountNumber: parsed.data.bankAccountNumber,
+      bankAccountHolder: parsed.data.bankAccountHolder,
+      // Only recorded after a fully validated save.
+      kycUpdatedAt: new Date(),
+    },
     select: {
+      ownerFullName: true,
+      ownerNik: true,
+      ownerPhone: true,
+      ownerAddress: true,
       bankName: true,
       bankAccountNumber: true,
       bankAccountHolder: true,
+      kycUpdatedAt: true,
       updatedAt: true,
     },
   });
-
-  return wallet;
 }
 
 const WITHDRAWAL_STATUSES: WithdrawalStatus[] = [
