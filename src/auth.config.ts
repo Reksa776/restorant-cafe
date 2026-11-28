@@ -1,5 +1,6 @@
 import type { NextAuthConfig } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import { authSessionTokenCookie } from "@/lib/auth-cookie";
 
 /** Extra claims carried on the Auth.js user/session objects (role + M3). */
 interface SessionExtraClaims {
@@ -16,6 +17,11 @@ interface SessionExtraClaims {
 export default {
   pages: {
     signIn: "/login",
+  },
+  // Same name + domain scope as the Node instance in `src/auth.ts`, so the
+  // edge middleware reads exactly the cookie that `signIn` writes.
+  cookies: {
+    sessionToken: authSessionTokenCookie(),
   },
   providers: [
     Credentials({

@@ -4,44 +4,27 @@ import { PrismaAdapter } from "@auth/prisma-adapter";
 import { headers } from "next/headers";
 import { prisma } from "./prisma";
 import authConfig from "@/auth.config";
-import {
-  authCookieDomain,
-  authCookieSecure,
-  authSessionCookieName,
-} from "./auth-cookie";
+import { authSessionTokenCookie } from "./auth-cookie";
 import { authenticateLogin, resolveLoginScope } from "./login-scope";
 
 /**
- * Shared session cookie (see `auth-cookie.ts`): null keeps Auth.js' default
- * host-only cookie; a value shares it with `*.<ROOT_DOMAIN>` so an owner can
- * sign in on the root domain and continue on their store subdomain. The
+ * Session cookie (see `authSessionTokenCookie()` in `auth-cookie.ts`): ONE
+ * rule for name + scope, shared with `src/auth.config.ts`. A `Domain=` value
+ * shares the cookie with `*.<ROOT_DOMAIN>` so an owner can sign in on the root
+ * domain and continue on their store subdomain; without one it stays
+ * host-only. The cookie is never written twice with different scopes — the
  * per-host claim check in middleware / requireRestaurantContext is what keeps
  * tenants apart.
  */
-const cookieDomain = authCookieDomain();
-const sharedSessionCookie = cookieDomain
-  ? {
-      sessionToken: {
-        name: authSessionCookieName(),
-        options: {
-          httpOnly: true,
-          sameSite: "lax" as const,
-          path: "/",
-          secure: authCookieSecure(),
-          domain: cookieDomain,
-          maxAge: 30 * 24 * 60 * 60,
-        },
-      },
-    }
-  : undefined;
-
 export const { handlers, signIn, signOut, auth } = NextAuth({
   ...authConfig,
   adapter: PrismaAdapter(prisma),
   session: {
     strategy: "jwt",
   },
-  cookies: sharedSessionCookie,
+  cookies: {
+    sessionToken: authSessionTokenCookie(),
+  },
   providers: [
     Credentials({
       name: "credentials",

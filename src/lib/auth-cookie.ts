@@ -105,3 +105,31 @@ export function authCookieSecure(): boolean {
 export function authSessionCookieName(): string {
   return authCookieSecure() ? AUTH_SESSION_COOKIE_SECURE : AUTH_SESSION_COOKIE;
 }
+
+/**
+ * Auth.js `cookies.sessionToken` entry — the SINGLE source of truth for the
+ * name and the `Domain=`/`Secure` scope of the session cookie.
+ *
+ * Used by BOTH `src/auth.config.ts` (edge middleware, which READS the cookie)
+ * and `src/auth.ts` (Node runtime, which WRITES it on `signIn`). Keeping one
+ * rule guarantees the browser never ends up holding two session cookies with
+ * different scopes (host-only AND `.ROOT_DOMAIN`), which is what made logout
+ * leave a "ghost" session behind on the other host.
+ *
+ * `domain` is simply omitted when the deployment is host-only, so Auth.js
+ * writes exactly one cookie — never a duplicate host-only/root pair.
+ */
+export function authSessionTokenCookie() {
+  const domain = authCookieDomain();
+  return {
+    name: authSessionCookieName(),
+    options: {
+      httpOnly: true as const,
+      sameSite: "lax" as const,
+      path: "/",
+      secure: authCookieSecure(),
+      maxAge: 30 * 24 * 60 * 60,
+      ...(domain ? { domain } : {}),
+    },
+  };
+}
