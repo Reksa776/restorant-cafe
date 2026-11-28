@@ -3,15 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "description": "RestoPOS Kasir Desktop — Electron shell for the multi-tenant POS with silent thermal receipt printing.",
+  "repository": "https://github.com/Reksa776/restorant-cafe.git",
   "main": "main.js",
   "author": "Demo Solusi Sejalan",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
     "pack": "electron-builder --dir",
-    "dist:win": "electron-builder --win nsis",
-    "dist:mac": "electron-builder --mac dmg",
-    "dist:linux": "electron-builder --linux AppImage"
+    "dist:win": "electron-builder --win nsis --publish never",
+    "dist:mac": "electron-builder --mac dmg --publish never",
+    "dist:linux": "electron-builder --linux AppImage --publish never"
   },
   "devDependencies": {
     "electron": "^33.2.0",
