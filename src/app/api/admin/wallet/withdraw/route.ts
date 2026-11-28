@@ -8,10 +8,12 @@ import { requestWithdrawal } from "@/services/wallet/wallet.service";
 /**
  * POST /api/admin/wallet/withdraw
  *
- * Create a withdrawal request for the authenticated tenant. The amount is the
- * ONLY client input: the fee, net amount and bank snapshot are recomputed
+ * SELF-SERVICE payout for the authenticated tenant. The amount is the ONLY
+ * client input: the fee, net amount and bank snapshot are recomputed
  * server-side from env + the stored wallet, and the balance move is atomic
- * and guarded (no double-spend).
+ * and guarded (no double-spend). No Super Admin approval is involved — the
+ * wallet is debited and the withdrawal settles immediately (or is held while
+ * the external disbursement gateway confirms, when enabled).
  */
 const WithdrawSchema = z.object({
   amount: z.coerce.number().finite().positive(),
@@ -37,14 +39,19 @@ export async function POST(request: NextRequest) {
       amount: parsed.data.amount,
     });
 
-    return createdResponse(result, "Pengajuan pencairan berhasil dibuat");
+    return createdResponse(
+      result,
+      result.disbursement.success
+        ? "Pencairan berhasil diproses dan saldo telah dipotong"
+        : "Pencairan dibuat — transfer otomatis sedang diproses"
+    );
   } catch (error) {
     if (error instanceof AppError) {
       return errorResponse(error.message, error.code, error.statusCode);
     }
     console.error("Error creating withdrawal:", error);
     return errorResponse(
-      "Gagal membuat pengajuan pencairan",
+      "Gagal memproses pencairan saldo",
       "INTERNAL_ERROR",
       500
     );

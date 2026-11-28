@@ -29,7 +29,8 @@ export async function GET() {
 
 /**
  * POST /api/users — create a staff user (ADMIN only).
- * Body: { name, email, password, role: "ADMIN" | "CASHIER" }
+ * Body: { name, email, password, role: "ADMIN" | "CASHIER" | "KITCHEN",
+ *         branchId?: string | null }
  */
 export async function POST(request: NextRequest) {
   try {
@@ -46,6 +47,7 @@ export async function POST(request: NextRequest) {
       email: body.email,
       password: body.password,
       role: body.role,
+      branchId: body.branchId ?? null,
     });
 
     return createdResponse(user, "Pengguna berhasil dibuat");

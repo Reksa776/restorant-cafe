@@ -30,7 +30,8 @@ export class UserService {
   }
 
   /**
-   * Admin: create a staff user (ADMIN or CASHIER).
+   * Admin: create a staff user (Co-Admin ADMIN, CASHIER or KITCHEN) and
+   * optionally assign the new account to one branch (branchId).
    */
   async createUser(input: {
     restaurantId: string;
@@ -38,7 +39,9 @@ export class UserService {
     name: string;
     email: string;
     password: string;
-    role: "ADMIN" | "CASHIER";
+    role: "ADMIN" | "CASHIER" | "KITCHEN";
+    /** Optional branch assignment; null/absent = access to all branches. */
+    branchId?: string | null;
   }) {
     const name = input.name?.trim();
     const email = (input.email || "").trim().toLowerCase();
@@ -51,8 +54,12 @@ export class UserService {
     if (!input.password || input.password.length < 6) {
       throw new ValidationError("Password minimal 6 karakter");
     }
-    if (input.role !== "ADMIN" && input.role !== "CASHIER") {
-      throw new ValidationError("Role harus ADMIN atau CASHIER");
+    if (
+      input.role !== "ADMIN" &&
+      input.role !== "CASHIER" &&
+      input.role !== "KITCHEN"
+    ) {
+      throw new ValidationError("Role harus ADMIN, CASHIER, atau KITCHEN");
     }
 
     const existing = await prisma.user.findUnique({ where: { email } });
@@ -60,23 +67,46 @@ export class UserService {
       throw new ConflictError("Email sudah terdaftar");
     }
 
+    // The branch must belong to THIS tenant — a client-supplied id can never
+    // attach a staff account to another restaurant's branch.
+    const branchId = input.branchId?.trim() || null;
+    if (branchId) {
+      const branch = await prisma.branch.findFirst({
+        where: { id: branchId, restaurantId: input.restaurantId },
+        select: { id: true },
+      });
+      if (!branch) {
+        throw new ValidationError("Cabang tidak ditemukan");
+      }
+    }
+
     const password = await bcrypt.hash(input.password, 12);
-    const user = await prisma.user.create({
-      data: {
-        restaurantId: input.restaurantId,
-        name,
-        email,
-        password,
-        role: input.role as Role,
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        isActive: true,
-        createdAt: true,
-      },
+    const user = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          restaurantId: input.restaurantId,
+          name,
+          email,
+          password,
+          role: input.role as Role,
+        },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          isActive: true,
+          createdAt: true,
+        },
+      });
+
+      if (branchId) {
+        await tx.userBranch.create({
+          data: { userId: created.id, branchId },
+        });
+      }
+
+      return created;
     });
 
     emitRealtime(input.restaurantId, REALTIME_EVENT_TYPES.USER_CREATED, user.id, {
@@ -92,7 +122,12 @@ export class UserService {
       action: "USER_CREATED",
       entityType: "User",
       entityId: user.id,
-      details: { email: user.email, role: user.role, name: user.name },
+      details: {
+        email: user.email,
+        role: user.role,
+        name: user.name,
+        branchId,
+      },
     });
 
     return user;

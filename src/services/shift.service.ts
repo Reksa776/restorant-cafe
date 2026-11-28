@@ -225,7 +225,7 @@ export const userService = {
       id: string;
       name: string;
       email: string;
-      role: "ADMIN" | "CASHIER";
+      role: "ADMIN" | "CASHIER" | "KITCHEN";
       isActive: boolean;
       createdAt: string;
     }>;
@@ -238,7 +238,9 @@ export const userService = {
     name: string;
     email: string;
     password: string;
-    role: "ADMIN" | "CASHIER";
+    role: "ADMIN" | "CASHIER" | "KITCHEN";
+    /** Optional branch assignment; omit/null = access to all branches. */
+    branchId?: string | null;
   }) {
     const response = await api.post("/users", data);
     return response.data.data;

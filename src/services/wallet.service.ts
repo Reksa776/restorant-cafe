@@ -8,6 +8,7 @@ export type WalletTxType =
   | "ORDER_CREDIT"
   | "WITHDRAWAL_HOLD"
   | "WITHDRAWAL_RELEASE"
+  | "WITHDRAWAL_DISBURSED"
   | "PLATFORM_FEE"
   | "ADJUSTMENT";
 
@@ -97,9 +98,24 @@ export const walletService = {
     return res.data.data as WalletSummary;
   },
 
+  /**
+   * Self-service payout. Resolves once the balance is already debited: the
+   * withdrawal comes back COMPLETED with an AUTO-WD-… reference, or PENDING
+   * when the external disbursement gateway could not be reached yet.
+   */
   async withdraw(amount: number): Promise<{
     withdrawal: WithdrawalRecord;
-    wallet: { availableBalance: number; pendingBalance: number };
+    wallet: {
+      availableBalance: number;
+      pendingBalance: number;
+      totalWithdrawn: number;
+    };
+    disbursement: {
+      auto: boolean;
+      success: boolean;
+      reference: string | null;
+      message: string | null;
+    };
   }> {
     const res = await api.post("/admin/wallet/withdraw", { amount });
     return res.data.data;

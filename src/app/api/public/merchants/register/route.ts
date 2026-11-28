@@ -41,11 +41,14 @@ const RegisterMerchantSchema = z.object({
     .trim()
     .min(2, "Nama restoran minimal 2 karakter")
     .max(120, "Nama restoran maksimal 120 karakter"),
+  // Optional: registration always creates the tenant's central branch, named
+  // "Cabang Pusat" unless the caller explicitly names it.
   branchName: z
     .string()
     .trim()
     .min(2, "Nama cabang minimal 2 karakter")
-    .max(120, "Nama cabang maksimal 120 karakter"),
+    .max(120, "Nama cabang maksimal 120 karakter")
+    .optional(),
   ownerName: z
     .string()
     .trim()
@@ -112,7 +115,7 @@ async function createTenant(input: RegisterMerchantInput) {
       data: {
         restaurantId: restaurant.id,
         code: "PUSAT",
-        name: input.branchName,
+        name: input.branchName?.trim() || "Cabang Pusat",
         address: input.address?.trim() || null,
         phone: input.phone,
         isActive: true,

@@ -37,7 +37,6 @@ import {
   LayoutGrid,
   BookOpen,
   RotateCcw,
-  ShieldCheck,
   Landmark,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -92,15 +91,15 @@ function isNavGroup(entry: NavEntry): entry is NavGroup {
  * authorization boundary.
  */
 const navigation: NavEntry[] = [
-  { name: "Ringkasan", href: "/admin/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "CASHIER"] },
+  { name: "Ringkasan", href: "/admin/dashboard", icon: LayoutDashboard, roles: ["ADMIN", "CASHIER", "KITCHEN"] },
   // Phase 4 — subscription plans, branch add-ons and invoices (ADMIN only).
   { name: "Paket & Billing", href: "/admin/billing", icon: CreditCard, roles: ["ADMIN"] },
   {
     name: "Operasional",
     icon: ClipboardList,
     children: [
-      { name: "Pesanan", href: "/admin/orders", icon: ShoppingCart, roles: ["ADMIN", "CASHIER"] },
-      { name: "Dapur", href: "/admin/kitchen", icon: ChefHat, roles: ["ADMIN", "CASHIER"] },
+      { name: "Pesanan", href: "/admin/orders", icon: ShoppingCart, roles: ["ADMIN", "CASHIER", "KITCHEN"] },
+      { name: "Dapur", href: "/admin/kitchen", icon: ChefHat, roles: ["ADMIN", "CASHIER", "KITCHEN"] },
       { name: "Meja", href: "/admin/tables", icon: TableProperties, roles: ["ADMIN", "CASHIER"], exact: true },
       { name: "Layout Cafe", href: "/admin/tables/layout", icon: LayoutGrid, roles: ["ADMIN", "CASHIER"] },
       { name: "Reservasi", href: "/admin/reservations", icon: CalendarDays, roles: ["ADMIN", "CASHIER"] },
@@ -214,7 +213,7 @@ function AdminBrandLogo({ url, alt }: { url?: string | null; alt: string }) {
  */
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const { role, session } = useUserRole();
+  const { role } = useUserRole();
   const { branding } = useBranding();
 
   // Role-aware navigation (UI layer). Server-side API guards are the real
@@ -339,30 +338,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           );
         })}
 
-        {/* SaaS-owner shortcut — rendered ONLY when the signed-in email is
-            listed in SUPERADMIN_EMAILS (flag from /api/auth/session). The
-            cross-tenant API re-checks the allow-list server-side. */}
-        {session?.isSuperAdmin && (
-          <div className="mt-3 border-t border-dashed border-gray-200 pt-3">
-            <Link
-              href="/superadmin/payouts"
-              onClick={onNavigate}
-              className={cn(
-                "flex items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100",
-                pathname.startsWith("/superadmin/payouts") &&
-                  "ring-2 ring-slate-300"
-              )}
-            >
-              <ShieldCheck className="h-5 w-5 shrink-0 text-slate-600" />
-              <span className="min-w-0 flex-1 truncate">
-                Pencairan SaaS
-                <span className="block text-[10px] font-normal text-slate-500">
-                  Super Admin
-                </span>
-              </span>
-            </Link>
-          </div>
-        )}
+        {/* Merchant payouts are fully self-service (/admin/payouts, Keuangan
+            group): there is NO manual Super Admin approval entry in this
+            sidebar. The cross-tenant settlement queue stays available only
+            through its own /superadmin surface. */}
       </nav>
 
       {/* Role chip (bottom, above logout) */}
@@ -370,7 +349,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         {role && (
           <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-medium text-gray-600">
             <Wallet className="h-3 w-3 mr-1" />
-            {role === "ADMIN" ? "Admin" : "Kasir"}
+            {role === "ADMIN" ? "Admin" : role === "KITCHEN" ? "Dapur" : "Kasir"}
           </span>
         )}
       </div>

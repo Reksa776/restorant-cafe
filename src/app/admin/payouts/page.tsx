@@ -5,9 +5,9 @@ import {
   ArrowDownToLine,
   Building2,
   CheckCircle2,
-  Clock,
   Copy,
   History,
+  Info,
   Landmark,
   Loader2,
   RefreshCw,
@@ -76,6 +76,7 @@ const LEDGER_META: Record<
   PLATFORM_FEE: { label: "Biaya platform", tone: "text-amber-600" },
   WITHDRAWAL_HOLD: { label: "Penarikan ditahan", tone: "text-slate-600" },
   WITHDRAWAL_RELEASE: { label: "Dana dikembalikan", tone: "text-sky-600" },
+  WITHDRAWAL_DISBURSED: { label: "Dana dicairkan", tone: "text-slate-600" },
   ADJUSTMENT: { label: "Penyesuaian", tone: "text-slate-600" },
 };
 
@@ -245,13 +246,23 @@ export default function PayoutsPage() {
     setSubmitting(true);
     try {
       const result = await walletService.withdraw(numericAmount);
-      toast.success(
-        `Pengajuan ${result.withdrawal.withdrawalCode} dibuat — menunggu persetujuan Super Admin`
-      );
+      const reference =
+        result.withdrawal.transferReference || result.disbursement.reference;
+      if (result.disbursement.success) {
+        toast.success(
+          `Pencairan ${rupiah(result.withdrawal.netAmount)} berhasil dikirim ke ${result.withdrawal.bankName} ${result.withdrawal.bankAccountNumber}` +
+            (reference ? ` · ${reference}` : "")
+        );
+      } else {
+        toast.warning(
+          result.disbursement.message ||
+            "Saldo sudah dipotong. Transfer otomatis sedang diproses."
+        );
+      }
       setAmount("");
       await load();
     } catch (error) {
-      toast.error(errorMessage(error, "Gagal mengajukan pencairan"));
+      toast.error(errorMessage(error, "Gagal mencairkan saldo"));
     } finally {
       setSubmitting(false);
     }
@@ -299,8 +310,8 @@ export default function PayoutsPage() {
             Saldo &amp; Pencairan
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Dana dari pembayaran online yang lunas otomatis masuk ke saldo
-            kafe Anda. Ajukan pencairan ke rekening bank kapan saja.
+            Pencairan mandiri langsung ke rekening bank kafe Anda — tanpa
+            menunggu persetujuan manual.
           </p>
         </div>
         <Button variant="outline" onClick={() => void load()}>
@@ -309,27 +320,40 @@ export default function PayoutsPage() {
         </Button>
       </div>
 
+      <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+        <p className="text-sm leading-relaxed text-emerald-900">
+          Dana transaksi QRIS &amp; Virtual Account pelanggan otomatis masuk ke
+          saldo toko Anda dan dapat dicairkan langsung ke rekening bank
+          terdaftar kapan saja.
+        </p>
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <BalanceCard
           label="Saldo Siap Tarik"
           value={rupiah(wallet.availableBalance)}
-          hint="Bisa diajukan pencairan sekarang"
+          hint={
+            wallet.pendingBalance > 0
+              ? `${rupiah(wallet.pendingBalance)} sedang diproses transfer`
+              : "Bisa dicairkan sekarang"
+          }
           icon={Wallet}
           accent="bg-emerald-50 text-emerald-600"
         />
         <BalanceCard
-          label="Sedang Diproses"
-          value={rupiah(wallet.pendingBalance)}
-          hint="Menunggu persetujuan Super Admin"
-          icon={Clock}
-          accent="bg-amber-50 text-amber-600"
+          label="Total Pendapatan Bersih"
+          value={rupiah(wallet.totalEarned)}
+          hint="Akumulasi pendapatan setelah biaya platform"
+          icon={Landmark}
+          accent="bg-sky-50 text-sky-600"
         />
         <BalanceCard
           label="Total Sudah Dicairkan"
           value={rupiah(wallet.totalWithdrawn)}
-          hint={`Total pendapatan bersih ${rupiah(wallet.totalEarned)}`}
+          hint="Dana yang sudah masuk rekening bank Anda"
           icon={CheckCircle2}
-          accent="bg-sky-50 text-sky-600"
+          accent="bg-indigo-50 text-indigo-600"
         />
       </div>
 
@@ -409,8 +433,7 @@ export default function PayoutsPage() {
 
             {!hasBank && (
               <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-amber-200">
-                Rekening wajib dilengkapi sebelum pengajuan pencairan bisa
-                dibuat.
+                Rekening wajib dilengkapi sebelum saldo bisa dicairkan.
               </p>
             )}
           </CardContent>
@@ -421,7 +444,7 @@ export default function PayoutsPage() {
           <CardHeader className="border-b">
             <CardTitle className="flex items-center gap-2">
               <ArrowDownToLine className="h-4 w-4 text-muted-foreground" />
-              Tarik Dana
+              Tarik Saldo
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -497,12 +520,14 @@ export default function PayoutsPage() {
               }
             >
               {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Ajukan Pencairan
+              Cairkan Dana Sekarang
             </Button>
 
             <p className="text-xs text-muted-foreground">
-              Minimal {rupiah(config.minWithdrawal)}. Dana diproses manual oleh
-              Super Admin ke rekening yang tersimpan.
+              Minimal {rupiah(config.minWithdrawal)}. Saldo langsung dipotong
+              dan ditransfer ke rekening {hasBank
+                ? `${wallet.bankName} ${wallet.bankAccountNumber} a.n. ${wallet.bankAccountHolder}`
+                : "yang Anda simpan"}.
             </p>
           </CardContent>
         </Card>
@@ -514,7 +539,7 @@ export default function PayoutsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2">
               <History className="h-4 w-4 text-muted-foreground" />
-              Riwayat
+              Riwayat Pencairan &amp; Mutasi Saldo
             </CardTitle>
             <div className="inline-flex rounded-lg bg-gray-100 p-1">
               <button
@@ -527,7 +552,7 @@ export default function PayoutsPage() {
                     : "text-gray-500 hover:text-gray-700"
                 )}
               >
-                Pengajuan Pencairan
+                Pencairan
               </button>
               <button
                 type="button"
@@ -549,8 +574,8 @@ export default function PayoutsPage() {
             data.withdrawals.length === 0 ? (
               <EmptyState
                 icon={Landmark}
-                title="Belum ada pengajuan pencairan"
-                description="Pengajuan yang Anda buat akan tampil di sini beserta statusnya."
+                title="Belum ada pencairan"
+                description="Setiap pencairan saldo akan tampil di sini beserta status dan referensinya."
               />
             ) : (
               <div className="divide-y divide-gray-100">

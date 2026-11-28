@@ -1,5 +1,9 @@
-import { randomInt } from "node:crypto";
-import { Prisma, type WithdrawalStatus } from "@prisma/client";
+import crypto, { randomInt } from "node:crypto";
+import {
+  Prisma,
+  type WithdrawalRequest,
+  type WithdrawalStatus,
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
   ConflictError,
@@ -78,17 +82,29 @@ function isUniqueViolation(error: unknown): boolean {
 
 const WITHDRAWAL_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
-/** WD-YYYYMMDD-XXXXXX */
-function generateWithdrawalCode(date = new Date()): string {
-  const stamp = `${date.getFullYear()}${String(date.getMonth() + 1).padStart(
+function dateStamp(date = new Date()): string {
+  return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(
     2,
     "0"
   )}${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function randomSuffix(length = 6): string {
   let suffix = "";
-  for (let i = 0; i < 6; i += 1) {
+  for (let i = 0; i < length; i += 1) {
     suffix += WITHDRAWAL_CODE_ALPHABET[randomInt(WITHDRAWAL_CODE_ALPHABET.length)];
   }
-  return `WD-${stamp}-${suffix}`;
+  return suffix;
+}
+
+/** WD-YYYYMMDD-XXXXXX */
+function generateWithdrawalCode(date = new Date()): string {
+  return `WD-${dateStamp(date)}-${randomSuffix()}`;
+}
+
+/** AUTO-WD-YYYYMMDD-XXXXXX — reference of a self-service payout. */
+function generateTransferReference(date = new Date()): string {
+  return `AUTO-WD-${dateStamp(date)}-${randomSuffix()}`;
 }
 
 /**
@@ -240,7 +256,22 @@ export async function creditWalletFromOrder(
 }
 
 // ============================================================
-// WITHDRAWAL — client requests a payout to their own bank account.
+// WITHDRAWAL — SELF-SERVICE AUTO-DISBURSEMENT (no manual approval)
+//
+// The owner withdraws from /admin/payouts whenever they want:
+//
+//  INSTANT (default, IPAYMU_DISBURSEMENT_ENABLED != "true")
+//    one atomic transaction locks the wallet, debits availableBalance,
+//    increments totalWithdrawn, writes a WITHDRAWAL_DISBURSED ledger row and
+//    creates an already-COMPLETED WithdrawalRequest carrying an AUTO-WD-…
+//    transfer reference. The owner sees the reduced balance immediately.
+//
+//  EXTERNAL (IPAYMU_DISBURSEMENT_ENABLED === "true")
+//    the same transaction holds the money (available → pending) with a
+//    WITHDRAWAL_HOLD ledger row, then calls the master iPaymu disbursement
+//    API after the commit. A confirmed transfer settles the request to
+//    COMPLETED with the gateway reference; a failed call leaves it PENDING
+//    with the money still held (never silently marked as paid).
 // ============================================================
 
 export interface RequestWithdrawalInput {
@@ -250,26 +281,202 @@ export interface RequestWithdrawalInput {
 }
 
 export interface RequestWithdrawalResult {
-  withdrawal: {
-    id: string;
-    withdrawalCode: string;
-    amount: number;
-    feeAmount: number;
-    netAmount: number;
-    bankName: string;
-    bankAccountNumber: string;
-    bankAccountHolder: string;
-    status: WithdrawalStatus;
-    createdAt: Date;
+  withdrawal: WithdrawalRequest;
+  wallet: {
+    availableBalance: number;
+    pendingBalance: number;
+    totalWithdrawn: number;
   };
-  wallet: { availableBalance: number; pendingBalance: number };
+  disbursement: {
+    /** true — every payout from this flow is self-service. */
+    auto: boolean;
+    success: boolean;
+    reference: string | null;
+    message: string | null;
+  };
+}
+
+type DisbursementMode = "INSTANT" | "EXTERNAL";
+
+/** `IPAYMU_DISBURSEMENT_ENABLED="true"` switches to a real bank transfer. */
+export function isDisbursementEnabled(): boolean {
+  return (
+    (process.env.IPAYMU_DISBURSEMENT_ENABLED ?? "").trim().toLowerCase() ===
+    "true"
+  );
+}
+
+/** iPaymu disbursement bank codes for the banks offered in the UI. */
+const IPAYMU_BANK_CODES: Record<string, string> = {
+  BCA: "014",
+  BRI: "002",
+  Mandiri: "008",
+  BNI: "009",
+  BSI: "451",
+  "CIMB Niaga": "022",
+  Permata: "013",
+  "Bank Jago": "542",
+  SeaBank: "535",
+};
+
+function ipaymuCredentials(): {
+  va: string;
+  apiKey: string;
+  baseUrl: string;
+  environment: "production" | "sandbox";
+} {
+  const environment =
+    (process.env.IPAYMU_ENV || process.env.IPAYMU_ENVIRONMENT || "")
+      .trim()
+      .toLowerCase() === "production"
+      ? "production"
+      : "sandbox";
+
+  const va =
+    environment === "production"
+      ? process.env.IPAYMU_PRODUCTION_VA || process.env.IPAYMU_VA || ""
+      : process.env.IPAYMU_SANDBOX_VA || process.env.IPAYMU_VA || "";
+  const apiKey =
+    environment === "production"
+      ? process.env.IPAYMU_PRODUCTION_API_KEY ||
+        process.env.IPAYMU_API_KEY ||
+        ""
+      : process.env.IPAYMU_SANDBOX_API_KEY ||
+        process.env.IPAYMU_API_KEY ||
+        "";
+
+  const override =
+    environment === "production"
+      ? process.env.IPAYMU_PRODUCTION_BASE_URL || ""
+      : process.env.IPAYMU_SANDBOX_BASE_URL || process.env.IPAYMU_BASE_URL || "";
+  const baseUrl =
+    override.trim().replace(/\/+$/, "") ||
+    (environment === "production"
+      ? "https://my.ipaymu.com/api/v2"
+      : "https://sandbox.ipaymu.com/api/v2");
+
+  return { va, apiKey, baseUrl, environment };
+}
+
+interface DisbursementOutcome {
+  success: boolean;
+  reference: string | null;
+  message: string | null;
+}
+
+/**
+ * Call the master iPaymu disbursement endpoint (POST /disbursement/direct).
+ *
+ * Only reached when IPAYMU_DISBURSEMENT_ENABLED="true". The signature scheme
+ * matches the create-payment call already proven in production:
+ * HMAC-SHA256(`POST:VA:sha256(jsonBody):API_KEY`, API_KEY).
+ */
+async function disburseViaIpaymu(input: {
+  amount: number;
+  bankName: string;
+  bankAccountNumber: string;
+  bankAccountHolder: string;
+  withdrawalCode: string;
+}): Promise<DisbursementOutcome> {
+  const { va, apiKey, baseUrl } = ipaymuCredentials();
+  if (!va || !apiKey) {
+    return {
+      success: false,
+      reference: null,
+      message:
+        "Kredensial iPaymu Master belum dikonfigurasi — dana ditahan dan menunggu proses transfer.",
+    };
+  }
+
+  const body: Record<string, unknown> = {
+    account: va,
+    name: input.bankAccountHolder,
+    amount: String(input.amount),
+    bank: IPAYMU_BANK_CODES[input.bankName] ?? input.bankName,
+    bankAccount: input.bankAccountNumber,
+    notes: `Pencairan ${input.withdrawalCode}`,
+    referenceId: input.withdrawalCode,
+  };
+
+  try {
+    const jsonBody = JSON.stringify(body);
+    const bodyHash = crypto.createHash("sha256").update(jsonBody).digest("hex");
+    const signature = crypto
+      .createHmac("sha256", apiKey)
+      .update(Buffer.from(`POST:${va}:${bodyHash}:${apiKey}`, "utf-8"))
+      .digest("hex");
+
+    const now = new Date();
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(
+      now.getDate()
+    )}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+    const response = await fetch(`${baseUrl}/disbursement/direct`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        va,
+        signature,
+        timestamp,
+      },
+      body: jsonBody,
+    });
+
+    const raw = await response.text();
+    let payload: Record<string, unknown> | null = null;
+    try {
+      payload = raw.trim()
+        ? (JSON.parse(raw) as Record<string, unknown>)
+        : null;
+    } catch {
+      payload = null;
+    }
+
+    const status = Number(payload?.Status ?? 0);
+    const data = payload?.Data as Record<string, unknown> | undefined;
+    const reference =
+      (typeof data?.Reference === "string" && data.Reference) ||
+      (data?.TransactionId != null ? String(data.TransactionId) : null);
+
+    if (status === 200) {
+      return {
+        success: true,
+        reference: reference ?? `AUTO-WD-${input.withdrawalCode}`,
+        message: null,
+      };
+    }
+
+    const message =
+      typeof payload?.Message === "string" && payload.Message
+        ? payload.Message
+        : `Gateway menolak transfer (status ${status || response.status})`;
+    console.error("[iPaymu] Disbursement rejected", {
+      withdrawalCode: input.withdrawalCode,
+      gatewayStatus: status,
+      httpStatus: response.status,
+    });
+    return { success: false, reference: null, message };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[iPaymu] Disbursement request failed", {
+      withdrawalCode: input.withdrawalCode,
+      message,
+    });
+    return {
+      success: false,
+      reference: null,
+      message: "Gagal menghubungi gateway transfer. Dana ditahan dan akan diproses ulang.",
+    };
+  }
 }
 
 async function requestWithdrawalInTransaction(
   tx: Prisma.TransactionClient,
   input: RequestWithdrawalInput,
   amount: number,
-  feeAmount: number
+  feeAmount: number,
+  mode: DisbursementMode
 ): Promise<RequestWithdrawalResult> {
   await getOrCreateWallet(input.restaurantId, tx);
   await lockWalletRow(tx, input.restaurantId);
@@ -280,7 +487,7 @@ async function requestWithdrawalInTransaction(
 
   if (!wallet.bankName || !wallet.bankAccountNumber || !wallet.bankAccountHolder) {
     throw new ValidationError(
-      "Lengkapi rekening bank tujuan terlebih dahulu sebelum mengajukan pencairan"
+      "Lengkapi rekening bank tujuan terlebih dahulu sebelum mencairkan saldo"
     );
   }
   if (wallet.availableBalance < amount) {
@@ -291,29 +498,36 @@ async function requestWithdrawalInTransaction(
     );
   }
 
-  // Atomic, guarded move available → pending. `gte` makes the decrement
-  // conditional, so even without the lock a concurrent withdrawal could not
-  // spend the same Rupiah twice.
-  const held = await tx.restaurantWallet.updateMany({
+  const isInstant = mode === "INSTANT";
+
+  // Atomic, guarded debit. `gte` makes the decrement conditional, so even
+  // without the lock a concurrent withdrawal could not spend the same Rupiah
+  // twice. Instant payouts settle immediately (totalWithdrawn); external ones
+  // are held in pendingBalance until the gateway confirms.
+  const debited = await tx.restaurantWallet.updateMany({
     where: {
       restaurantId: input.restaurantId,
       availableBalance: { gte: amount },
     },
     data: {
       availableBalance: { decrement: amount },
-      pendingBalance: { increment: amount },
+      ...(isInstant
+        ? { totalWithdrawn: { increment: amount } }
+        : { pendingBalance: { increment: amount } }),
     },
   });
 
-  if (held.count === 0) {
+  if (debited.count === 0) {
     throw new ConflictError(
-      "Saldo berubah saat pengajuan diproses. Muat ulang lalu coba lagi."
+      "Saldo berubah saat pencairan diproses. Muat ulang lalu coba lagi."
     );
   }
 
   const after = await tx.restaurantWallet.findUniqueOrThrow({
     where: { restaurantId: input.restaurantId },
   });
+
+  const transferReference = isInstant ? generateTransferReference() : null;
 
   const withdrawal = await tx.withdrawalRequest.create({
     data: {
@@ -325,31 +539,24 @@ async function requestWithdrawalInTransaction(
       bankName: wallet.bankName,
       bankAccountNumber: wallet.bankAccountNumber,
       bankAccountHolder: wallet.bankAccountHolder,
-      status: "PENDING",
+      // Self-service: an instant payout is final the moment it is created.
+      status: isInstant ? "COMPLETED" : "PENDING",
+      transferReference,
       requestedByUserId: input.userId,
-    },
-    select: {
-      id: true,
-      withdrawalCode: true,
-      amount: true,
-      feeAmount: true,
-      netAmount: true,
-      bankName: true,
-      bankAccountNumber: true,
-      bankAccountHolder: true,
-      status: true,
-      createdAt: true,
+      processedAt: isInstant ? new Date() : null,
     },
   });
 
   await tx.walletLedger.create({
     data: {
       restaurantId: input.restaurantId,
-      type: "WITHDRAWAL_HOLD",
+      type: isInstant ? "WITHDRAWAL_DISBURSED" : "WITHDRAWAL_HOLD",
       amount: -amount,
       balanceAfter: after.availableBalance,
       referenceId: withdrawal.id,
-      description: `Pengajuan pencairan ${withdrawal.withdrawalCode}`,
+      description: isInstant
+        ? `Pencairan ${withdrawal.withdrawalCode} ditransfer ke ${withdrawal.bankName} ${withdrawal.bankAccountNumber}`
+        : `Pencairan ${withdrawal.withdrawalCode} ditahan untuk transfer otomatis`,
     },
   });
 
@@ -358,15 +565,83 @@ async function requestWithdrawalInTransaction(
     wallet: {
       availableBalance: after.availableBalance,
       pendingBalance: after.pendingBalance,
+      totalWithdrawn: after.totalWithdrawn,
+    },
+    disbursement: {
+      auto: true,
+      success: isInstant,
+      reference: transferReference,
+      message: isInstant
+        ? null
+        : "Pencairan sedang diproses otomatis ke rekening terdaftar.",
     },
   };
 }
 
+const OPEN_WITHDRAWAL_STATUSES: WithdrawalStatus[] = ["PENDING", "PROCESSING"];
+
 /**
- * Create a PENDING withdrawal request and hold the money.
- *
- * The amount is validated server-side (minimum + available balance) and the
- * bank details are snapshotted from the wallet — never trusted from input.
+ * Settle a held (external) payout after the gateway confirmed the transfer:
+ * pending → totalWithdrawn and the request becomes COMPLETED. Idempotent — a
+ * duplicate gateway callback/webhook retry returns the already-settled row.
+ */
+async function settleExternalDisbursement(
+  withdrawalId: string,
+  reference: string | null
+): Promise<WithdrawalRequest> {
+  return prisma.$transaction(async (tx) => {
+    const header = await tx.withdrawalRequest.findUnique({
+      where: { id: withdrawalId },
+      select: { restaurantId: true },
+    });
+    if (!header) {
+      throw new NotFoundError("Pencairan tidak ditemukan");
+    }
+
+    await lockWalletRow(tx, header.restaurantId);
+    await tx.$queryRaw`SELECT id FROM \`withdrawalrequest\` WHERE id = ${withdrawalId} FOR UPDATE`;
+
+    const withdrawal = await tx.withdrawalRequest.findUnique({
+      where: { id: withdrawalId },
+    });
+    if (!withdrawal) {
+      throw new NotFoundError("Pencairan tidak ditemukan");
+    }
+    if (withdrawal.status === "COMPLETED") return withdrawal;
+    if (!OPEN_WITHDRAWAL_STATUSES.includes(withdrawal.status)) return withdrawal;
+
+    const settled = await tx.restaurantWallet.updateMany({
+      where: {
+        restaurantId: withdrawal.restaurantId,
+        pendingBalance: { gte: withdrawal.amount },
+      },
+      data: {
+        pendingBalance: { decrement: withdrawal.amount },
+        totalWithdrawn: { increment: withdrawal.amount },
+      },
+    });
+    if (settled.count === 0) {
+      console.error(
+        `[Wallet] Pending balance inconsistent for withdrawal ${withdrawal.withdrawalCode}`
+      );
+    }
+
+    return tx.withdrawalRequest.update({
+      where: { id: withdrawal.id },
+      data: {
+        status: "COMPLETED",
+        transferReference: reference,
+        processedAt: new Date(),
+      },
+    });
+  });
+}
+
+/**
+ * Self-service payout: validate, debit and settle WITHOUT a manual Super Admin
+ * approval step. The amount is validated server-side (minimum + available
+ * balance) and the bank details are snapshotted from the wallet — never
+ * trusted from input.
  */
 export async function requestWithdrawal(
   input: RequestWithdrawalInput
@@ -385,13 +660,17 @@ export async function requestWithdrawal(
     );
   }
 
-  // A generated withdrawalCode collision is astronomically unlikely, but the
-  // unique index will reject it; retry the whole transaction instead of
-  // surfacing a 500.
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const mode: DisbursementMode = isDisbursementEnabled()
+    ? "EXTERNAL"
+    : "INSTANT";
+
+  // Generated codes are unique per row; a (astronomically unlikely) collision
+  // is retried instead of surfacing a 500.
+  let result: RequestWithdrawalResult | null = null;
+  for (let attempt = 0; attempt < 3 && !result; attempt += 1) {
     try {
-      return await prisma.$transaction((tx) =>
-        requestWithdrawalInTransaction(tx, input, amount, payoutFlatFee)
+      result = await prisma.$transaction((tx) =>
+        requestWithdrawalInTransaction(tx, input, amount, payoutFlatFee, mode)
       );
     } catch (error) {
       if (isUniqueViolation(error)) continue;
@@ -399,9 +678,58 @@ export async function requestWithdrawal(
     }
   }
 
-  throw new ConflictError(
-    "Gagal membuat kode pencairan unik. Silakan coba lagi."
+  if (!result) {
+    throw new ConflictError(
+      "Gagal membuat kode pencairan unik. Silakan coba lagi."
+    );
+  }
+
+  if (mode === "INSTANT") return result;
+
+  // External transfer: the money is already held, so a gateway failure never
+  // loses or duplicates funds — the request simply stays PENDING.
+  const outcome = await disburseViaIpaymu({
+    amount: result.withdrawal.netAmount,
+    bankName: result.withdrawal.bankName,
+    bankAccountNumber: result.withdrawal.bankAccountNumber,
+    bankAccountHolder: result.withdrawal.bankAccountHolder,
+    withdrawalCode: result.withdrawal.withdrawalCode,
+  });
+
+  if (!outcome.success) {
+    return {
+      ...result,
+      disbursement: {
+        auto: true,
+        success: false,
+        reference: null,
+        message: outcome.message,
+      },
+    };
+  }
+
+  const settled = await settleExternalDisbursement(
+    result.withdrawal.id,
+    outcome.reference
   );
+  const wallet = await prisma.restaurantWallet.findUniqueOrThrow({
+    where: { restaurantId: input.restaurantId },
+  });
+
+  return {
+    withdrawal: settled,
+    wallet: {
+      availableBalance: wallet.availableBalance,
+      pendingBalance: wallet.pendingBalance,
+      totalWithdrawn: wallet.totalWithdrawn,
+    },
+    disbursement: {
+      auto: true,
+      success: true,
+      reference: outcome.reference,
+      message: null,
+    },
+  };
 }
 
 // ============================================================
@@ -415,8 +743,6 @@ export interface ProcessWithdrawalInput {
   rejectionReason?: string | null;
   processedByEmail?: string | null;
 }
-
-const OPEN_WITHDRAWAL_STATUSES: WithdrawalStatus[] = ["PENDING", "PROCESSING"];
 
 export async function processWithdrawal(input: ProcessWithdrawalInput) {
   const transferReference = input.transferReference?.trim() || null;

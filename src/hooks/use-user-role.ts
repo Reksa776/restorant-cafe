@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import api from "@/lib/axios";
 
-export type StaffRole = "ADMIN" | "CASHIER";
+export type StaffRole = "ADMIN" | "CASHIER" | "KITCHEN";
 
 interface SessionInfo {
   userId: string;

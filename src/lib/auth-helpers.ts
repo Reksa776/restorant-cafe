@@ -154,19 +154,38 @@ export async function requireRestaurantContext(
 }
 
 /**
+ * Staff roles stored on User.role.
+ *
+ * KITCHEN (Dapur) is an operational, non-financial role: it inherits CASHIER
+ * access so kitchen crew can read/process orders and the kitchen board, while
+ * every ADMIN-only route (finance, billing, staff) stays blocked.
+ */
+export type StaffRole = "ADMIN" | "CASHIER" | "KITCHEN";
+
+const ROLE_ALIASES: Record<string, StaffRole[]> = {
+  KITCHEN: ["CASHIER"],
+};
+
+function roleIsAllowed(role: string, roles: StaffRole[]): boolean {
+  if ((roles as string[]).includes(role)) return true;
+  const aliases = ROLE_ALIASES[role];
+  return Boolean(aliases?.some((alias) => roles.includes(alias)));
+}
+
+/**
  * Verify that the authenticated user has one of the given roles.
- * Roles are the DB enum names ("ADMIN" | "CASHIER").
+ * Roles are the DB enum names ("ADMIN" | "CASHIER" | "KITCHEN").
  *
  * `branchId` (optional) is a server-validated branch hint. When provided,
  * the user must have access to that branch, otherwise a 403 is thrown.
  */
 export async function requireRoles(
-  roles: Array<"ADMIN" | "CASHIER">,
+  roles: StaffRole[],
   requestedBranchId?: string | null
 ): Promise<AuthenticatedContext> {
   const ctx = await requireRestaurantContext(requestedBranchId);
 
-  if (!roles.includes(ctx.role as "ADMIN" | "CASHIER")) {
+  if (!roleIsAllowed(ctx.role, roles)) {
     throw new ForbiddenError("Access denied for your role");
   }
 

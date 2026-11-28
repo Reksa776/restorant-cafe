@@ -5,7 +5,6 @@ import type { ComponentType } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
-  Building2,
   Check,
   CheckCircle2,
   Copy,
@@ -39,9 +38,11 @@ import { formatRupiah } from "@/components/landing/landing-data";
 // ============================================================
 // /register — self-service merchant onboarding (SaaS signup).
 //
-// One form → one atomic POST /api/public/merchants/register that creates the
-// tenant (restaurant + first branch + settings + admin user + STARTER trial
-// subscription + default expense categories).
+// Two short sections → one atomic POST /api/public/merchants/register that
+// creates the tenant (restaurant + "Cabang Pusat" + settings + the single
+// OWNER/ADMIN user + STARTER trial subscription + wallet + expense
+// categories). Staff accounts (Kasir/Dapur/Co-Admin) are added later from
+// /admin/users, and QRIS/VA revenue is withdrawn from /admin/payouts.
 //
 // ?plan=BASIC|PRO|ENTERPRISE carries the plan the visitor picked on the
 // landing page: it is shown as guidance only — the trial always starts on
@@ -117,7 +118,6 @@ function SectionHeading({
 export default function RegisterPage() {
   const [form, setForm] = useState({
     restaurantName: "",
-    branchName: "Cabang Utama",
     ownerName: "",
     email: "",
     password: "",
@@ -167,7 +167,6 @@ export default function RegisterPage() {
     try {
       const res = await api.post("/public/merchants/register", {
         restaurantName: form.restaurantName.trim(),
-        branchName: form.branchName.trim(),
         ownerName: form.ownerName.trim(),
         email: form.email.trim(),
         password: form.password,
@@ -221,7 +220,7 @@ export default function RegisterPage() {
             {registered.restaurant.name} siap dipakai!
           </h1>
           <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-slate-500">
-            Akun admin dan toko online Anda sudah dibuat. Simpan informasi
+            Akun Owner dan toko online Anda sudah dibuat. Simpan informasi
             berikut sebelum masuk ke dashboard.
           </p>
         </div>
@@ -279,11 +278,20 @@ export default function RegisterPage() {
           <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">
             Langkah pertama Anda
           </p>
+          <p className="mt-3 text-xs leading-relaxed text-slate-600">
+            Anda masuk sebagai <span className="font-semibold">Owner</span>.
+            Dari dashboard, buat akun <span className="font-semibold">Kasir</span>{" "}
+            dan <span className="font-semibold">Dapur</span> di menu Pengguna,
+            lalu cairkan pendapatan QRIS/VA kapan saja di menu{" "}
+            <span className="font-semibold">Saldo &amp; Pencairan</span> tanpa
+            menunggu persetujuan manual.
+          </p>
           <ul className="mt-3 space-y-2.5">
             {[
               "Simpan alamat toko online untuk dibagikan ke pelanggan.",
               `Masuk memakai email ${registered.email} dan password yang baru Anda buat.`,
-              "Aktifkan paket berbayar atau tambah cabang dari menu Paket & Billing.",
+              "Tambahkan akun Kasir & Dapur (lengkap dengan cabangnya) di menu Pengguna.",
+              "Cairkan pendapatan QRIS & Virtual Account ke rekening bank di menu Saldo & Pencairan.",
             ].map((item, index) => (
               <li
                 key={item}
@@ -320,10 +328,11 @@ export default function RegisterPage() {
           </a>
         </div>
 
-        <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400">
-          Free trial aktif otomatis. Anda bisa upgrade ke paket berbayar kapan
-          saja tanpa kehilangan data.
-        </p>
+                  <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400">
+            Free trial aktif otomatis. Anda bisa upgrade ke paket berbayar kapan
+            saja tanpa kehilangan data — atau menambah akun karyawan bila kuota
+            paket masih tersedia.
+          </p>
       </AuthSplitLayout>
     );
   }
@@ -380,14 +389,14 @@ export default function RegisterPage() {
         )}
 
         <form onSubmit={handleSubmit} className="mt-7 space-y-7">
-          {/* ---------- Bagian 1: identitas toko ---------- */}
-          <section aria-labelledby="identitas-toko" className="space-y-4">
-            <div id="identitas-toko">
+          {/* ---------- Bagian 1: profil bisnis ---------- */}
+          <section aria-labelledby="profil-bisnis" className="space-y-4">
+            <div id="profil-bisnis">
               <SectionHeading
                 step={1}
                 icon={Store}
-                title="Identitas Kafe / Restoran"
-                description="Nama ini tampil di toko online dan struk pelanggan."
+                title="Profil Bisnis"
+                description="Nama kafe, alamat toko online, dan kontak yang tampil ke pelanggan."
               />
             </div>
 
@@ -429,39 +438,28 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="branchName">Nama Cabang Utama</Label>
-                <AuthField
-                  id="branchName"
-                  icon={Building2}
-                  placeholder="Cabang Utama"
-                  value={form.branchName}
-                  onChange={(e) => update("branchName")(e.target.value)}
-                  minLength={2}
-                  maxLength={120}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">WhatsApp / Telepon Bisnis</Label>
-                <AuthField
-                  id="phone"
-                  icon={Phone}
-                  type="tel"
-                  placeholder="081234567890"
-                  value={form.phone}
-                  onChange={(e) => update("phone")(e.target.value)}
-                  minLength={8}
-                  maxLength={30}
-                  required
-                />
-              </div>
+            <div className="space-y-2">
+              <Label htmlFor="phone">No. WhatsApp</Label>
+              <AuthField
+                id="phone"
+                icon={Phone}
+                type="tel"
+                placeholder="081234567890"
+                value={form.phone}
+                onChange={(e) => update("phone")(e.target.value)}
+                minLength={8}
+                maxLength={30}
+                autoComplete="tel"
+                required
+              />
+              <p className="text-[11px] text-slate-400">
+                Dipakai untuk konfirmasi pesanan dan info tagihan.
+              </p>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="address">
-                Alamat Singkat Cabang Pusat{" "}
+                Alamat Singkat{" "}
                 <span className="font-normal text-slate-400">(opsional)</span>
               </Label>
               <AuthField
@@ -483,8 +481,8 @@ export default function RegisterPage() {
               <SectionHeading
                 step={2}
                 icon={User}
-                title="Akun Pemilik (Owner)"
-                description="Dipakai untuk masuk ke dashboard dan menerima info tagihan."
+                title="Akun Owner"
+                description="Satu akun utama pemilik. Akun Kasir & Dapur dibuat setelah masuk dashboard."
               />
             </div>
 
