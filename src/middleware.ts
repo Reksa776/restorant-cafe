@@ -1,12 +1,79 @@
 import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
 import authConfig from "@/auth.config";
-import { extractSubdomainSlug } from "@/lib/tenant-url";
+import {
+  AUTH_SESSION_COOKIE,
+  AUTH_SESSION_COOKIE_SECURE,
+  authCookieDomain,
+} from "@/lib/auth-cookie";
+import {
+  buildTenantPublicUrl,
+  extractSubdomainSlug,
+  isPathTenantUrl,
+} from "@/lib/tenant-url";
 
 const { auth } = NextAuth(authConfig);
 
 const TENANT_COOKIE = "tenant_slug";
 const TENANT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
+
+/** Session claims read from the JWT (see `auth.config.ts`). */
+interface SessionClaims {
+  user?: { restaurantSlug?: string | null };
+}
+
+/**
+ * Drop any Auth.js session cookie for this host — both the plain and the
+ * `__Secure-` variant, with and without the shared root-domain scope. Used
+ * when a session from another tenant is presented.
+ */
+function clearSessionCookies(response: NextResponse) {
+  const domain = authCookieDomain();
+  const variants = [
+    { name: AUTH_SESSION_COOKIE, secure: false },
+    { name: AUTH_SESSION_COOKIE_SECURE, secure: true },
+  ];
+  for (const { name, secure } of variants) {
+    const base = {
+      path: "/",
+      maxAge: 0,
+      httpOnly: true,
+      sameSite: "lax" as const,
+      secure,
+    };
+    response.cookies.set(name, "", base);
+    if (domain) response.cookies.set(name, "", { ...base, domain });
+  }
+}
+
+/**
+ * Where an authenticated user continues when they open `/login` again.
+ *
+ * An owner session (or any tenant session) seen on the ROOT domain is sent to
+ * its own store subdomain — the root is the owner portal, not an admin
+ * surface. A tenant session already on its own subdomain goes to /admin.
+ */
+function loggedInDestination(req: NextRequest & { auth?: unknown }): URL {
+  const host =
+    req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? null;
+  const currentSlug = extractSubdomainSlug(
+    host,
+    process.env.NEXT_PUBLIC_ROOT_DOMAIN
+  );
+  const sessionSlug =
+    (req.auth as SessionClaims | null | undefined)?.user?.restaurantSlug
+      ?.trim()
+      .toLowerCase() || null;
+
+  if (sessionSlug && !currentSlug) {
+    const base = buildTenantPublicUrl(sessionSlug, req.headers);
+    if (!isPathTenantUrl(base, sessionSlug)) {
+      return new URL(`${base.replace(/\/+$/, "")}/admin/dashboard`);
+    }
+  }
+  return new URL("/admin/dashboard", req.url);
+}
 
 /**
  * Edge middleware — auth guard + multi-tenant subdomain resolution.
@@ -18,13 +85,11 @@ const TENANT_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30; // 30 days
  *   3. Forward `x-tenant-slug` to the app so Server Components / API routes
  *      recognize the tenant immediately, without waiting for the cookie.
  *      Any client-supplied `x-tenant-slug` is dropped first.
- *   4. Sync the `tenant_slug` cookie when it differs from the subdomain, so
- *      moving between two merchant storefronts never keeps the previous
- *      tenant's context (and cart) around.
- *   5. Rewrite the storefront root `/` to `/menu` (URL stays clean).
- *
- * The existing `/admin` + `/login` guards are unchanged and work on the main
- * domain as well as on any merchant subdomain.
+ *   4. STRICT SESSION ISOLATION: a session whose `restaurantSlug` claim does
+ *      not match the subdomain is rejected (cookie cleared → /login), so a
+ *      cookie shared with the root domain can never mix tenants.
+ *   5. Sync the `tenant_slug` cookie when it differs from the subdomain.
+ *   6. Rewrite the storefront root `/` to `/menu` (URL stays clean).
  */
 export default auth((req) => {
   const { pathname } = req.nextUrl;
@@ -40,6 +105,16 @@ export default auth((req) => {
     host,
     process.env.NEXT_PUBLIC_ROOT_DOMAIN
   );
+  const sessionSlug =
+    (req.auth as unknown as SessionClaims | null)?.user?.restaurantSlug
+      ?.trim()
+      .toLowerCase() || null;
+
+  // A logged-in session belongs to exactly ONE tenant. When the browser is on
+  // a different store subdomain, the shared cookie is unusable there.
+  const isCrossTenantSession = Boolean(
+    subdomainSlug && isLoggedIn && sessionSlug !== subdomainSlug
+  );
 
   // Never trust an inbound x-tenant-slug (only this middleware may set it).
   const requestHeaders = new Headers(req.headers);
@@ -53,9 +128,16 @@ export default auth((req) => {
   if (isApiAuth || isPublicApi) {
     // Allow auth API and webhook routes.
     response = NextResponse.next({ request: { headers: requestHeaders } });
+  } else if (isCrossTenantSession) {
+    // Force a clean re-login on THIS host: clear the foreign session cookie.
+    const url = new URL("/login", req.url);
+    url.search = "";
+    url.searchParams.set("switch", "1");
+    response = NextResponse.redirect(url);
+    clearSessionCookies(response);
   } else if (isAuthPage && isLoggedIn) {
-    // If on login page and already logged in, redirect to admin.
-    response = NextResponse.redirect(new URL("/admin/dashboard", req.url));
+    // Already signed in (and on the right host) → straight to the dashboard.
+    response = NextResponse.redirect(loggedInDestination(req));
   } else if (isAdminRoute && !isLoggedIn) {
     // If trying to access admin without login.
     response = NextResponse.redirect(new URL("/login", req.url));

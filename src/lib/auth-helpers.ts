@@ -58,6 +58,22 @@ export interface AuthenticatedContext {
 // ============================================================
 
 /**
+ * Tenant slug of the CURRENT request host (`<slug>.<root>`), set by the
+ * middleware. Returns null on the root domain, raw IP hosts and non-request
+ * contexts (so internal/unit calls behave exactly as before).
+ */
+async function requestTenantSlug(): Promise<string | null> {
+  try {
+    const { headers } = await import("next/headers");
+    const store = await headers();
+    const slug = store.get("x-tenant-slug");
+    return slug ? slug.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read the client-supplied branch hint from the request. This is ONLY a
  * UX hint — it is never used as an authorization boundary; the server
  * validates it against the user's UserBranch assignments in
@@ -102,6 +118,7 @@ export async function requireRestaurantContext(
       role: true,
       isActive: true,
       sessionVersion: true,
+      restaurant: { select: { slug: true } },
     },
   });
 
@@ -116,6 +133,17 @@ export async function requireRestaurantContext(
   // into a clean single sign-out — no redirect loop.)
   if (user.sessionVersion !== session.user.sessionVersion) {
     throw new UnauthorizedError("Session expired — please sign in again");
+  }
+
+  // Strict subdomain-scoped authentication (defense in depth): the JWT cookie
+  // may be shared with the platform root domain, so a session issued for
+  // tenant A must never authorize a request that arrived on tenant B's host.
+  // `x-tenant-slug` is set by middleware and cannot be spoofed by clients.
+  const tenantSlug = await requestTenantSlug();
+  if (tenantSlug && tenantSlug !== user.restaurant.slug) {
+    throw new UnauthorizedError(
+      "Sesi login tidak sesuai dengan subdomain toko ini. Silakan login ulang."
+    );
   }
 
   // Resolve the user's explicit branch assignments.

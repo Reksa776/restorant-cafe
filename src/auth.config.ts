@@ -5,6 +5,12 @@ import Credentials from "next-auth/providers/credentials";
 interface SessionExtraClaims {
   role?: string;
   sessionVersion?: number;
+  /**
+   * Slug of the tenant the session was issued for. Middleware (and
+   * requireRestaurantContext) compare it with the request's subdomain so a
+   * session can never be used on another store's host.
+   */
+  restaurantSlug?: string;
 }
 
 export default {
@@ -35,6 +41,7 @@ export default {
         // Session version — bumped on password change / deactivation so
         // existing JWTs are invalidated server-side (M3).
         token.sessionVersion = extra.sessionVersion ?? 0;
+        token.restaurantSlug = extra.restaurantSlug;
       }
       return token;
     },
@@ -44,6 +51,7 @@ export default {
         session.user.id = token.id as string;
         extra.role = token.role as string;
         extra.sessionVersion = token.sessionVersion as number;
+        extra.restaurantSlug = token.restaurantSlug as string;
       }
       return session;
     },

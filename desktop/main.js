@@ -157,7 +157,41 @@ function resolvePosUrl(config) {
   return `${scheme}://${code}.${root}${POS_PATH}`;
 }
 
-/** True for the merchant's own tenant(s), localhost, and the launcher page. */
+/**
+ * The ONE host this cashier device is pinned to after a store is saved:
+ * the host of `customUrl` when set, otherwise `<storeCode>.<rootDomain>`
+ * (e.g. `caffe-indo.resto.demosolusisejalan.my.id`).
+ *
+ * Empty while no store is configured → the app stays on the launcher, which
+ * keeps the permissive pre-setup navigation rules below.
+ */
+function lockedHost() {
+  const custom = String(cachedConfig.customUrl || "").trim();
+  if (custom) {
+    try {
+      const parsed = new URL(
+        /^https?:\/\//i.test(custom) ? custom : `https://${custom}`
+      );
+      return parsed.hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  }
+  const code = normalizeStoreCode(cachedConfig.storeCode);
+  if (!code) return "";
+  const root = normalizeRootDomain(cachedConfig.rootDomain) || DEFAULT_ROOT_DOMAIN;
+  return `${code}.${root}`;
+}
+
+/**
+ * True for the saved tenant host, localhost (before setup), and the launcher.
+ *
+ * STORE LOCK: once a store is saved, ONLY that tenant host may stay inside
+ * the app. Opening another store subdomain (or the platform root) hands the
+ * URL to the OS browser instead, so switching tenants REQUIRES the Launcher
+ * (Ctrl+Shift+S) — a cashier can never wander into another merchant's session
+ * by navigating or by a stale link.
+ */
 function isAllowedUrl(target) {
   try {
     const parsed = new URL(target);
@@ -165,6 +199,10 @@ function isAllowedUrl(target) {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
 
     const host = parsed.hostname.toLowerCase();
+
+    const pinned = lockedHost();
+    if (pinned) return host === pinned;
+
     if (host === "localhost" || host.endsWith(".localhost")) return true;
     if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host)) {
       // Private LAN / loopback only — never a public IP.
@@ -288,6 +326,14 @@ function createWindow() {
   });
 
   wc.on("will-navigate", (event, url) => {
+    if (isAllowedUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+  });
+
+  // Server-side redirects honour the same store lock (e.g. a stale link to
+  // another tenant's /login must not replace the cashier screen).
+  wc.on("will-redirect", (event, url) => {
     if (isAllowedUrl(url)) return;
     event.preventDefault();
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
