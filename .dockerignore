@@ -3,6 +3,10 @@ node_modules
 .next
 npm-debug.log*
 
+# Electron cashier workspace — built by .github/workflows/build-desktop.yml on a
+# Windows runner, never needed inside the Next.js server image.
+desktop
+
 # Git
 .git
 .gitignore

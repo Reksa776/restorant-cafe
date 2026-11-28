@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline';" />
+  <title>RestoPOS Kasir Desktop — Koneksi Toko</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #0f172a;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --surface: #ffffff;
+      --brand: #0f766e;
+      --brand-soft: #ccfbf1;
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 600px at 12% -10%, #ccfbf1 0%, transparent 60%),
+        radial-gradient(900px 500px at 105% 10%, #e0f2fe 0%, transparent 55%),
+        #f8fafc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+    }
+    .shell { width: 100%; max-width: 880px; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .logo {
+      width: 44px; height: 44px; border-radius: 14px;
+      display: grid; place-items: center;
+      background: linear-gradient(140deg, #0f766e, #115e59);
+      color: #fff; font-size: 20px;
+      box-shadow: 0 8px 20px rgba(15, 118, 110, .28);
+    }
+    .brand h1 { font-size: 17px; margin: 0; letter-spacing: -.2px; }
+    .brand p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 11px; font-weight: 600; color: #065f46;
+      background: #d1fae5; border: 1px solid #a7f3d0;
+      padding: 5px 10px; border-radius: 999px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 20px 50px rgba(15, 23, 42, .07);
+      overflow: hidden;
+    }
+    .card-head {
+      padding: 22px 24px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    }
+    .card-head h2 { margin: 0; font-size: 16px; }
+    .card-head p { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); }
+    .grid { display: grid; gap: 18px; grid-template-columns: 1.15fr .85fr; padding: 22px 24px; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+    .field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 16px; }
+    .label { font-size: 12px; font-weight: 600; color: #334155; }
+    .hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+    .input, .select {
+      width: 100%; height: 44px; padding: 0 13px;
+      border: 1px solid #cbd5e1; border-radius: 11px;
+      background: #fff; font-size: 14px; color: var(--ink);
+      outline: none; transition: border-color .15s, box-shadow .15s;
+    }
+    .input:focus, .select:focus {
+      border-color: var(--brand);
+      box-shadow: 0 0 0 3px rgba(15, 118, 110, .14);
+    }
+    .input::placeholder { color: #94a3b8; }
+    .input[readonly] { background: #f1f5f9; color: #475569; }
+    .preview {
+      display: flex; align-items: center; gap: 9px;
+      background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 11px;
+      padding: 11px 12px; font-size: 12px; color: #0f766e;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      word-break: break-all; min-height: 44px;
+    }
+    .preview svg { flex: 0 0 auto; color: #0d9488; }
+    .divider { height: 1px; background: var(--line); margin: 6px 0 18px; }
+    .switch-row {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 14px; padding: 12px 13px;
+      border: 1px solid var(--line); border-radius: 12px; margin-bottom: 14px;
+      background: #fcfdff;
+    }
+    .switch-row strong { display: block; font-size: 12.5px; }
+    .switch-row span { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+    .switch { position: relative; width: 42px; height: 24px; flex: 0 0 auto; margin-top: 2px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0; cursor: pointer;
+      background: #cbd5e1; border-radius: 999px; transition: background .15s;
+    }
+    .slider::before {
+      content: ""; position: absolute; height: 18px; width: 18px;
+      left: 3px; top: 3px; background: #fff; border-radius: 50%;
+      transition: transform .15s; box-shadow: 0 1px 3px rgba(15, 23, 42, .25);
+    }
+    .switch input:checked + .slider { background: var(--brand); }
+    .switch input:checked + .slider::before { transform: translateX(18px); }
+    .actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      height: 44px; padding: 0 18px; border-radius: 11px;
+      font-size: 13.5px; font-weight: 600; cursor: pointer;
+      border: 1px solid transparent; transition: transform .08s, background .15s, box-shadow .15s;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary {
+      background: linear-gradient(140deg, #0f766e, #0d9488); color: #fff;
+      box-shadow: 0 10px 22px rgba(13, 148, 136, .25);
+      flex: 1; min-width: 200px;
+    }
+    .btn-primary:hover { box-shadow: 0 12px 26px rgba(13, 148, 136, .32); }
+    .btn-ghost { background: #fff; border-color: #cbd5e1; color: #334155; }
+    .btn-ghost:hover { background: #f8fafc; }
+    .btn:disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+    .side { display: flex; flex-direction: column; gap: 14px; }
+    .tip {
+      background: #f8fafc; border: 1px solid var(--line); border-radius: 13px; padding: 14px;
+    }
+    .tip h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: #475569; }
+    .tip ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .tip code {
+      font-family: ui-monospace, Consolas, monospace; font-size: 11px;
+      background: #e2e8f0; padding: 1px 5px; border-radius: 5px; color: #0f172a;
+    }
+    .status {
+      display: none; margin-top: 14px; padding: 10px 12px; border-radius: 10px;
+      font-size: 12px; line-height: 1.5;
+    }
+    .status.show { display: block; }
+    .status.ok { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; }
+    .status.err { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+    .status.info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+    .footer {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 14px 24px; border-top: 1px solid var(--line);
+      background: #fbfdff; font-size: 11.5px; color: var(--muted);
+    }
+    kbd {
+      font-family: inherit; font-size: 10.5px; background: #fff;
+      border: 1px solid #cbd5e1; border-bottom-width: 2px;
+      border-radius: 5px; padding: 1px 5px; color: #334155;
+    }
+    .browser-warning {
+      display: none; margin-bottom: 14px; padding: 10px 14px; border-radius: 11px;
+      background: #fff7ed; border: 1px solid #fed7aa; color: #9a3412; font-size: 12px;
+    }
+    .browser-warning.show { display: block; }
+    .spinner {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, .4); border-top-color: #fff;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo">🧾</div>
+        <div>
+          <h1>RestoPOS Kasir Desktop</h1>
+          <p>Hubungkan toko &amp; printer struk thermal</p>
+        </div>
+      </div>
+      <span class="pill">● Aplikasi Desktop</span>
+    </div>
+
+    <div class="browser-warning" id="browserWarning">
+      Halaman ini dibuka di browser. Jalankan lewat aplikasi RestoPOS Kasir Desktop
+      agar printer &amp; silent print berfungsi.
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Koneksi Toko</h2>
+          <p>Masukkan kode toko Anda — layar kasir akan terbuka otomatis.</p>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div>
+          <div class="field">
+            <label class="label" for="storeCode">Subdomain / Kode Toko</label>
+            <input id="storeCode" class="input" type="text" spellcheck="false"
+                   placeholder="contoh: caffe-indo" autocomplete="off" />
+            <span class="hint">
+              Cukup kode tokonya (tanpa <code>.resto.demosolusisejalan.my.id</code>).
+              Bisa juga tempel URL lengkap, mis. <code>http://localhost:3001/admin/orders/new</code>.
+            </span>
+          </div>
+
+          <div class="field">
+            <label class="label" for="urlPreview">Layar kasir yang akan dibuka</label>
+            <div class="preview" id="urlPreview">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
+              <span id="urlPreviewText">Masukkan kode toko untuk melihat alamat</span>
+            </div>
+          </div>
+
+          <details>
+            <summary class="hint" style="cursor:pointer; color:#0f766e; font-weight:600;">
+              Pengaturan lanjutan (domain platform)
+            </summary>
+            <div class="field" style="margin-top:12px;">
+              <label class="label" for="rootDomain">Domain Platform</label>
+              <input id="rootDomain" class="input" type="text" spellcheck="false"
+                     placeholder="resto.demosolusisejalan.my.id" autocomplete="off" />
+              <span class="hint">Ubah hanya jika platform dipasang di domain lain.</span>
+            </div>
+          </details>
+
+          <div class="divider"></div>
+
+          <div class="field">
+            <label class="label" for="printer">Printer Struk Thermal</label>
+            <select id="printer" class="select">
+              <option value="">Printer default sistem</option>
+            </select>
+            <span class="hint" id="printerHint">Membaca daftar printer yang terpasang di Windows…</span>
+          </div>
+
+          <div class="switch-row">
+            <div>
+              <strong>Silent Print (Cetak Struk Tanpa Dialog)</strong>
+              <span>Struk langsung tercetak ke printer thermal pilihan, tanpa pop-up Windows.</span>
+            </div>
+            <label class="switch">
+              <input id="silentPrint" type="checkbox" checked />
+              <span class="slider"></span>
+            </label>
+          </div>
+
+          <div class="actions">
+            <button id="testPrint" class="btn btn-ghost" type="button">🖨️ Tes Cetak Struk</button>
+          </div>
+
+          <div id="status" class="status" role="status" aria-live="polite"></div>
+        </div>
+
+        <div class="side">
+          <div class="tip">
+            <h3>Langkah cepat</h3>
+            <ul>
+              <li>Pasang printer thermal &amp; driver-nya di Windows.</li>
+              <li>Isi kode toko, pilih printer.</li>
+              <li>Tes cetak untuk memastikan hasilnya.</li>
+              <li>Tekan <strong>Buka Layar Kasir</strong>.</li>
+            </ul>
+          </div>
+          <div class="tip">
+            <h3>Shortcut kasir</h3>
+            <ul>
+              <li><kbd>F11</kbd> layar penuh</li>
+              <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> ganti toko / printer</li>
+              <li><kbd>F5</kbd> muat ulang layar kasir</li>
+            </ul>
+          </div>
+          <div class="tip">
+            <h3>Lebar kertas</h3>
+            <ul>
+              <li>Didukung 58&nbsp;mm dan 80&nbsp;mm.</li>
+              <li>Atur lebar kertas di driver printer, bukan di aplikasi.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <span>Kode toko &amp; printer disimpan lokal di perangkat ini.</span>
+        <span>Sesi login tetap tersimpan.</span>
+      </div>
+    </div>
+
+    <div class="actions" style="margin-top:18px;">
+      <button id="openPos" class="btn btn-primary" type="button">Buka Layar Kasir →</button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const POS_PATH = "/admin/orders/new";
+      const DEFAULT_ROOT = "resto.demosolusisejalan.my.id";
+      const api = window.desktopPOS || null;
+
+      const el = {
+        storeCode: document.getElementById("storeCode"),
+        rootDomain: document.getElementById("rootDomain"),
+        printer: document.getElementById("printer"),
+        printerHint: document.getElementById("printerHint"),
+        silentPrint: document.getElementById("silentPrint"),
+        urlPreviewText: document.getElementById("urlPreviewText"),
+        status: document.getElementById("status"),
+        testPrint: document.getElementById("testPrint"),
+        openPos: document.getElementById("openPos"),
+        browserWarning: document.getElementById("browserWarning"),
+      };
+
+      let config = {
+        storeCode: "",
+        rootDomain: DEFAULT_ROOT,
+        customUrl: "",
+        printerName: "",
+        silentPrint: true,
+      };
+
+      function normalizeRoot(raw) {
+        return String(raw || "")
+          .trim()
+          .toLowerCase()
+          .replace(/^[a-z]+:\/\//, "")
+          .replace(/\/.*$/, "")
+          .replace(/:\d+$/, "");
+      }
+
+      function isFullUrl(value) {
+        return /^https?:\/\//i.test(value.trim());
+      }
+
+      function normalizeCode(raw) {
+        let value = String(raw || "").trim().toLowerCase();
+        value = value.replace(/^[a-z]+:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "");
+        if (value.indexOf(".") !== -1) value = value.split(".")[0];
+        return value.replace(/[^a-z0-9-]/g, "").slice(0, 48);
+      }
+
+      /** Store code OR a pasted full URL → the exact URL the app will load. */
+      function resolveUrl() {
+        const raw = el.storeCode.value.trim();
+        if (!raw) return null;
+        if (isFullUrl(raw)) {
+          try {
+            const parsed = new URL(raw);
+            if (parsed.pathname === "" || parsed.pathname === "/") parsed.pathname = POS_PATH;
+            return parsed.toString();
+          } catch {
+            return null;
+          }
+        }
+        const code = normalizeCode(raw);
+        if (!code) return null;
+        const root = normalizeRoot(el.rootDomain.value) || DEFAULT_ROOT;
+        const local = root === "localhost" || root.indexOf("127.") === 0;
+        return (local ? "http" : "https") + "://" + code + "." + root + POS_PATH;
+      }
+
+      function renderPreview() {
+        const url = resolveUrl();
+        el.urlPreviewText.textContent = url || "Masukkan kode toko untuk melihat alamat";
+        el.urlPreviewText.style.color = url ? "#0f766e" : "#94a3b8";
+      }
+
+      function showStatus(message, kind) {
+        el.status.textContent = message;
+        el.status.className = "status show " + (kind || "info");
+      }
+
+      function clearStatus() {
+        el.status.className = "status";
+        el.status.textContent = "";
+      }
+
+      function currentConfig() {
+        const raw = el.storeCode.value.trim();
+        const fullUrl = isFullUrl(raw);
+        return {
+          storeCode: fullUrl ? "" : normalizeCode(raw),
+          rootDomain: normalizeRoot(el.rootDomain.value) || DEFAULT_ROOT,
+          customUrl: fullUrl ? resolveUrl() || "" : "",
+          printerName: el.printer.value || "",
+          silentPrint: el.silentPrint.checked,
+        };
+      }
+
+      async function loadPrinters(selected) {
+        if (!api) {
+          el.printerHint.textContent = "Daftar printer hanya tersedia di aplikasi desktop.";
+          return;
+        }
+        try {
+          const printers = await api.getPrinters();
+          el.printer.innerHTML = '<option value="">Printer default sistem</option>';
+          let defaultName = "";
+          printers.forEach(function (printer) {
+            const option = document.createElement("option");
+            option.value = printer.name;
+            option.textContent =
+              printer.displayName + (printer.isDefault ? " (default)" : "");
+            el.printer.appendChild(option);
+            if (printer.isDefault) defaultName = printer.name;
+          });
+          if (selected && printers.some(function (p) { return p.name === selected; })) {
+            el.printer.value = selected;
+          } else if (defaultName) {
+            el.printer.value = defaultName;
+          }
+          el.printerHint.textContent = printers.length
+            ? printers.length + " printer terpasang ditemukan."
+            : "Tidak ada printer terdeteksi. Pasang printer thermal lalu buka ulang layar ini.";
+        } catch (error) {
+          el.printerHint.textContent = "Gagal membaca daftar printer.";
+        }
+      }
+
+      async function persist() {
+        const next = currentConfig();
+        if (api) {
+          try {
+            config = (await api.saveConfig(next)) || next;
+            return true;
+          } catch (error) {
+            showStatus("Gagal menyimpan pengaturan: " + (error && error.message ? error.message : "unknown"), "err");
+            return false;
+          }
+        }
+        config = next;
+        return true;
+      }
+
+      async function boot() {
+        if (!api) {
+          el.browserWarning.classList.add("show");
+          el.testPrint.disabled = true;
+          el.openPos.disabled = true;
+          el.printerHint.textContent = "Daftar printer hanya tersedia di aplikasi desktop.";
+          renderPreview();
+          return;
+        }
+        try {
+          const saved = await api.getConfig();
+          if (saved) config = Object.assign(config, saved);
+        } catch (error) {
+          /* keep defaults */
+        }
+        el.storeCode.value = config.storeCode || config.customUrl || "";
+        el.rootDomain.value = config.rootDomain || DEFAULT_ROOT;
+        el.silentPrint.checked = config.silentPrint !== false;
+        renderPreview();
+        await loadPrinters(config.printerName);
+      }
+
+      el.storeCode.addEventListener("input", renderPreview);
+      el.rootDomain.addEventListener("input", renderPreview);
+
+      el.printer.addEventListener("change", function () {
+        persist();
+      });
+      el.silentPrint.addEventListener("change", function () {
+        persist();
+      });
+
+      el.testPrint.addEventListener("click", async function () {
+        clearStatus();
+        if (!api) return;
+        const original = el.testPrint.textContent;
+        el.testPrint.disabled = true;
+        el.testPrint.innerHTML = '<span class="spinner"></span> Mencetak…';
+        await persist();
+        const result = await api.testPrint(el.printer.value || "");
+        el.testPrint.disabled = false;
+        el.testPrint.textContent = original;
+        if (result && result.ok) {
+          showStatus("Tes cetak dikirim ke printer. Periksa hasil struk.", "ok");
+        } else {
+          showStatus(
+            "Tes cetak gagal: " +
+              ((result && result.reason) || "printer tidak merespons") +
+              ". Pastikan printer menyala dan driver terpasang.",
+            "err"
+          );
+        }
+      });
+
+      el.openPos.addEventListener("click", async function () {
+        clearStatus();
+        if (!resolveUrl()) {
+          showStatus("Isi kode toko terlebih dahulu.", "err");
+          el.storeCode.focus();
+          return;
+        }
+        el.openPos.disabled = true;
+        const original = el.openPos.textContent;
+        el.openPos.innerHTML = '<span class="spinner"></span> Membuka layar kasir…';
+        const saved = await persist();
+        if (!saved) {
+          el.openPos.disabled = false;
+          el.openPos.textContent = original;
+          return;
+        }
+        if (api) {
+          const result = await api.openPOS();
+          if (result && result.ok === false) {
+            el.openPos.disabled = false;
+            el.openPos.textContent = original;
+            showStatus(
+              result.reason === "no-store"
+                ? "Kode toko belum valid."
+                : "Layar kasir gagal dibuka.",
+              "err"
+            );
+          }
+        }
+      });
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" && event.target === el.storeCode) {
+          event.preventDefault();
+          el.openPos.click();
+        }
+      });
+
+      boot();
+    })();
+  </script>
+</body>
+</html>

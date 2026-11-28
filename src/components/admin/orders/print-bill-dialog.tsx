@@ -6,14 +6,20 @@ import { Printer } from "lucide-react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { formatPhoneDisplay } from "@/lib/phone";
+import { printReceiptSmart } from "@/lib/desktop-bridge";
 import type { Order } from "@/services/order.service";
 
 // ============================================================
 // Print Bill Dialog
 // ============================================================
-// Renders a print-ready bill for an order (thermal 80mm). Pure client-side: window.print() never mutates the order or its
-// payments — the bill is built entirely from the already-loaded order data
-// (admin endpoints are tenant-scoped server-side).
+// Renders a print-ready bill for an order (thermal 80mm). Pure client-side:
+// printing never mutates the order or its payments — the bill is built
+// entirely from the already-loaded order data (admin endpoints are
+// tenant-scoped server-side).
+//
+// Printing goes through `printReceiptSmart()`: inside RestoPOS Kasir Desktop
+// the receipt is sent straight to the selected thermal printer (silent), while
+// a normal browser keeps the standard window.print() dialog.
 //
 // Two print modes:
 //   1. "Cetak Semua"       — one full bill (items, totals, payment, audit).
@@ -574,11 +580,18 @@ export function PrintBillDialog({
     if (!autoPrint || !open || !order || autoPrintedOrder.current === order.id) {
       return;
     }
-    const finishPrint = () => onOpenChange(false);
-    const timer = window.setTimeout(() => {
+    let closed = false;
+    const finishPrint = () => {
+      if (closed) return;
+      closed = true;
+      onOpenChange(false);
+    };
+    const timer = window.setTimeout(async () => {
       autoPrintedOrder.current = order.id;
       window.addEventListener("afterprint", finishPrint, { once: true });
-      window.print();
+      const outcome = await printReceiptSmart();
+      // Silent printing never fires `afterprint` — close the preview ourselves.
+      if (outcome === "desktop") window.setTimeout(finishPrint, 500);
     }, 300);
     return () => {
       window.clearTimeout(timer);
@@ -662,7 +675,7 @@ export function PrintBillDialog({
             ))}
           </div>
           <span className="rounded-full border border-gray-300 px-3 py-1 text-xs text-gray-600">Thermal 80 mm</span>
-          <Button onClick={() => window.print()}>
+          <Button onClick={() => void printReceiptSmart()}>
             <Printer className="h-4 w-4 mr-1" />
             Cetak
           </Button>

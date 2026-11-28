@@ -1,0 +1,64 @@
+{
+  "name": "restopos-desktop-cashier",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RestoPOS Kasir Desktop — Electron shell for the multi-tenant POS with silent thermal receipt printing.",
+  "main": "main.js",
+  "author": "Demo Solusi Sejalan",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist:win": "electron-builder --win nsis",
+    "dist:mac": "electron-builder --mac dmg",
+    "dist:linux": "electron-builder --linux AppImage"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "id.my.demosolusisejalan.resto.cashier",
+    "productName": "RestoPOS Kasir Desktop",
+    "copyright": "Copyright © 2026 Demo Solusi Sejalan",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "launcher.html",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "RestoPOS Kasir"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.business",
+      "icon": "assets/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Office",
+      "icon": "assets/icon.png"
+    }
+  }
+}

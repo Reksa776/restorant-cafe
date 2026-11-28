@@ -28,6 +28,7 @@ import { Label } from "@/components/ui/label";
 import { useBranchContext } from "@/hooks/use-branch-context";
 import { orderService, type Order } from "@/services/order.service";
 import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
+import { DesktopPrintBadge } from "@/components/admin/desktop-print-badge";
 import { paymentService } from "@/services/payment.service";
 import { customerService } from "@/services/customer.service";
 import { KasirQrisScreen } from "@/components/admin/orders/kasir-qris-screen";
@@ -1209,6 +1210,8 @@ export default function KasirManualOrderPage() {
             {workingBranch.name} ({workingBranch.code})
           </span>
         </div>
+        {/* Silent-print indicator — visible only inside the desktop app. */}
+        <DesktopPrintBadge />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">

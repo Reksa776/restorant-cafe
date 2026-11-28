@@ -16,6 +16,7 @@ import {
 import { userService } from "@/services/shift.service";
 import { orderService, type Order } from "@/services/order.service";
 import { PrintBillDialog } from "@/components/admin/orders/print-bill-dialog";
+import { DesktopPrintBadge } from "@/components/admin/desktop-print-badge";
 import { toast } from "sonner";
 import {
   Loader2,
@@ -260,15 +261,19 @@ export default function CashierSalesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold">
-          {isAdmin ? "Riwayat Penjualan" : "Riwayat Penjualan Saya"}
-        </h1>
-        <p className="text-muted-foreground">
-          {isAdmin
-            ? "Buku kas shift — uang yang dikumpulkan & direkonsiliasi per shift (bukan laporan akuntansi)"
-            : "Buku kas shift Anda — uang yang dikumpulkan & direkonsiliasi (bukan laporan akuntansi)"}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-3xl font-bold">
+            {isAdmin ? "Riwayat Penjualan" : "Riwayat Penjualan Saya"}
+          </h1>
+          <p className="text-muted-foreground">
+            {isAdmin
+              ? "Buku kas shift — uang yang dikumpulkan & direkonsiliasi per shift (bukan laporan akuntansi)"
+              : "Buku kas shift Anda — uang yang dikumpulkan & direkonsiliasi (bukan laporan akuntansi)"}
+          </p>
+        </div>
+        {/* Only rendered inside the RestoPOS Kasir Desktop shell. */}
+        <DesktopPrintBadge />
       </div>
 
       {/* Summary Cards */}

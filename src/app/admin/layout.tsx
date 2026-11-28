@@ -38,6 +38,7 @@ import {
   BookOpen,
   RotateCcw,
   Landmark,
+  Monitor,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { signOut } from "next-auth/react";
@@ -182,6 +183,8 @@ const navigation: NavEntry[] = [
     icon: Settings,
     children: [
       { name: "Tampilan Website", href: "/admin/settings", icon: Settings, roles: ["ADMIN"], exact: true },
+      // DESKTOP CASHIER — installer download + store code for the Electron app.
+      { name: "Aplikasi Kasir Desktop", href: "/admin/desktop-app", icon: Monitor, roles: ["ADMIN"] },
       { name: "Pengguna", href: "/admin/users", icon: Users, roles: ["ADMIN"] },
       { name: "Riwayat Aktivitas", href: "/admin/audit-logs", icon: ClipboardList, roles: ["ADMIN"] },
       { name: "WhatsApp", href: "/admin/whatsapp", icon: MessageSquare, roles: ["ADMIN"] },
